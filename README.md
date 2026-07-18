@@ -1,11 +1,9 @@
 # Open Context Protocol
 
-> A marketing overview written for engineers. If you want the deep research
-> analysis, read [Advantages and Uniqueness](./protocol-advantages.md). If you
-> want to build a provider today, read
-> [Implementing a provider](./implementing-a-provider.md). This page is the
-> one-read explanation of what OCP is, why it exists, and why you would build
-> against it.
+> If you want the deep research analysis, read [Advantages and Uniqueness](./docs/protocol-advantages.md).
+> If you want to build a provider today, read [Implementing a provider](./docs/implementing-a-provider.md).
+> This page is the one-read explanation of what OCP is, why it exists, and why
+> you would build against it.
 
 ---
 
@@ -175,6 +173,6 @@ conformance suite: anyone can build a provider, anyone can verify it, and the
 protocol evolves inside a stable family without breaking what is already
 deployed.
 
-Start with [Protocol surface](./protocol-surface.md) to read the types,
-[Implementing a provider](./implementing-a-provider.md) to build one, and
-[Running conformance](./running-conformance.md) to prove it.
+Start with [Protocol surface](./docs/protocol-surface.md) to read the types,
+[Implementing a provider](./docs/implementing-a-provider.md) to build one, and
+[Running conformance](./docs/running-conformance.md) to prove it.
