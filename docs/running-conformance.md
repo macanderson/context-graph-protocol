@@ -114,7 +114,7 @@ async fn my_provider_is_ocp_conformant() {
 the failed checks), and `tally()` (`(passed, failed, skipped)` counts) for
 building your own reporting on top.
 
-## The stella-repo fixture, for reference
+## The `ocp-example-docs` fixture, for reference
 
 `ocp-conformance`'s own test suite
 (`ocp-conformance/tests/conformance_suite.rs`) runs the checks against a real

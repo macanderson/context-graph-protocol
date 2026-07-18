@@ -164,6 +164,15 @@ prompt. MCP tools do the work.
 
 ---
 
+## License
+
+All OCP crates (`ocp-types`, `ocp-host`, `ocp-conformance`) and this repository
+are dual-licensed under **MIT OR Apache-2.0**, at your option. See
+[`LICENSE-MIT`](./LICENSE-MIT) and [`LICENSE-APACHE`](./LICENSE-APACHE). By
+contributing you agree your contributions are licensed under the same terms.
+
+---
+
 ## Status
 
 OCP is `ocp/1.0-draft` today. The wire types are stable enough to build against,

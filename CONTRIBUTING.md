@@ -7,13 +7,13 @@ get it merged. It's long because it's honest — but the short version is:
 ## The ground rules
 
 **Commit format** — [Conventional Commits](https://www.conventionalcommits.org),
-with the crate (or surface) as scope, matching the existing history:
+with the crate or surface as scope, matching the existing history:
 
 ```text
-feat(stella-model): add mistral provider adapter
-fix(stella-tui): restore terminal on panic in raw mode
-docs(readme): correct provider table
-ci(release): sign macOS binaries
+feat(ocp-host): add fan-out timeout for slow providers
+fix(ocp-conformance): restore correct exit code on budget-honesty failure
+docs(readme): clarify dual-license statement
+ci(release): publish ocp-types to crates.io
 ```
 
 **DCO, not CLA.** Sign every commit (`git commit -s`) to certify the
@@ -34,8 +34,8 @@ normal part of the loop here, not a rejection.
 
 ## Issues and labels
 
-- **[Bug report](https://github.com/macanderson/stella/issues/new?template=bug_report.yml)** — include `stella --version`, OS, provider/model, and a repro.
-- **[Feature request](https://github.com/macanderson/stella/issues/new?template=feature_request.yml)** — say what you're trying to do, not just what to add.
+- **[Bug report](https://github.com/macanderson/opencontextprotocol/issues/new?template=bug_report.yml)** — include the OCP crate name and version, OS, and a repro.
+- **[Feature request](https://github.com/macanderson/opencontextprotocol/issues/new?template=feature_request.yml)** — say what you're trying to do, not just what to add.
 
 Labels you'll see: `area:*` routes an issue to a crate; `P0`–`P2` is priority;
 `good first issue` and `help wanted` mean what they say; `needs-witness` means

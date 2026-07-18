@@ -122,7 +122,7 @@ A frame returned from a code-graph provider might carry a `file` provenance
 entry with `uri: "file:///repo/src/lib.rs"`, `range: "L120-160"`, and
 `digest: "sha256:..."`. A frame derived from an agent's prior reasoning might
 carry a `derivation` entry with `method: "tree-sitter-symbol-extraction"` and
-`by: "stella-graph"`. A frame from an episodic memory store might carry an
+`by: "ocp-graph"`. A frame from an episodic memory store might carry an
 `episode` entry naming the session that produced it.
 
 **Why this matters.** When a judge — whether an LLM judge in goal mode or a
@@ -326,7 +326,7 @@ And `ContextQuery` carries:
 Together, these enable **bi-temporal retrieval**: a query can ask "what was
 true about this function as of last Tuesday?" and receive only frames whose
 validity window includes that timestamp. This is the same discipline that
-bi-temporal databases (like BTreive or Crux) apply to transactional data,
+bi-temporal databases (like Btrieve or Crux) apply to transactional data,
 applied here to the context that feeds an AI agent.
 
 **Why this matters.** In a codebase under active development, a symbol
@@ -363,7 +363,7 @@ Consider what happens if you remove each property in isolation:
   Budget compositability breaks. → *Unbounded cost.*
 
 - **Remove consent enforcement.** Any provider can exfiltrate workspace content
-  to a remote service. The "no phone-home" guarantee — central to Stella's
+  to a remote service. The "no phone-home" guarantee — central to OCP's
   trust model — becomes unenforceable at the protocol level. → *Data leakage.*
 
 - **Remove conformance verification.** "OCP conformant" becomes a
@@ -515,8 +515,9 @@ time (temporal). No prior retrieval protocol combines all seven properties,
 and the combination is irreducible — each property closes a gap the others do
 not address.
 
-The implementation is open (`ocp-types`, `ocp-host`, `ocp-conformance`), MIT
-licensed, zero-dependency beyond `serde` for the wire types, and
+The implementation is open (`ocp-types`, `ocp-host`, `ocp-conformance`),
+dual-licensed MIT OR Apache-2.0, zero-dependency beyond `serde` for the wire
+types, and
 conformance-verified today. The path from "open context as an idea" to "open
 context as a standard" is the conformance suite: anyone can build a provider,
 anyone can verify it, and the protocol evolves within a stable family without

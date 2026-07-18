@@ -27,8 +27,3 @@ Reference documentation for the **Open Context Protocol (OCP)** crates:
 - [**Stability**](./stability.md) — the crate-semver vs. protocol-version
   relationship, and what changes (and doesn't) as the protocol moves from
   `ocp/1.0-draft` to `ocp/1.0`.
-
-See also [`PUBLISHING.md`](../../PUBLISHING.md) at the repo root for the
-crates.io release process for these three crates specifically (distinct from
-[`RELEASING.md`](../../RELEASING.md), which covers the `stella` binary
-release).
