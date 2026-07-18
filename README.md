@@ -1,5 +1,7 @@
 # Open Context Protocol
 
+<img src="./assets/og-image.png" width="auto" height="150px" style="margin: 20px auto;"/>
+
 > If you want the deep research analysis, read [Advantages and Uniqueness](./docs/protocol-advantages.md).
 > If you want to build a provider today, read [Implementing a provider](./docs/implementing-a-provider.md).
 > This page is the one-read explanation of what OCP is, why it exists, and why
