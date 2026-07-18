@@ -1,4 +1,8 @@
-# Open Context Protocol
+<div style="text-align: left; margin: 10px 0;">
+  <img src="./assets/ocp-logo.svg" width="200px" height="200px">
+</div>
+
+# Open Context Protocol (draft v0.1.0)
 
 > If you want the deep research analysis, read [Advantages and Uniqueness](./docs/protocol-advantages.md).
 > If you want to build a provider today, read [Implementing a provider](./docs/implementing-a-provider.md).
