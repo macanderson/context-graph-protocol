@@ -183,5 +183,8 @@ protocol evolves inside a stable family without breaking what is already
 deployed.
 
 Start with [Protocol surface](./docs/protocol-surface.md) to read the types,
-[Implementing a provider](./docs/implementing-a-provider.md) to build one, and
-[Running conformance](./docs/running-conformance.md) to prove it.
+[Implementing a provider](./docs/implementing-a-provider.md) to build one,
+[Running conformance](./docs/running-conformance.md) to prove it, the
+[wire examples](./examples/) for diffable JSON transcripts, or the
+[machine-readable JSON Schema](./schema/ocp-envelope.schema.json) to validate
+your output in any language.

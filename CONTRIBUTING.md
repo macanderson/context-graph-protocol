@@ -47,3 +47,6 @@ OCP is dual-licensed **MIT OR Apache-2.0**. By contributing, you agree your
 contributions are licensed under the same terms, as certified by your DCO
 sign-off. No CLA, no copyright assignment.
 
+This project follows the [Code of Conduct](./CODE_OF_CONDUCT.md). By
+participating you are expected to uphold it.
+

@@ -1,0 +1,62 @@
+name: Feature request
+description: Propose an addition or change to OCP
+title: "feat: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Tell us what you're trying to do, not just what to add. The "why" matters
+        more than the "what" — a use case helps us evaluate whether the change
+        belongs in the protocol.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected crate / surface
+      description: Which part of OCP would this affect?
+      options:
+        - ocp-types (wire types)
+        - ocp-host (host runtime / transports / consent)
+        - ocp-conformance (conformance suite / ocp-inspect)
+        - documentation / spec
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The concrete use case or workflow that OCP doesn't support today.
+      placeholder: |
+        I'm building a provider that needs to return graph-structured context,
+        but the current Frame relation...
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: What would help?
+      description: Your proposed shape of the solution — a new field, transport, check, etc. Optional; the problem statement is the essential part.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What alternatives have you considered?
+      description: Workarounds, other protocols, or ways you've tried to solve this.
+  - type: checkboxes
+    id: stability
+    attributes:
+      label: Protocol-stability impact
+      options:
+        - label: This change is additive (new optional field / check) — safe within ocp/1
+          required: false
+        - label: This change is wire-breaking — would require ocp/2
+          required: false
+        - label: Not sure
+          required: false
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Contribution terms
+      options:
+        - label: I agree to dual-license this contribution under MIT OR Apache-2.0, per the DCO sign-off
+          required: true

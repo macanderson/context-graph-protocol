@@ -10,6 +10,15 @@ Protocol version: `PROTOCOL_VERSION = "ocp/1.0-draft"` (`ocp-types/src/lib.rs`).
 See [`stability.md`](./stability.md) for what "draft" means and when it
 freezes.
 
+> **Conformance language.** The key words **MUST**, **MUST NOT**, **SHOULD**,
+> and **MAY** in this document, the overview, and the build guide are to be
+> interpreted as described in [BCP 14 / RFC 2119](https://www.rfc-editor.org/rfc/rfc2119)
+> when they appear in **bold**. Lowercase "must" / "should" are used in the
+> ordinary sense. The consolidated, authoritative list of conformance
+> requirements is the [§ Conformance requirements](#conformance-requirements)
+> section at the end of this page.
+
+
 ## The three modules
 
 `ocp-types` is organized into three modules, re-exported from the crate root:
@@ -158,4 +167,101 @@ defines how they're framed on the wire — newline-delimited JSON (NDJSON), one
 `serde_json` value per line over stdio, or one JSON body per streamable-HTTP
 request/response. See [Implementing a provider](./implementing-a-provider.md)
 for the full envelope vocabulary (`handshake` / `handshake_ack` / `query` /
-`frames` / `shutdown` / `error`) and the version-compatibility rule.
+`frames` / `shutdown` / `error`) and the version-compatibility rule. See
+[`examples/`](../examples/) for diffable wire transcripts of a complete session,
+or the [machine-readable JSON Schema](../schema/ocp-envelope.schema.json) to
+validate messages in any language.
+
+## Machine-readable schema
+
+The wire shapes above are captured as a [JSON Schema (Draft 2020-12)](../schema/ocp-envelope.schema.json).
+The root schema validates a single envelope (one message per NDJSON line / per
+HTTP body); every payload type is also exposed under `$defs` for granular
+validation. Because the wire format is JSON, any standard JSON Schema validator
+works — `ajv` (JS/TS), Python `jsonschema`, the Rust `jsonschema` crate, or Go
+`gojsonschema` — with no IDL compiler or language lock-in.
+
+The schema encodes the structural conformance rules: required fields, `score ∈
+[0,1]`, non-empty `title`/`citation_label`/`id`, the `FrameKind` enum, the
+`ocp/MAJOR.MINOR(-draft)?` version-string pattern, u32 ranges, and the
+`Provenance.kind` → `"type"` serialization rename. A message that validates
+against the schema is structurally conformant; the `ocp-conformance` suite adds
+the behavioral checks (budget honesty, malformed-input tolerance, clean
+shutdown) that a schema alone cannot express.
+
+Run `python3 schema/validate-examples.py` to check the bundled examples against
+the schema — it doubles as a usage reference for wiring your own validator.
+
+---
+
+## Conformance requirements
+
+This section is the consolidated, authoritative list of what a conforming
+provider and host **MUST** do. The `ocp-conformance` suite checks the
+provider-side requirements; a host built on `ocp-host` enforces the
+host-side requirements. Bold keywords follow [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
+
+### Handshake and versioning
+
+| # | Requirement | Enforced / verified by |
+| - | ----------- | ---------------------- |
+| H1 | A provider **MUST** reply to `handshake` with a `handshake_ack` whose `protocol_version` is in the same major family as the host's. | `handshake` conformance check |
+| H2 | The `provider.name` and `provider.version` fields **MUST NOT** be empty. | `handshake` conformance check |
+| H3 | A version-family mismatch **MUST** be reported to the host as a named error, not left to hang. | `ocp-host::wire::versions_compatible` |
+
+### Data flow and consent
+
+| # | Requirement | Enforced / verified by |
+| - | ----------- | ---------------------- |
+| C1 | A conforming host **MUST NOT** auto-enable a provider that declares `data_flow.egress: true`. It **MUST** gate that provider behind explicit, named, revocable consent. | `ConsentStore` gate in `ocp-host` |
+| C2 | The host **MUST NOT** transmit a query payload to an `egress` provider before consent is recorded. | `Host::query_provider` gate |
+| C3 | A provider **SHOULD** declare `egress: true` honestly if it sends data off the local machine, directly or indirectly. | advisory; the host cannot rely solely on the claim — see C4 |
+| C4 | `ocp-host`'s HTTP transport **MUST** treat every remote provider as `egress` regardless of its handshake claim. | `ocp-host` HTTP transport |
+
+### Frame validity
+
+| # | Requirement | Enforced / verified by |
+| - | ----------- | ---------------------- |
+| F1 | Every frame's `score` **MUST** be in the range `[0, 1]`. | `frame-validity` conformance check; `ContextFrame::has_valid_score()` |
+| F2 | Every frame's `title` **MUST** be non-empty. | `frame-validity` conformance check |
+| F3 | Every frame's `citation_label` **MUST** be non-empty. | `frame-validity` conformance check |
+
+### Budget honesty
+
+| # | Requirement | Enforced / verified by |
+| - | ----------- | ---------------------- |
+| B1 | The sum of `token_cost` across a provider's returned frames **MUST NOT** exceed the query's `max_tokens`. | `budget-honesty` conformance check; `ContextQueryResult::respects_budget` |
+| B2 | A host **MUST** drop (with a loud report) the frames of any provider that violates B1, rather than silently truncating them. | `ocp-host::Host` budget audit |
+
+### Robustness
+
+| # | Requirement | Enforced / verified by |
+| - | ----------- | ---------------------- |
+| R1 | A provider **MUST NOT** crash on a malformed line or a bad request. It **SHOULD** reply `error` instead. | `malformed-input-tolerance` conformance check (stdio) |
+| R2 | A provider **MUST** tear down cleanly on `shutdown` (stdio: exit; HTTP: no further requests expected). | `shutdown-clean` conformance check |
+| R3 | Frame `content` **MUST** be treated as untrusted data by the host — delimited as quoted material, never executed as instructions. | `ocp-host` host contract |
+
+## Version strings
+
+The protocol version string has the grammar:
+
+```abnf
+version-string = "ocp/" major "." minor [ "-draft" ]
+major          = 1*DIGIT
+minor          = 1*DIGIT
+```
+
+The **major family** is the substring up to (but not including) the first `.`
+— e.g. the family of `ocp/1.0-draft` is `ocp/1`.
+
+Two version strings interoperate if and only if they share a major family.
+`ocp/1.0-draft` and `ocp/1.0` both belong to family `ocp/1` and interoperate;
+`ocp/2.0` does not interoperate with either. The `-draft` suffix marks a
+not-yet-frozen version within a family and does not affect interoperability.
+This rule is implemented by `ocp-host::wire::versions_compatible`; an
+out-of-Rust implementation **SHOULD** compare major families directly rather
+than hardcoding a specific version string.
+
+See [`stability.md`](./stability.md) for the crate-version vs. protocol-version
+distinction and the draft-to-freeze model, and [`GOVERNANCE.md`](../GOVERNANCE.md)
+for who decides the freeze.

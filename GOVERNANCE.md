@@ -1,0 +1,91 @@
+# OCP governance
+
+This document describes how the Open Context Protocol (OCP) is maintained, how
+it changes, and the path from `ocp/1.0-draft` to a frozen `ocp/1.0`. It exists
+so adopters can trust that the protocol is maintained deliberately and that
+"OCP conformant" is a stable, verifiable claim — not a maintainer's mood.
+
+## Roles
+
+- **Maintainer.** Mac Anderson (`@macanderson`) is the current maintainer. The
+  maintainer owns release decisions, approval of normative changes, and the
+  call on when `ocp/1.0-draft` freezes to `ocp/1.0`.
+- **Contributors.** Anyone. Contributions land via pull request under the
+  [DCO](./CONTRIBUTING.md) — no CLA, no copyright assignment.
+
+OCP is **maintainer-led today, not committee-led** — deliberately. A steering
+committee before there are independent implementations is theater. The path to
+broader governance is defined below and is triggered by adoption, not ambition.
+
+## What counts as a normative change
+
+A change is **normative** — it affects the protocol version or the conformance
+contract — if it does any of the following:
+
+- adds, removes, or renames a field in the wire types (`ocp-types`);
+- changes a field's required-ness or its serialized name;
+- adds or tightens a [conformance requirement](./docs/protocol-surface.md#conformance-requirements);
+- changes the [version-compatibility rule](./docs/protocol-surface.md#version-strings); or
+- changes the envelope vocabulary or framing.
+
+A change is **non-normative** if it only touches host internals, documentation,
+error messages, ergonomics, or tests. Non-normative changes need no protocol
+version bump.
+
+## How a normative change lands
+
+1. **Proposal.** Open an issue describing the change, the use case it unlocks,
+   and the alternatives considered. Normative changes are not drive-by.
+2. **Discussion.** The maintainer and contributors weigh it against the
+   [seven guarantees](./docs/overview.md) and the stability promise. A change
+   that silently breaks a deployed provider is rejected unless it justifies a
+   new major family.
+3. **Implementation.** A pull request implements it, updates this spec and
+   [`CHANGELOG.md`](./CHANGELOG.md) under `[Unreleased]`, and adds or updates a
+   witness — a conformance check or a wire example in [`examples/`](./examples/).
+4. **Decision.** The maintainer approves or closes. While pre-1.0, the
+   maintainer is the decision authority; after the freeze, normative changes
+   within the `ocp/1` family are additive-only and additive changes SHOULD land
+   without objection.
+
+The bias is **additive, not breaking.** A new optional field is a minor change;
+a removed or renamed field requires a new major family (`ocp/2`).
+
+## The path to `ocp/1.0`
+
+`ocp/1.0-draft` freezes to `ocp/1.0` when **all** of the following are true:
+
+- **Independent implementations.** At least two independent OCP implementations
+  pass the conformance suite against the reference host. One reference
+  implementation plus one genuine third-party implementation is the minimum;
+  the point is to prove the spec is buildable without the reference code.
+- **Stabilization window.** The wire surface has had no normative change for at
+  least 60 days.
+- **No blocking normative issues.** There are no open normative issues the
+  maintainer considers blocking.
+- **Complete enforcement.** The conformance suite's checks are agreed to fully
+  enforce the documented
+  [conformance requirements](./docs/protocol-surface.md#conformance-requirements).
+
+At the freeze, the `-draft` suffix is dropped, the crates move to `1.0.0` in
+lockstep, and the major-family compatibility rule guarantees that
+already-deployed `1.0-draft` providers keep handshaking successfully — no flag
+day. See [stability.md](./docs/stability.md).
+
+## Governance evolution
+
+When OCP has a healthy base of independent providers and hosts, the maintainer
+intends to transition from a single maintainer to a small group of maintainers
+drawn from independent implementers, with the conformance suite as the neutral
+arbiter of "conformant." The trigger is adoption, not a calendar date. Until
+then, the single-maintainer + public-PR + DCO model keeps the barrier to
+contribution low and the spec coherent.
+
+## Scope
+
+OCP specifies **context retrieval**: typed, budgeted, provenance-carrying,
+consent-gated, conformance-verified frames that a host composes into a prompt.
+It does not specify tool invocation — that is
+[MCP](https://modelcontextprotocol.io)'s scope — and will not absorb it. An
+agent that needs both composes them: OCP frames feed the prompt, MCP tools do
+the work. See ["How OCP relates to MCP"](./docs/overview.md).

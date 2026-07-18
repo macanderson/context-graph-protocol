@@ -27,3 +27,10 @@ Reference documentation for the **Open Context Protocol (OCP)** crates:
 - [**Stability**](./stability.md) — the crate-semver vs. protocol-version
   relationship, and what changes (and doesn't) as the protocol moves from
   `ocp/1.0-draft` to `ocp/1.0`.
+
+Also at the repo root: [`GOVERNANCE.md`](../GOVERNANCE.md) (how the protocol is
+maintained, what counts as a normative change, and the path to `ocp/1.0`),
+[`SECURITY.md`](../SECURITY.md) (vulnerability reporting),
+[`CODE_OF_CONDUCT.md`](../CODE_OF_CONDUCT.md),
+[`schema/`](../schema/) (machine-readable JSON Schema for the wire types), and
+[`examples/`](../examples/) (diffable wire transcripts).
