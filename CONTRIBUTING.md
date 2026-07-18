@@ -1,9 +1,4 @@
-# Contributing to Stella
-
-```text
-   ·  .  ✦   ·        ·   ✦        .   ·      ✦   .        ·
-   verified done, not claimed done — and that includes your PR.
-```
+# Contributing to Open Context Protocol (OCP)
 
 Thanks for wanting to make Open Context Protocol better. This document is the whole game:
 how to set up, where your change goes, what "done" means here, and how to
@@ -20,6 +15,8 @@ get it merged. It's long because it's honest — but the short version is:
 - [Issues and labels](#issues-and-labels)
 - [Security](#security)
 - [License](#license)
+
+---
 
 ## Ways to contribute
 
