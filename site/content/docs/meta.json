@@ -1,0 +1,16 @@
+{
+  "title": "Open Context Protocol",
+  "pages": [
+    "index",
+    "overview",
+    "protocol-surface",
+    "protocol-advantages",
+    "implementing-a-provider",
+    "running-conformance",
+    "stability",
+    "governance",
+    "contributing",
+    "changelog",
+    "security"
+  ]
+}
