@@ -201,6 +201,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "contextgraph-conformance"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "clap",
+ "colored",
+ "contextgraph-host",
+ "contextgraph-types",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "contextgraph-host"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "contextgraph-types",
+ "futures-util",
+ "libc",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "wiremock",
+]
+
+[[package]]
+name = "contextgraph-types"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cpufeatures"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -730,44 +768,6 @@ checksum = "91df4bbde75afed763b708b7eee1e8e7651e02d97f6d5dd763e89367e957b23b"
 dependencies = [
  "hermit-abi",
  "libc",
-]
-
-[[package]]
-name = "ocp-conformance"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "clap",
- "colored",
- "ocp-host",
- "ocp-types",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "ocp-host"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "futures-util",
- "libc",
- "ocp-types",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "wiremock",
-]
-
-[[package]]
-name = "ocp-types"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
 ]
 
 [[package]]

@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a defect in an OCP crate or the specification
+description: Report a defect in an Context Graph Protocol crate or the specification
 title: "bug: "
 labels: ["bug", "needs-triage"]
 body:
@@ -11,11 +11,11 @@ body:
     id: area
     attributes:
       label: Affected crate / surface
-      description: Which part of OCP is this about?
+      description: Which part of Context Graph Protocol is this about?
       options:
-        - ocp-types (wire types)
-        - ocp-host (host runtime / transports / consent)
-        - ocp-conformance (conformance suite / ocp-inspect)
+        - contextgraph-types (wire types)
+        - contextgraph-host (host runtime / transports / consent)
+        - contextgraph-conformance (conformance suite / contextgraph-inspect)
         - documentation / spec
         - other
     validations:
@@ -24,16 +24,16 @@ body:
     id: version
     attributes:
       label: Crate version(s)
-      description: The version of the OCP crate(s) you are using (e.g. `ocp-types 0.1.0`).
-      placeholder: "ocp-types 0.1.0, ocp-host 0.1.0"
+      description: The version of the Context Graph Protocol crate(s) you are using (e.g. `contextgraph-types 0.1.0`).
+      placeholder: "contextgraph-types 0.1.0, contextgraph-host 0.1.0"
     validations:
       required: true
   - type: input
     id: protocol-version
     attributes:
       label: Protocol version
-      description: The negotiated protocol version, if relevant (e.g. `ocp/1.0-draft`).
-      placeholder: "ocp/1.0-draft"
+      description: The negotiated protocol version, if relevant (e.g. `contextgraph/1.0-draft`).
+      placeholder: "contextgraph/1.0-draft"
   - type: input
     id: os
     attributes:
@@ -63,20 +63,20 @@ body:
       label: Repro steps
       description: The exact commands or code to reproduce, start to finish.
       placeholder: |
-        1. cargo run -p ocp-conformance --bin ocp-inspect -- stdio -- ./my-provider
+        1. cargo run -p contextgraph-conformance --bin contextgraph-inspect -- stdio -- ./my-provider
         2. ...
   - type: textarea
     id: logs
     attributes:
       label: Logs / output
-      description: Relevant output, stack traces, or the `ocp-inspect --json` report. Paste as-is.
+      description: Relevant output, stack traces, or the `contextgraph-inspect --json` report. Paste as-is.
       render: shell
   - type: checkboxes
     id: conformance
     attributes:
       label: Conformance status
       options:
-        - label: I can reproduce this against a conformant provider (passes `ocp-inspect`)
+        - label: I can reproduce this against a conformant provider (passes `contextgraph-inspect`)
           required: false
   - type: checkboxes
     id: terms

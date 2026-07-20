@@ -1,22 +1,22 @@
 ---
-title: "OCP governance"
-description: "How OCP is maintained, how normative changes are decided, and the criteria for freezing the 1.0 protocol."
+title: "Context Graph Protocol governance"
+description: "How Context Graph Protocol is maintained, how normative changes are decided, and the criteria for freezing the 1.0 protocol."
 ---
 
-This document describes how the Open Context Protocol (OCP) is maintained, how
-it changes, and the path from `ocp/1.0-draft` to a frozen `ocp/1.0`. It exists
+This document describes how the Context Graph Protocol is maintained, how
+it changes, and the path from `contextgraph/1.0-draft` to a frozen `contextgraph/1.0`. It exists
 so adopters can trust that the protocol is maintained deliberately and that
-"OCP conformant" is a stable, verifiable claim — not a maintainer's mood.
+"Context Graph Protocol conformant" is a stable, verifiable claim — not a maintainer's mood.
 
 ## Roles
 
 - **Maintainer.** Mac Anderson (`@macanderson`) is the current maintainer. The
   maintainer owns release decisions, approval of normative changes, and the
-  call on when `ocp/1.0-draft` freezes to `ocp/1.0`.
+  call on when `contextgraph/1.0-draft` freezes to `contextgraph/1.0`.
 - **Contributors.** Anyone. Contributions land via pull request under the
   [DCO](./contributing) — no CLA, no copyright assignment.
 
-OCP is **maintainer-led today, not committee-led** — deliberately. A steering
+Context Graph Protocol is **maintainer-led today, not committee-led** — deliberately. A steering
 committee before there are independent implementations is theater. The path to
 broader governance is defined below and is triggered by adoption, not ambition.
 
@@ -25,7 +25,7 @@ broader governance is defined below and is triggered by adoption, not ambition.
 A change is **normative** — it affects the protocol version or the conformance
 contract — if it does any of the following:
 
-- adds, removes, or renames a field in the wire types (`ocp-types`);
+- adds, removes, or renames a field in the wire types (`contextgraph-types`);
 - changes a field's required-ness or its serialized name;
 - adds or tightens a [conformance requirement](./protocol-surface#conformance-requirements);
 - changes the [version-compatibility rule](./protocol-surface#version-strings); or
@@ -48,17 +48,17 @@ version bump.
    witness — a conformance check or a wire example in [`examples/`](./examples/).
 4. **Decision.** The maintainer approves or closes. While pre-1.0, the
    maintainer is the decision authority; after the freeze, normative changes
-   within the `ocp/1` family are additive-only and additive changes SHOULD land
+   within the `contextgraph/1` family are additive-only and additive changes SHOULD land
    without objection.
 
 The bias is **additive, not breaking.** A new optional field is a minor change;
-a removed or renamed field requires a new major family (`ocp/2`).
+a removed or renamed field requires a new major family (`contextgraph/2`).
 
-## The path to `ocp/1.0`
+## The path to `contextgraph/1.0`
 
-`ocp/1.0-draft` freezes to `ocp/1.0` when **all** of the following are true:
+`contextgraph/1.0-draft` freezes to `contextgraph/1.0` when **all** of the following are true:
 
-- **Independent implementations.** At least two independent OCP implementations
+- **Independent implementations.** At least two independent Context Graph Protocol implementations
   pass the conformance suite against the reference host. One reference
   implementation plus one genuine third-party implementation is the minimum;
   the point is to prove the spec is buildable without the reference code.
@@ -77,7 +77,7 @@ day. See [stability.md](./stability).
 
 ## Governance evolution
 
-When OCP has a healthy base of independent providers and hosts, the maintainer
+When Context Graph Protocol has a healthy base of independent providers and hosts, the maintainer
 intends to transition from a single maintainer to a small group of maintainers
 drawn from independent implementers, with the conformance suite as the neutral
 arbiter of "conformant." The trigger is adoption, not a calendar date. Until
@@ -86,9 +86,9 @@ contribution low and the spec coherent.
 
 ## Scope
 
-OCP specifies **context retrieval**: typed, budgeted, provenance-carrying,
+Context Graph Protocol specifies **context retrieval**: typed, budgeted, provenance-carrying,
 consent-gated, conformance-verified frames that a host composes into a prompt.
 It does not specify tool invocation — that is
 [MCP](https://modelcontextprotocol.io)'s scope — and will not absorb it. An
-agent that needs both composes them: OCP frames feed the prompt, MCP tools do
-the work. See ["How OCP relates to MCP"](./overview).
+agent that needs both composes them: Context Graph Protocol frames feed the prompt, MCP tools do
+the work. See ["How Context Graph Protocol relates to MCP"](./overview).

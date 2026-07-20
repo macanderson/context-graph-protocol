@@ -1,6 +1,6 @@
-# Contributing to Open Context Protocol (OCP)
+# Contributing to Context Graph Protocol
 
-Thanks for wanting to make Open Context Protocol better. This document is the whole game:
+Thanks for wanting to make Context Graph Protocol better. This document is the whole game:
 how to set up, where your change goes, what "done" means here, and how to
 get it merged. It's long because it's honest — but the short version is:
 
@@ -10,10 +10,10 @@ get it merged. It's long because it's honest — but the short version is:
 with the crate or surface as scope, matching the existing history:
 
 ```text
-feat(ocp-host): add fan-out timeout for slow providers
-fix(ocp-conformance): restore correct exit code on budget-honesty failure
+feat(contextgraph-host): add fan-out timeout for slow providers
+fix(contextgraph-conformance): restore correct exit code on budget-honesty failure
 docs(readme): clarify dual-license statement
-ci(release): publish ocp-types to crates.io
+ci(release): publish contextgraph-types to crates.io
 ```
 
 **DCO, not CLA.** Sign every commit (`git commit -s`) to certify the
@@ -34,8 +34,8 @@ normal part of the loop here, not a rejection.
 
 ## Issues and labels
 
-- **[Bug report](https://github.com/macanderson/opencontextprotocol/issues/new?template=bug_report.yml)** — include the OCP crate name and version, OS, and a repro.
-- **[Feature request](https://github.com/macanderson/opencontextprotocol/issues/new?template=feature_request.yml)** — say what you're trying to do, not just what to add.
+- **[Bug report](https://github.com/macanderson/context-graph-protocol/issues/new?template=bug_report.yml)** — include the Context Graph Protocol crate name and version, OS, and a repro.
+- **[Feature request](https://github.com/macanderson/context-graph-protocol/issues/new?template=feature_request.yml)** — say what you're trying to do, not just what to add.
 
 Labels you'll see: `area:*` routes an issue to a crate; `P0`–`P2` is priority;
 `good first issue` and `help wanted` mean what they say; `needs-witness` means
@@ -43,7 +43,7 @@ a PR is waiting on its witness test.
 
 ## License
 
-OCP is dual-licensed **MIT OR Apache-2.0**. By contributing, you agree your
+Context Graph Protocol is dual-licensed **MIT OR Apache-2.0**. By contributing, you agree your
 contributions are licensed under the same terms, as certified by your DCO
 sign-off. No CLA, no copyright assignment.
 

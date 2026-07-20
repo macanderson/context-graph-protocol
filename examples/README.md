@@ -1,17 +1,17 @@
-# OCP wire examples
+# Context Graph Protocol wire examples
 
-Reference wire transcripts for the Open Context Protocol. These are the exact
+Reference wire transcripts for the Context Graph Protocol. These are the exact
 JSON shapes a host and provider exchange — useful when implementing a provider
 in **any language**, because you can diff your own output against them.
 
-There is no separate IDL; the [`ocp-types`](https://crates.io/crates/ocp-types)
+There is no separate IDL; the [`contextgraph-types`](https://crates.io/crates/contextgraph-types)
 structs serialized by `serde_json` *are* the protocol. For the type definitions
 see [protocol-surface.md](../docs/protocol-surface.md); for the build guide see
 [implementing-a-provider.md](../docs/implementing-a-provider.md); for the
 normative rules these examples follow see
 [protocol-surface.md § Conformance requirements](../docs/protocol-surface.md#conformance-requirements).
 
-**These examples are machine-checked** against the [JSON Schema](../schema/ocp-envelope.schema.json).
+**These examples are machine-checked** against the [JSON Schema](../schema/contextgraph-envelope.schema.json).
 Run `python3 schema/validate-examples.py` to verify they conform, or point your
 own validator (any language — `ajv`, Python `jsonschema`, Rust `jsonschema`
 crate, Go `gojsonschema`) at the schema to validate your provider's output.
@@ -27,7 +27,7 @@ crate, Go `gojsonschema`) at the schema to validate your provider's output.
 
 ## Framing
 
-Every message is one OCP **envelope** — an internally-tagged enum
+Every message is one Context Graph Protocol **envelope** — an internally-tagged enum
 (`#[serde(tag = "type", rename_all = "snake_case")]`). The `type` field selects
 the variant and sits at the same level as the payload fields:
 
@@ -57,7 +57,7 @@ Labels show direction; they are **not** part of the wire data.
 speaks.
 
 ```json
-{"type":"handshake","protocol_version":"ocp/1.0-draft"}
+{"type":"handshake","protocol_version":"contextgraph/1.0-draft"}
 ```
 
 **2. provider → host — `handshake_ack`.** The provider replies with its own
@@ -65,7 +65,7 @@ version, its identity, and its capabilities. This provider reads workspace
 content locally and has **no egress**, so a host may auto-enable it.
 
 ```json
-{"type":"handshake_ack","protocol_version":"ocp/1.0-draft","provider":{"name":"repo-graph","version":"0.2.0","data_flow":{"reads":true,"writes":false,"egress":false}},"capabilities":{"query":{"kinds":["doc","symbol"],"filters":["path","lang"]},"upsert":false,"graph":true,"embeddings_fingerprint":null,"subscribe":false}}
+{"type":"handshake_ack","protocol_version":"contextgraph/1.0-draft","provider":{"name":"repo-graph","version":"0.2.0","data_flow":{"reads":true,"writes":false,"egress":false}},"capabilities":{"query":{"kinds":["doc","symbol"],"filters":["path","lang"]},"upsert":false,"graph":true,"embeddings_fingerprint":null,"subscribe":false}}
 ```
 
 **3. host → provider — `query`.** A retrieval request carrying a hard token
@@ -96,14 +96,14 @@ If a provider sends data off the local machine — a cloud documentation search,
 a remote embedding API — it declares `egress: true`:
 
 ```json
-{"type":"handshake_ack","protocol_version":"ocp/1.0-draft","provider":{"name":"cloud-docs","version":"1.4.0","data_flow":{"reads":true,"writes":false,"egress":true}},"capabilities":{"query":{"kinds":["doc"],"filters":[]},"upsert":false,"graph":false,"embeddings_fingerprint":null,"subscribe":false}}
+{"type":"handshake_ack","protocol_version":"contextgraph/1.0-draft","provider":{"name":"cloud-docs","version":"1.4.0","data_flow":{"reads":true,"writes":false,"egress":true}},"capabilities":{"query":{"kinds":["doc"],"filters":[]},"upsert":false,"graph":false,"embeddings_fingerprint":null,"subscribe":false}}
 ```
 
 A conforming host **does not auto-enable** this provider. It gates the provider
 behind explicit, named, one-time consent and **never transmits the query
 payload before consent is recorded**. The host's HTTP transport treats *every*
 remote provider as `egress` regardless of this claim, so a remote cannot lie
-its way past the gate. This is the single most security-relevant shape in OCP;
+its way past the gate. This is the single most security-relevant shape in Context Graph Protocol;
 see [protocol-surface.md § Conformance requirements](../docs/protocol-surface.md#conformance-requirements).
 
 ## Reporting an error without dying

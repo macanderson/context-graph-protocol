@@ -1,15 +1,15 @@
 ---
-title: "OCP protocol surface"
-description: "The normative OCP wire types, envelope framing, version grammar, schema, and conformance requirements."
+title: "Context Graph Protocol protocol surface"
+description: "The normative Context Graph Protocol wire types, envelope framing, version grammar, schema, and conformance requirements."
 ---
 
-This is the normative shape of the Open Context Protocol (OCP) as bound to
-Rust types by [`ocp-types`](https://crates.io/crates/ocp-types). Every type
+This is the normative shape of the Context Graph Protocol as bound to
+Rust types by [`contextgraph-types`](https://crates.io/crates/contextgraph-types). Every type
 below lives in that crate, round-trips through `serde_json`, and *is* the
 protocol — there is no separate IDL. Field-level doc comments in the crate
 are the ultimate source of truth; this page is a guided tour.
 
-Protocol version: `PROTOCOL_VERSION = "ocp/1.0-draft"` (`ocp-types/src/lib.rs`).
+Protocol version: `PROTOCOL_VERSION = "contextgraph/1.0-draft"` (`contextgraph-types/src/lib.rs`).
 See [`stability.md`](./stability) for what "draft" means and when it
 freezes.
 
@@ -24,7 +24,7 @@ freezes.
 
 ## The three modules
 
-`ocp-types` is organized into three modules, re-exported from the crate root:
+`contextgraph-types` is organized into three modules, re-exported from the crate root:
 
 - [`capability`](#handshake--capability) — what a provider is and does,
   negotiated at the handshake.
@@ -66,7 +66,7 @@ pub struct QueryCapability {
 `DataFlow.egress` is the security-critical field. **A conforming host MUST
 NOT auto-enable a provider that declares `egress: true`** — it must gate that
 provider behind an explicit, one-time consent that names what leaves
-(enforced by `ocp-host`'s `ConsentStore`; see
+(enforced by `contextgraph-host`'s `ConsentStore`; see
 [Implementing a provider](./implementing-a-provider)).
 
 ## Context query
@@ -98,7 +98,7 @@ pub struct ContextQueryResult {
 
 - `total_token_cost() -> u64` — sum of `token_cost` across returned frames.
 - `respects_budget(max_tokens: u32) -> bool` — whether that sum stayed within
-  the query's budget. `ocp-host`'s fan-out router calls this on every
+  the query's budget. `contextgraph-host`'s fan-out router calls this on every
   response and drops (with a loud report) any provider whose frames fail it —
   a provider that returns more tokens than it claimed is exhibiting
   **budget dishonesty**, and its frames are never trusted into a prompt.
@@ -156,28 +156,28 @@ Two contract points worth calling out explicitly, because the conformance
 suite checks both:
 
 - **`score` must be in `[0, 1]`.** `ContextFrame::has_valid_score()` is the
-  cheap self-check any provider or host can run; `ocp-conformance`'s
+  cheap self-check any provider or host can run; `contextgraph-conformance`'s
   `frame-validity` check enforces it against real providers.
 - **`title` and `citation_label` must never be empty.** A host must be able
   to cite a frame by a human label — an empty or missing citation label is a
   conformance failure, not a cosmetic gap. (Whole-platform convention: raw
   ids are never the primary on-screen identifier.)
 
-## Wire framing (defined in `ocp-host`, not `ocp-types`)
+## Wire framing (defined in `contextgraph-host`, not `contextgraph-types`)
 
-`ocp-types` defines the payload shapes above; `ocp-host::wire::Envelope`
+`contextgraph-types` defines the payload shapes above; `contextgraph-host::wire::Envelope`
 defines how they're framed on the wire — newline-delimited JSON (NDJSON), one
 `serde_json` value per line over stdio, or one JSON body per streamable-HTTP
 request/response. See [Implementing a provider](./implementing-a-provider)
 for the full envelope vocabulary (`handshake` / `handshake_ack` / `query` /
 `frames` / `shutdown` / `error`) and the version-compatibility rule. See
 [`examples/`](../examples/) for diffable wire transcripts of a complete session,
-or the [machine-readable JSON Schema](../schema/ocp-envelope.schema.json) to
+or the [machine-readable JSON Schema](../schema/contextgraph-envelope.schema.json) to
 validate messages in any language.
 
 ## Machine-readable schema
 
-The wire shapes above are captured as a [JSON Schema (Draft 2020-12)](../schema/ocp-envelope.schema.json).
+The wire shapes above are captured as a [JSON Schema (Draft 2020-12)](../schema/contextgraph-envelope.schema.json).
 The root schema validates a single envelope (one message per NDJSON line / per
 HTTP body); every payload type is also exposed under `$defs` for granular
 validation. Because the wire format is JSON, any standard JSON Schema validator
@@ -186,9 +186,9 @@ works — `ajv` (JS/TS), Python `jsonschema`, the Rust `jsonschema` crate, or Go
 
 The schema encodes the structural conformance rules: required fields, `score ∈
 [0,1]`, non-empty `title`/`citation_label`/`id`, the `FrameKind` enum, the
-`ocp/MAJOR.MINOR(-draft)?` version-string pattern, u32 ranges, and the
+`contextgraph/MAJOR.MINOR(-draft)?` version-string pattern, u32 ranges, and the
 `Provenance.kind` → `"type"` serialization rename. A message that validates
-against the schema is structurally conformant; the `ocp-conformance` suite adds
+against the schema is structurally conformant; the `contextgraph-conformance` suite adds
 the behavioral checks (budget honesty, malformed-input tolerance, clean
 shutdown) that a schema alone cannot express.
 
@@ -200,8 +200,8 @@ the schema — it doubles as a usage reference for wiring your own validator.
 ## Conformance requirements
 
 This section is the consolidated, authoritative list of what a conforming
-provider and host **MUST** do. The `ocp-conformance` suite checks the
-provider-side requirements; a host built on `ocp-host` enforces the
+provider and host **MUST** do. The `contextgraph-conformance` suite checks the
+provider-side requirements; a host built on `contextgraph-host` enforces the
 host-side requirements. Bold keywords follow [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 
 ### Handshake and versioning
@@ -210,16 +210,16 @@ host-side requirements. Bold keywords follow [RFC 2119](https://www.rfc-editor.o
 | - | ----------- | ---------------------- |
 | H1 | A provider **MUST** reply to `handshake` with a `handshake_ack` whose `protocol_version` is in the same major family as the host's. | `handshake` conformance check |
 | H2 | The `provider.name` and `provider.version` fields **MUST NOT** be empty. | `handshake` conformance check |
-| H3 | A version-family mismatch **MUST** be reported to the host as a named error, not left to hang. | `ocp-host::wire::versions_compatible` |
+| H3 | A version-family mismatch **MUST** be reported to the host as a named error, not left to hang. | `contextgraph-host::wire::versions_compatible` |
 
 ### Data flow and consent
 
 | # | Requirement | Enforced / verified by |
 | - | ----------- | ---------------------- |
-| C1 | A conforming host **MUST NOT** auto-enable a provider that declares `data_flow.egress: true`. It **MUST** gate that provider behind explicit, named, revocable consent. | `ConsentStore` gate in `ocp-host` |
+| C1 | A conforming host **MUST NOT** auto-enable a provider that declares `data_flow.egress: true`. It **MUST** gate that provider behind explicit, named, revocable consent. | `ConsentStore` gate in `contextgraph-host` |
 | C2 | The host **MUST NOT** transmit a query payload to an `egress` provider before consent is recorded. | `Host::query_provider` gate |
 | C3 | A provider **SHOULD** declare `egress: true` honestly if it sends data off the local machine, directly or indirectly. | advisory; the host cannot rely solely on the claim — see C4 |
-| C4 | `ocp-host`'s HTTP transport **MUST** treat every remote provider as `egress` regardless of its handshake claim. | `ocp-host` HTTP transport |
+| C4 | `contextgraph-host`'s HTTP transport **MUST** treat every remote provider as `egress` regardless of its handshake claim. | `contextgraph-host` HTTP transport |
 
 ### Frame validity
 
@@ -234,7 +234,7 @@ host-side requirements. Bold keywords follow [RFC 2119](https://www.rfc-editor.o
 | # | Requirement | Enforced / verified by |
 | - | ----------- | ---------------------- |
 | B1 | The sum of `token_cost` across a provider's returned frames **MUST NOT** exceed the query's `max_tokens`. | `budget-honesty` conformance check; `ContextQueryResult::respects_budget` |
-| B2 | A host **MUST** drop (with a loud report) the frames of any provider that violates B1, rather than silently truncating them. | `ocp-host::Host` budget audit |
+| B2 | A host **MUST** drop (with a loud report) the frames of any provider that violates B1, rather than silently truncating them. | `contextgraph-host::Host` budget audit |
 
 ### Robustness
 
@@ -242,26 +242,26 @@ host-side requirements. Bold keywords follow [RFC 2119](https://www.rfc-editor.o
 | - | ----------- | ---------------------- |
 | R1 | A provider **MUST NOT** crash on a malformed line or a bad request. It **SHOULD** reply `error` instead. | `malformed-input-tolerance` conformance check (stdio) |
 | R2 | A provider **MUST** tear down cleanly on `shutdown` (stdio: exit; HTTP: no further requests expected). | `shutdown-clean` conformance check |
-| R3 | Frame `content` **MUST** be treated as untrusted data by the host — delimited as quoted material, never executed as instructions. | `ocp-host` host contract |
+| R3 | Frame `content` **MUST** be treated as untrusted data by the host — delimited as quoted material, never executed as instructions. | `contextgraph-host` host contract |
 
 ## Version strings
 
 The protocol version string has the grammar:
 
 ```text
-version-string = "ocp/" major "." minor [ "-draft" ]
+version-string = "contextgraph/" major "." minor [ "-draft" ]
 major          = 1*DIGIT
 minor          = 1*DIGIT
 ```
 
 The **major family** is the substring up to (but not including) the first `.`
-— e.g. the family of `ocp/1.0-draft` is `ocp/1`.
+— e.g. the family of `contextgraph/1.0-draft` is `contextgraph/1`.
 
 Two version strings interoperate if and only if they share a major family.
-`ocp/1.0-draft` and `ocp/1.0` both belong to family `ocp/1` and interoperate;
-`ocp/2.0` does not interoperate with either. The `-draft` suffix marks a
+`contextgraph/1.0-draft` and `contextgraph/1.0` both belong to family `contextgraph/1` and interoperate;
+`contextgraph/2.0` does not interoperate with either. The `-draft` suffix marks a
 not-yet-frozen version within a family and does not affect interoperability.
-This rule is implemented by `ocp-host::wire::versions_compatible`; an
+This rule is implemented by `contextgraph-host::wire::versions_compatible`; an
 out-of-Rust implementation **SHOULD** compare major families directly rather
 than hardcoding a specific version string.
 

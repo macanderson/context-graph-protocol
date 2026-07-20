@@ -3,20 +3,20 @@ import type { ReactNode } from "react";
 import { DocsLayout } from "fumadocs-ui/layouts/docs";
 import { source } from "@/lib/source";
 
-const repositoryUrl = "https://github.com/macanderson/opencontextprotocol";
+const repositoryUrl = "https://github.com/macanderson/context-graph-protocol";
 
 function ProtocolTitle() {
   return (
     <span className="flex items-center gap-2.5 font-medium tracking-tight">
       <Image
-        src="/ocp-logo.svg"
+        src="/contextgraph-logo.svg"
         alt=""
         aria-hidden="true"
         width={28}
         height={28}
         className="size-7 border border-fd-border"
       />
-      <span>Open Context Protocol</span>
+      <span>Context Graph Protocol</span>
       <span className="hidden border border-fd-border px-1.5 py-0.5 font-mono text-[10px] font-normal tracking-wide text-fd-muted-foreground sm:inline">
         1.0 DRAFT
       </span>

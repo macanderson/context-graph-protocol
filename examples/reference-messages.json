@@ -1,11 +1,11 @@
 [
   {
     "type": "handshake",
-    "protocol_version": "ocp/1.0-draft"
+    "protocol_version": "contextgraph/1.0-draft"
   },
   {
     "type": "handshake_ack",
-    "protocol_version": "ocp/1.0-draft",
+    "protocol_version": "contextgraph/1.0-draft",
     "provider": {
       "name": "repo-graph",
       "version": "0.2.0",
@@ -21,7 +21,7 @@
   },
   {
     "type": "handshake_ack",
-    "protocol_version": "ocp/1.0-draft",
+    "protocol_version": "contextgraph/1.0-draft",
     "provider": {
       "name": "cloud-docs",
       "version": "1.4.0",
