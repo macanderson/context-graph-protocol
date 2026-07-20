@@ -1,10 +1,10 @@
 ---
-title: "The Open Context Protocol: Advantages and Uniqueness"
-description: "A research analysis of the seven properties that distinguish OCP as a trust architecture for context retrieval."
+title: "The Context Graph Protocol: Advantages and Uniqueness"
+description: "A research analysis of the seven properties that distinguish Context Graph Protocol as a trust architecture for context retrieval."
 ---
 
 > **Research note.** This page is a standalone analysis of why the Open Context
-> Protocol (OCP) represents a qualitatively different approach to context
+> Protocol (Context Graph Protocol) represents a qualitatively different approach to context
 > retrieval for AI coding agents. It is written for engineers and researchers
 > evaluating retrieval architectures, not for a quick start. For the
 > implementation guide, see [Implementing a provider](./implementing-a-provider);
@@ -19,16 +19,16 @@ Every production AI coding agent retrieves context: code snippets, symbol
 definitions, documentation, prior episodes, graph relationships. The
 overwhelming industry practice is to treat retrieval as an opaque blob-pipe —
 a vector search or a grep result stuffed into a prompt with no accountability
-for cost, provenance, consent, or citation. The **Open Context Protocol
-(OCP)**, implemented in this repository as `ocp-types`, `ocp-host`, and
-`ocp-conformance`, takes a fundamentally different position: **context is a
+for cost, provenance, consent, or citation. The **Context Graph Protocol
+(Context Graph Protocol)**, implemented in this repository as `contextgraph-types`, `contextgraph-host`, and
+`contextgraph-conformance`, takes a fundamentally different position: **context is a
 first-class, typed, budgeted, provenance-carrying, consent-gated, and
 conformance-verified unit of exchange.** Every frame that enters a prompt is
 traceable to its source, honest about its cost, gated by recorded consent, and
 machine-checked for contract compliance — context that an agent, a host, or an
 auditor can trust as evidence rather than accept on faith.
 
-This document articulates the seven advantages that distinguish OCP from prior
+This document articulates the seven advantages that distinguish Context Graph Protocol from prior
 approaches, maps each to its enforcement mechanism in the implementation, and
 explains why the combination is irreducible: removing any single property
 collapses the trust model back to the blob-pipe.
@@ -81,7 +81,7 @@ leaks to a third-party service without consent, until a stale fact sends the
 agent down a wrong path, until an auditor asks "where did this answer come
 from?" and there is no trail.
 
-OCP exists to make every one of those questions answerable, not by convention,
+Context Graph Protocol exists to make every one of those questions answerable, not by convention,
 but by **contract** — a wire protocol whose invariants are enforced by the host
 runtime and verified by a public conformance suite.
 
@@ -91,16 +91,16 @@ runtime and verified by a public conformance suite.
 
 | Property | What it guarantees | Enforced by |
 |---|---|---|
-| **Provenance** | Every frame carries its full origin chain (URI, range, digest, method, agent) | `ContextFrame.provenance` (`ocp-types::frame`) |
-| **Budget honesty** | A provider's frames never sum above the query's `max_tokens`; a lie is detected and the frames are dropped | `Host::query_one_isolated` budget audit (`ocp-host::host`); `frame-validity` conformance check |
-| **Consent enforcement** | An egress provider is never queried until recorded, named consent exists; the query payload is not transmitted before that | `ConsentStore::permits` (`ocp-host::consent`); `Host::query_provider` gate |
-| **Conformance verification** | "OCP conformant" is a machine-checked claim, not a self-attestation; the conformance suite is adversarial | `ocp-conformance` — 5 checks that deliberately trip each failure mode |
+| **Provenance** | Every frame carries its full origin chain (URI, range, digest, method, agent) | `ContextFrame.provenance` (`contextgraph-types::frame`) |
+| **Budget honesty** | A provider's frames never sum above the query's `max_tokens`; a lie is detected and the frames are dropped | `Host::query_one_isolated` budget audit (`contextgraph-host::host`); `frame-validity` conformance check |
+| **Consent enforcement** | An egress provider is never queried until recorded, named consent exists; the query payload is not transmitted before that | `ConsentStore::permits` (`contextgraph-host::consent`); `Host::query_provider` gate |
+| **Conformance verification** | "Context Graph Protocol conformant" is a machine-checked claim, not a self-attestation; the conformance suite is adversarial | `contextgraph-conformance` — 5 checks that deliberately trip each failure mode |
 | **Citation guarantees** | Every frame has a non-empty `title` and `citation_label`; raw ids are never the primary identifier | `frame-validity` conformance check; platform-wide convention |
-| **Version stability** | The protocol evolves within a major family without breaking interop; the draft-to-freeze transition requires no flag day | `versions_compatible` (`ocp-host::wire`); major-family matching |
-| **Temporal validity** | Facts carry `valid_from` / `valid_to` windows; queries can pin retrieval to a point in time via `as_of` | `ContextFrame` temporal fields; `ContextQuery.as_of` (`ocp-types`) |
+| **Version stability** | The protocol evolves within a major family without breaking interop; the draft-to-freeze transition requires no flag day | `versions_compatible` (`contextgraph-host::wire`); major-family matching |
+| **Temporal validity** | Facts carry `valid_from` / `valid_to` windows; queries can pin retrieval to a point in time via `as_of` | `ContextFrame` temporal fields; `ContextQuery.as_of` (`contextgraph-types`) |
 
-Each property is defined not by documentation but by a type in `ocp-types`
-and an enforcement path in `ocp-host` or `ocp-conformance`. The remainder of
+Each property is defined not by documentation but by a type in `contextgraph-types`
+and an enforcement path in `contextgraph-host` or `contextgraph-conformance`. The remainder of
 this document examines each in turn.
 
 ---
@@ -125,7 +125,7 @@ A frame returned from a code-graph provider might carry a `file` provenance
 entry with `uri: "file:///repo/src/lib.rs"`, `range: "L120-160"`, and
 `digest: "sha256:..."`. A frame derived from an agent's prior reasoning might
 carry a `derivation` entry with `method: "tree-sitter-symbol-extraction"` and
-`by: "ocp-graph"`. A frame from an episodic memory store might carry an
+`by: "contextgraph-graph"`. A frame from an episodic memory store might carry an
 `episode` entry naming the session that produced it.
 
 **Why this matters.** When a judge — whether an LLM judge in goal mode or a
@@ -169,7 +169,7 @@ RAG pipeline, the retrieval step and the budget step are decoupled: the
 retriever returns "the top-K results," and the prompt assembler hopes they
 fit. When they don't, the assembler either truncates (losing the tail silently)
 or overflows (sending more tokens than budgeted, inflating cost and latency).
-In OCP, the budget is part of the *query contract*, and the provider is
+In Context Graph Protocol, the budget is part of the *query contract*, and the provider is
 responsible for selecting its best frames within that budget — with `truncated:
 true` and `dropped_estimate` if it had more material than fit. The host never
 has to guess whether the retrieval step respected the budget; it can verify it
@@ -185,7 +185,7 @@ dropped and reported, and the other four providers' frames compose honestly.
 
 ## 5. Consent enforcement — data-flow consent is an audit trail
 
-The `DataFlow` struct is the security-critical field in OCP:
+The `DataFlow` struct is the security-critical field in Context Graph Protocol:
 
 ```rust
 pub struct DataFlow {
@@ -212,14 +212,14 @@ This is enforced structurally:
 - The `ConsentRecord` retains `granted_scope` — a human-readable description of
   what data flows out — as an auditable trail. Consent is not a boolean
   checkbox; it is a *named, recorded, revocable* decision.
-- `ocp-host`'s HTTP transport goes further: it treats *every* remote provider
+- `contextgraph-host`'s HTTP transport goes further: it treats *every* remote provider
   as egress regardless of the handshake claim, so a remote provider cannot lie
   its way out of the consent gate.
 
 **Why this matters.** In a world where coding agents increasingly integrate
 with external services — issue trackers, documentation APIs, cloud embedding
 stores, knowledge graphs — the question "what left my machine?" becomes
-critical for enterprise security, compliance, and trust. OCP's consent model
+critical for enterprise security, compliance, and trust. Context Graph Protocol's consent model
 makes this answerable at the protocol level: the consent store is a serde-able
 audit log that a security team can inspect, and the gate is enforced before
 data transmission, not after.
@@ -235,8 +235,8 @@ the query text itself may contain sensitive information.
 
 ## 6. Conformance verification — contracts are machine-checked
 
-"OCP conformant" is not a self-attestation. It is a machine-checked claim,
-defined as **green on `ocp-conformance`'s suite for your declared capability
+"Context Graph Protocol conformant" is not a self-attestation. It is a machine-checked claim,
+defined as **green on `contextgraph-conformance`'s suite for your declared capability
 set**. The suite is deliberately adversarial:
 
 | Check | What it proves | Fails when |
@@ -257,7 +257,7 @@ everything.
 **Why this matters.** The alternative to a conformance suite is a
 documentation page that says "please be honest about costs and include citation
 labels." Documentation is advisory; conformance is verifiable. A third party
-building an OCP provider can run `ocp-inspect` in their CI and gate on it —
+building an Context Graph Protocol provider can run `contextgraph-inspect` in their CI and gate on it —
 the same binary, the same checks, that the reference host runs. This makes
 interoperability a *testable property* rather than a *trust assumption*.
 
@@ -288,27 +288,27 @@ target id. The convention is consistent across the protocol surface.
 
 ## 8. Version stability — evolution without flag days
 
-OCP separates **crate version** (ordinary Cargo semver) from **protocol
+Context Graph Protocol separates **crate version** (ordinary Cargo semver) from **protocol
 version** (the wire-format identity negotiated at handshake). The current
-protocol version is `ocp/1.0-draft`.
+protocol version is `contextgraph/1.0-draft`.
 
 Two protocol versions interoperate when they share a **major family** — the
-substring up to the first `.`. So `ocp/1.0-draft` and `ocp/1.0` both belong to
-family `ocp/1` and interoperate. A jump to `ocp/2.0` does not.
+substring up to the first `.`. So `contextgraph/1.0-draft` and `contextgraph/1.0` both belong to
+family `contextgraph/1` and interoperate. A jump to `contextgraph/2.0` does not.
 
 This design has a critical consequence: **the freeze from draft to stable does
 not require a flag day.** When the protocol drops the `-draft` suffix and
-becomes `ocp/1.0`, every already-deployed `1.0-draft` provider continues to
+becomes `contextgraph/1.0`, every already-deployed `1.0-draft` provider continues to
 handshake successfully — they share the `1` family. What breaks interop is
-reserved for a genuinely breaking redesign (`ocp/2.0`), which would require a
+reserved for a genuinely breaking redesign (`contextgraph/2.0`), which would require a
 new crate major version in lockstep.
 
 **Why this matters.** A protocol that requires all participants to upgrade
 simultaneously is fragile — it creates coordination overhead and incentivizes
-freezing the spec to avoid disruption. OCP's major-family model allows
+freezing the spec to avoid disruption. Context Graph Protocol's major-family model allows
 incremental evolution within a family (additive fields, tighter checks)
 without breaking deployed providers, while reserving the major-version bump
-for real breaking changes. Early adopters who pin `ocp-types = "=0.1.0"` get a
+for real breaking changes. Early adopters who pin `contextgraph-types = "=0.1.0"` get a
 hard guarantee; those who use `^0.1` accept pre-1.0 churn but gain
 forward-compatibility within the family.
 
@@ -340,7 +340,7 @@ With temporal validity, the host can detect staleness (the frame's `valid_to`
 is set, or its digest doesn't match the current file) and either refresh or
 discard it.
 
-This is the property that makes OCP suitable for **long-running,
+This is the property that makes Context Graph Protocol suitable for **long-running,
 multi-session agents**: context accumulated in one session carries temporal
 metadata that a future session can evaluate for continued relevance. Episodic
 memory — lessons learned in a prior task — can expire or be superseded, and
@@ -366,10 +366,10 @@ Consider what happens if you remove each property in isolation:
   Budget compositability breaks. → *Unbounded cost.*
 
 - **Remove consent enforcement.** Any provider can exfiltrate workspace content
-  to a remote service. The "no phone-home" guarantee — central to OCP's
+  to a remote service. The "no phone-home" guarantee — central to Context Graph Protocol's
   trust model — becomes unenforceable at the protocol level. → *Data leakage.*
 
-- **Remove conformance verification.** "OCP conformant" becomes a
+- **Remove conformance verification.** "Context Graph Protocol conformant" becomes a
   self-attestation. Interoperability degrades to "works with the reference
   host" rather than "proven against a specification." Third-party adoption
   requires trust rather than verification. → *Vendor lock-in via ambiguity.*
@@ -391,7 +391,7 @@ The properties compose. Provenance without budget honesty means you can trace
 a frame's origin but not control its cost. Budget honesty without consent means
 costs are honest but data may leak. Consent without conformance means the gate
 exists but is not verified. Each property closes a gap that another property
-does not address. This is why OCP is specified as an integrated protocol, not
+does not address. This is why Context Graph Protocol is specified as an integrated protocol, not
 a menu of optional features.
 
 ---
@@ -401,12 +401,12 @@ a menu of optional features.
 ### vs. Model Context Protocol (MCP)
 
 MCP (Anthropic, 2024) defines a protocol for connecting external tools and
-resources to LLM-based applications. OCP and MCP are complementary, not
+resources to LLM-based applications. Context Graph Protocol and MCP are complementary, not
 competing:
 
 - **MCP** connects *tools* — functions the agent can call (run a query, fetch
   a resource, execute a command). It is an action protocol.
-- **OCP** connects *context* — typed, budgeted, provenance-carrying frames
+- **Context Graph Protocol** connects *context* — typed, budgeted, provenance-carrying frames
   that a host composes into a prompt *before* the model acts. It is a
   retrieval-evidence protocol.
 
@@ -414,40 +414,40 @@ MCP has no budget-honesty contract (a tool response has no `token_cost` field),
 no consent-gating for egress (tools are trusted to do what they declare), no
 provenance chain on responses, and no conformance suite that verifies these
 properties. These are not deficiencies in MCP — they are scope boundaries. MCP
-is designed for tool invocation; OCP is designed for evidence retrieval. An
-agent that needs both composes them: OCP providers feed context into the
+is designed for tool invocation; Context Graph Protocol is designed for evidence retrieval. An
+agent that needs both composes them: Context Graph Protocol providers feed context into the
 prompt, MCP tools execute actions.
 
-The architectural distinction is that OCP frames are **transported as untrusted
+The architectural distinction is that Context Graph Protocol frames are **transported as untrusted
 data** — a conforming host delimits frame content as quoted material, never as
 instructions. This is the same security principle that separates email body
 from email headers: the content of a retrieved frame is data the model reads,
 not a directive the model executes. MCP tool results are treated similarly by
-well-designed hosts, but OCP makes the untrusted-data contract part of the
+well-designed hosts, but Context Graph Protocol makes the untrusted-data contract part of the
 protocol specification rather than leaving it to host implementation.
 
 ### vs. ad-hoc RAG pipelines
 
 A typical RAG (Retrieval-Augmented Generation) pipeline retrieves chunks from
-a vector store and pastes them into the prompt. Compared to OCP:
+a vector store and pastes them into the prompt. Compared to Context Graph Protocol:
 
 - **No budget contract.** The retriever returns top-K; the prompt assembler
-  hopes they fit. OCP's `max_tokens` is part of the query and enforced.
-- **No provenance.** Chunks carry a source document, at best. OCP frames
+  hopes they fit. Context Graph Protocol's `max_tokens` is part of the query and enforced.
+- **No provenance.** Chunks carry a source document, at best. Context Graph Protocol frames
   carry URI, range, digest, method, and agent.
-- **No consent model.** A cloud embedding API is called without gating. OCP
+- **No consent model.** A cloud embedding API is called without gating. Context Graph Protocol
   gates egress behind recorded, named consent.
 - **No conformance.** There is no way to verify a RAG pipeline respects any
-  contract. OCP defines conformance as machine-checked.
+  contract. Context Graph Protocol defines conformance as machine-checked.
 - **No temporal validity.** Chunks are current-or-not, with no validity
-  window. OCP frames carry bi-temporal metadata.
+  window. Context Graph Protocol frames carry bi-temporal metadata.
 
 ### vs. vendor-locked retrieval
 
 Some coding agents (Claude Code, Cursor, Windsurf) integrate tightly with a
 vendor's proprietary retrieval or indexing service. The retrieval is opaque,
 the provider is the vendor, and the user has no visibility into cost,
-provenance, or consent. OCP inverts this: retrieval is an open protocol, the
+provenance, or consent. Context Graph Protocol inverts this: retrieval is an open protocol, the
 provider is pluggable (in-process, stdio, HTTP — any language), and the
 contracts are public and machine-checked.
 
@@ -455,13 +455,13 @@ contracts are public and machine-checked.
 
 ## 12. Grounding in primary research
 
-The design of OCP is grounded in research on retrieval-augmented generation,
+The design of Context Graph Protocol is grounded in research on retrieval-augmented generation,
 context window economics, and software-engineering agent architecture:
 
 - **Lost in the Middle** (Liu et al., TACL 2024,
   [arXiv:2307.03172](https://arxiv.org/abs/2307.03172)) — demonstrates that
   LLM performance degrades when relevant information is buried in long
-  contexts. OCP's budget-honesty contract and frame-level relevance scoring
+  contexts. Context Graph Protocol's budget-honesty contract and frame-level relevance scoring
   are directly motivated by this: a host that can trust per-frame cost and
   score can compose a prompt that places the most relevant evidence at the
   attention surface, rather than stuffing an unaccountable blob.
@@ -469,7 +469,7 @@ context window economics, and software-engineering agent architecture:
 - **Context Rot** (Hong et al., Chroma, 2025,
   [research.trychroma.com](https://research.trychroma.com/context-rot)) —
   shows that increasing input tokens degrades LLM performance even when the
-  additional tokens are relevant. This validates OCP's position that *more
+  additional tokens are relevant. This validates Context Graph Protocol's position that *more
   context is not better* — *honest, budgeted, provenance-carrying context* is
   better. The `max_tokens` contract is not just about cost; it is about
   preventing context rot.
@@ -477,7 +477,7 @@ context window economics, and software-engineering agent architecture:
 - **Graph RAG** (Edge et al., Microsoft Research, 2024,
   [arXiv:2404.16130](https://arxiv.org/abs/2404.16130)) — demonstrates that
   graph-structured retrieval (entity-relationship summarization) outperforms
-  flat vector search for global questions about a corpus. OCP's `Relation`
+  flat vector search for global questions about a corpus. Context Graph Protocol's `Relation`
   type and `FrameKind::Graph` are designed to carry graph-structured context
   natively — a provider can return frames with typed relations, not just text
   chunks.
@@ -485,21 +485,21 @@ context window economics, and software-engineering agent architecture:
 - **Repo map with tree-sitter** (Gauthier, Aider, 2023,
   [aider.chat](https://aider.chat/2023/10/22/repomap.html)) — shows that a
   tree-sitter-derived repository map (symbols + import edges) gives an agent
-  structural awareness that grep cannot. OCP's `FrameKind::Symbol` and
+  structural awareness that grep cannot. Context Graph Protocol's `FrameKind::Symbol` and
   provenance `method: "tree-sitter-symbol-extraction"` are designed for exactly
   this kind of structural frame.
 
 - **AI Agents That Matter** (Kapoor et al., Princeton, TMLR 2025,
   [arXiv:2407.01502](https://arxiv.org/abs/2407.01502)) — argues that agent
   benchmarks must report cost, not just accuracy, because a system that is
-  more accurate but 10x more expensive is not necessarily better. OCP's
+  more accurate but 10x more expensive is not necessarily better. Context Graph Protocol's
   `token_cost` field and budget-honesty contract make cost a first-class,
   auditable property of every context exchange.
 
 - **MemGPT** (Packer et al., UC Berkeley, 2023,
   [arXiv:2310.08560](https://arxiv.org/abs/2310.08560)) — proposes an
   operating-system-like memory hierarchy for LLMs (main context vs. external
-  context). OCP's frame types (`Memory`, `Episode`, `Fact`) and temporal
+  context). Context Graph Protocol's frame types (`Memory`, `Episode`, `Fact`) and temporal
   validity windows are the wire-level expression of this hierarchy: different
   kinds of memory with different lifecycles, all flowing through one
   typed protocol.
@@ -508,7 +508,7 @@ context window economics, and software-engineering agent architecture:
 
 ## Summary
 
-The Open Context Protocol is not a faster retrieval pipeline or a richer
+The Context Graph Protocol is not a faster retrieval pipeline or a richer
 embedding model. It is a **trust architecture for context**: a protocol-level
 guarantee that every frame entering an agent's prompt is traceable to its
 source (provenance), honest about its cost (budget), gated by recorded consent
@@ -518,7 +518,7 @@ time (temporal). No prior retrieval protocol combines all seven properties,
 and the combination is irreducible — each property closes a gap the others do
 not address.
 
-The implementation is open (`ocp-types`, `ocp-host`, `ocp-conformance`),
+The implementation is open (`contextgraph-types`, `contextgraph-host`, `contextgraph-conformance`),
 dual-licensed MIT OR Apache-2.0, zero-dependency beyond `serde` for the wire
 types, and
 conformance-verified today. The path from "open context as an idea" to "open

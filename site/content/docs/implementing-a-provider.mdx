@@ -1,23 +1,23 @@
 ---
-title: "Implementing an OCP provider"
-description: "How to implement an OCP provider in-process with Rust or over the language-neutral stdio and HTTP wire protocol."
+title: "Implementing an Context Graph Protocol provider"
+description: "How to implement an Context Graph Protocol provider in-process with Rust or over the language-neutral stdio and HTTP wire protocol."
 ---
 
-There are two ways to implement an OCP provider, depending on whether you're
+There are two ways to implement an Context Graph Protocol provider, depending on whether you're
 writing Rust that runs inside the same process as the host, or a standalone
 program (in any language) that the host talks to as a child process or a
 remote HTTP endpoint.
 
 ## Option A: in-process, via the `ContextProvider` trait (Rust only)
 
-If your provider runs in the same process as an `ocp-host`-based host,
+If your provider runs in the same process as an `contextgraph-host`-based host,
 implement the one trait every source implements
-(`ocp-host::provider::ContextProvider`):
+(`contextgraph-host::provider::ContextProvider`):
 
 ```rust
 use async_trait::async_trait;
-use ocp_host::HostError;
-use ocp_types::{Capabilities, ContextQuery, ContextQueryResult, ProviderInfo};
+use contextgraph_host::HostError;
+use contextgraph_types::{Capabilities, ContextQuery, ContextQueryResult, ProviderInfo};
 
 #[async_trait]
 pub trait ContextProvider: Send + Sync {
@@ -48,7 +48,7 @@ with `host.register(Box::new(my_provider))` and it participates in
 ## Option B: out-of-process, via the wire protocol (any language)
 
 A provider written in any language — the common case for a third-party
-integration — implements the OCP wire protocol directly. `ocp-host` speaks
+integration — implements the Context Graph Protocol wire protocol directly. `contextgraph-host` speaks
 this protocol over two transports; you only need to implement one:
 
 - **stdio** — the host spawns your program as a child process and exchanges
@@ -57,7 +57,7 @@ this protocol over two transports; you only need to implement one:
 - **streamable HTTP** — the host POSTs one JSON envelope per exchange to your
   URL and expects one JSON envelope back as the response body.
 
-Both transports carry the same message vocabulary, `ocp-host::wire::Envelope`
+Both transports carry the same message vocabulary, `contextgraph-host::wire::Envelope`
 (a `serde` externally-tagged enum, `#[serde(tag = "type", rename_all =
 "snake_case")]`):
 
@@ -71,7 +71,7 @@ Both transports carry the same message vocabulary, `ocp-host::wire::Envelope`
 | `error` | provider → host | `{ message: String }` |
 
 `ProviderInfo`, `Capabilities`, `ContextQuery`, `ContextQueryResult`, and
-`ContextFrame` are the `ocp-types` shapes documented in
+`ContextFrame` are the `contextgraph-types` shapes documented in
 [protocol-surface.md](./protocol-surface) — the wire payload is exactly
 their `serde_json` serialization, field names and all.
 
@@ -100,10 +100,10 @@ hang; but only your provider can guarantee it survives garbage input.
 ### Version compatibility
 
 Two protocol version strings interoperate when they share a **major
-family** — the substring up to the first `.`. So `ocp/1.0-draft` and
-`ocp/1.0` interoperate (both family `ocp/1`), while `ocp/2.0` does not
-(`ocp-host::wire::versions_compatible`). This is what lets the eventual
-public `ocp/1.0` freeze drop the `-draft` suffix without a flag day — ack
+family** — the substring up to the first `.`. So `contextgraph/1.0-draft` and
+`contextgraph/1.0` interoperate (both family `contextgraph/1`), while `contextgraph/2.0` does not
+(`contextgraph-host::wire::versions_compatible`). This is what lets the eventual
+public `contextgraph/1.0` freeze drop the `-draft` suffix without a flag day — ack
 whatever `1.x` family you actually implement; don't hardcode the exact
 string. A version-family mismatch is reported to the host as a named error,
 never left to hang.
@@ -115,16 +115,16 @@ do:
 
 - `reads: true` — you can see workspace content via query payloads.
 - `writes: true` — you persist `context/upsert`-style writes (not yet part
-  of the query/frames exchange in this crate; reserved for a future OCP
+  of the query/frames exchange in this crate; reserved for a future Context Graph Protocol
   method).
 - `egress: true` — **anything you do sends data off the local machine.**
 
 **Declare `egress: true` honestly if your provider calls out to a remote
-service, even indirectly.** A conforming host (`ocp-host::consent`) refuses
+service, even indirectly.** A conforming host (`contextgraph-host::consent`) refuses
 to query an `egress` provider until the user has recorded explicit, one-time
 consent naming what leaves — the query payload is never transmitted before
 that. This is enforced host-side and cannot be opted out of by a provider
-that under-declares its own egress; note that `ocp-host`'s own HTTP transport
+that under-declares its own egress; note that `contextgraph-host`'s own HTTP transport
 goes further and treats *every* remote provider as egress regardless of what
 it claims in the handshake, precisely so a remote can't lie its way out of
 the consent gate.
@@ -132,7 +132,7 @@ the consent gate.
 ### The budget-honesty contract
 
 Every `ContextQuery` carries `max_tokens`. **The frames you return must sum
-`token_cost` to at most that budget.** A host built on `ocp-host::Host`
+`token_cost` to at most that budget.** A host built on `contextgraph-host::Host`
 checks `ContextQueryResult::respects_budget` on every response and drops
 (with a loud report, not a silent discard) the frames of any provider that
 exceeds it — the `budget-honesty` conformance check enforces the same rule.
@@ -144,30 +144,30 @@ budget, set `truncated: true`, and optionally `dropped_estimate`.
 Every frame needs a non-empty `title` and a non-empty `citation_label` — a
 host must be able to cite what it used without falling back to a bare id.
 This is checked by the `frame-validity` conformance check and is a
-platform-wide convention, not an OCP-specific quirk.
+platform-wide convention, not an Context Graph Protocol-specific quirk.
 
 ### A complete minimal example
 
-The `ocp-example-docs` binary bundled with `ocp-conformance`
-(`ocp-conformance/src/bin/ocp-example-docs.rs`) is a real, runnable ~150-line
+The `contextgraph-example-docs` binary bundled with `contextgraph-conformance`
+(`contextgraph-conformance/src/bin/contextgraph-example-docs.rs`) is a real, runnable ~150-line
 stdio provider that implements this whole exchange: it reads NDJSON lines
 from stdin, replies to `handshake` with a `handshake_ack`, replies to `query`
 with two canned `doc` frames, and exits cleanly on `shutdown`. Read it end to
-end as the reference implementation; it deliberately reuses `ocp-host`'s
+end as the reference implementation; it deliberately reuses `contextgraph-host`'s
 `Envelope` type for convenience (both crates live in the same workspace), but
 an out-of-tree provider in any language only needs a JSON codec and the wire
-table above — no dependency on `ocp-host` itself.
+table above — no dependency on `contextgraph-host` itself.
 
 ### Probing your provider interactively
 
-Once you have something that speaks the handshake, point `ocp-inspect` (from
-`ocp-conformance`) at it before running the full suite:
+Once you have something that speaks the handshake, point `contextgraph-inspect` (from
+`contextgraph-conformance`) at it before running the full suite:
 
 ```bash
-cargo install ocp-conformance
-ocp-inspect stdio --query "how do I configure it" -- ./my-provider
+cargo install contextgraph-conformance
+contextgraph-inspect stdio --query "how do I configure it" -- ./my-provider
 # or:
-ocp-inspect http --query "how do I configure it" https://my-provider.example.com/ocp
+contextgraph-inspect http --query "how do I configure it" https://my-provider.example.com/contextgraph
 ```
 
 It prints your negotiated identity, capabilities, and data-flow, fires the

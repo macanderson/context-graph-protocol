@@ -24,11 +24,11 @@ const ibmPlexMono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "Open Context Protocol",
-    template: "%s — Open Context Protocol",
+    default: "Context Graph Protocol",
+    template: "%s — Context Graph Protocol",
   },
   description:
-    "Open technical documentation for typed, budgeted, provenance-carrying context retrieval.",
+    "The canonical architecture for building context graphs that agents use to reason over.",
 };
 
 export default function RootLayout({

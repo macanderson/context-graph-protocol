@@ -1,8 +1,8 @@
 import type { Config } from "tailwindcss";
 
 /**
- * OCP's neutral design system, derived from the near-black ink and white field
- * in assets/ocp-logo.svg. Fumadocs' Tailwind v4 preset is imported from
+ * Context Graph Protocol's neutral design system, derived from the near-black ink and white field
+ * in assets/contextgraph-logo.svg. Fumadocs' Tailwind v4 preset is imported from
  * src/app/globals.css; these tokens provide stable aliases for site-authored UI.
  */
 const config: Config = {

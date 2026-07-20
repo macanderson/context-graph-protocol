@@ -6,8 +6,8 @@ export default function Home() {
     <main className="flex min-h-screen items-center bg-background px-6 py-16 text-foreground sm:px-10">
       <article className="mx-auto w-full max-w-2xl border-t border-border pt-10 sm:pt-14">
         <Image
-          src="/ocp-logo.svg"
-          alt="Open Context Protocol logo"
+          src="/contextgraph-logo.svg"
+          alt="Context Graph Protocol logo"
           width={112}
           height={112}
           priority
@@ -15,14 +15,14 @@ export default function Home() {
         />
 
         <p className="mb-4 font-mono text-xs uppercase tracking-[0.16em] text-muted-foreground">
-          Protocol specification · ocp/1.0-draft
+          Protocol specification · contextgraph/1.0-draft
         </p>
         <h1 className="max-w-xl font-serif text-4xl font-semibold leading-tight tracking-tight sm:text-5xl">
-          Open Context Protocol
+          Context Graph Protocol
         </h1>
         <p className="mt-6 max-w-xl text-base leading-7 text-muted-foreground sm:text-lg sm:leading-8">
-          An open wire protocol for typed, budgeted, provenance-carrying context
-          retrieval.
+          The canonical architecture for building context graphs that agents
+          use to reason over.
         </p>
 
         <nav aria-label="Primary" className="mt-10 border-t border-border pt-5">

@@ -23,11 +23,11 @@
 ## Protocol-stability impact (if a spec/wire change)
 
 - [ ] Not applicable — no wire or spec change
-- [ ] Additive (new optional field/check) — safe within `ocp/1`
-- [ ] Wire-breaking — requires `ocp/2`; explain below
+- [ ] Additive (new optional field/check) — safe within `contextgraph/1`
+- [ ] Wire-breaking — requires `contextgraph/2`; explain below
 
 <!-- If this touches the wire shape or a conformance check, note it here and
-     say how it stays compatible with ocp/1.0-draft providers. -->
+     say how it stays compatible with contextgraph/1.0-draft providers. -->
 
 ## License
 

@@ -1,9 +1,9 @@
 [workspace]
 resolver = "3"
 members = [
-  "ocp-types",
-  "ocp-host",
-  "ocp-conformance",
+  "contextgraph-types",
+  "contextgraph-host",
+  "contextgraph-conformance",
 ]
 
 [workspace.package]
@@ -11,9 +11,9 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.90"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/macanderson/opencontextprotocol"
-homepage = "https://github.com/macanderson/opencontextprotocol"
-# Default: crates opt IN to publishing. The three OCP crates each set
+repository = "https://github.com/macanderson/context-graph-protocol"
+homepage = "https://github.com/macanderson/context-graph-protocol"
+# Default: crates opt IN to publishing. The three Context Graph Protocol crates each set
 # `publish = true`; any future internal/helper crate stays unpublished by default.
 publish = false
 

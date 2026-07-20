@@ -1,38 +1,38 @@
 ---
-title: "OCP reference documentation"
-description: "Reference documentation for the Open Context Protocol specification, implementations, and conformance tools."
+title: "Context Graph Protocol reference documentation"
+description: "Reference documentation for the Context Graph Protocol specification, implementations, and conformance tools."
 ---
 
-Reference documentation for the **Open Context Protocol (OCP)** crates:
-[`ocp-types`](https://crates.io/crates/ocp-types),
-[`ocp-host`](https://crates.io/crates/ocp-host), and
-[`ocp-conformance`](https://crates.io/crates/ocp-conformance).
+Reference documentation for the **Context Graph Protocol** crates:
+[`contextgraph-types`](https://crates.io/crates/contextgraph-types),
+[`contextgraph-host`](https://crates.io/crates/contextgraph-host), and
+[`contextgraph-conformance`](https://crates.io/crates/contextgraph-conformance).
 
-- [**The Open Context Protocol: A Technical Overview**](./overview) — the
-  one-read marketing overview for engineers: the problem OCP solves, the seven
+- [**The Context Graph Protocol: A Technical Overview**](./overview) — the
+  one-read marketing overview for engineers: the problem Context Graph Protocol solves, the seven
   guarantees, the wire surface, how it relates to MCP, and why you would build
-  against it. Start here if you are new to OCP.
-- [**The Open Context Protocol: Advantages and Uniqueness**](./protocol-advantages)
-  — standalone research analysis of the seven advantages that make OCP a
+  against it. Start here if you are new to Context Graph Protocol.
+- [**The Context Graph Protocol: Advantages and Uniqueness**](./protocol-advantages)
+  — standalone research analysis of the seven advantages that make Context Graph Protocol a
   qualitatively different approach to context retrieval (provenance, budget
   honesty, consent enforcement, conformance verification, citation guarantees,
   version stability, temporal validity), and why the combination is
   irreducible.
 - [**Protocol surface**](./protocol-surface) — the wire types: context
   frames, queries, capabilities, provenance. Start here to understand *what*
-  OCP is.
+  Context Graph Protocol is.
 - [**Implementing a provider**](./implementing-a-provider) — how a third
-  party builds an OCP provider, in Rust (via `ContextProvider`) or any other
+  party builds an Context Graph Protocol provider, in Rust (via `ContextProvider`) or any other
   language (via the wire protocol directly). Start here to *build* something.
 - [**Running conformance**](./running-conformance) — how to prove your
-  provider (or host) is OCP conformant, via the `ocp-inspect` CLI or the
-  `ocp-conformance` library. Start here to *verify* what you built.
+  provider (or host) is Context Graph Protocol conformant, via the `contextgraph-inspect` CLI or the
+  `contextgraph-conformance` library. Start here to *verify* what you built.
 - [**Stability**](./stability) — the crate-semver vs. protocol-version
   relationship, and what changes (and doesn't) as the protocol moves from
-  `ocp/1.0-draft` to `ocp/1.0`.
+  `contextgraph/1.0-draft` to `contextgraph/1.0`.
 
 Also at the repo root: [`GOVERNANCE.md`](../GOVERNANCE.md) (how the protocol is
-maintained, what counts as a normative change, and the path to `ocp/1.0`),
+maintained, what counts as a normative change, and the path to `contextgraph/1.0`),
 [`SECURITY.md`](../SECURITY.md) (vulnerability reporting),
 [`CODE_OF_CONDUCT.md`](../CODE_OF_CONDUCT.md),
 [`schema/`](../schema/) (machine-readable JSON Schema for the wire types), and

@@ -1,11 +1,11 @@
 ---
-title: "Running the OCP conformance suite"
-description: "How to verify an OCP provider with the ocp-inspect CLI or the ocp-conformance Rust library."
+title: "Running the Context Graph Protocol conformance suite"
+description: "How to verify an Context Graph Protocol provider with the contextgraph-inspect CLI or the contextgraph-conformance Rust library."
 ---
 
-"OCP conformant" means *green on `ocp-conformance`'s suite for your declared
+"Context Graph Protocol conformant" means *green on `contextgraph-conformance`'s suite for your declared
 capability set* — a checkable claim, which is what makes third-party
-adoption safe. This page covers both ways to run it: the `ocp-inspect` CLI
+adoption safe. This page covers both ways to run it: the `contextgraph-inspect` CLI
 binary, and calling the suite as a library from your own test harness.
 
 ## The five checks
@@ -28,36 +28,36 @@ costs, emits an out-of-range score, omits a citation label, or dies
 mid-query, the matching check fails loudly with an evidence string that
 names the exact violation — never a bare "not conformant."
 
-## Option A: the `ocp-inspect` CLI
+## Option A: the `contextgraph-inspect` CLI
 
-Install the binary (it ships inside the `ocp-conformance` crate):
+Install the binary (it ships inside the `contextgraph-conformance` crate):
 
 ```bash
-cargo install ocp-conformance
+cargo install contextgraph-conformance
 ```
 
 Run it against a stdio provider:
 
 ```bash
-ocp-inspect stdio -- ./my-provider --some-flag
+contextgraph-inspect stdio -- ./my-provider --some-flag
 ```
 
 Or a remote HTTP provider:
 
 ```bash
-ocp-inspect http https://my-provider.example.com/ocp
+contextgraph-inspect http https://my-provider.example.com/contextgraph
 ```
 
 Add `--query "some goal text"` to also fire an interactive test query before
 the conformance run, and `--json` to get the report as machine-readable JSON
 (handy for CI) instead of colored terminal output.
 
-`ocp-inspect` exits with a non-zero status when the provider is **not**
+`contextgraph-inspect` exits with a non-zero status when the provider is **not**
 conformant, so it's directly usable as a CI gate:
 
 ```bash
-ocp-inspect stdio --json -- ./my-provider > report.json || {
-  echo "provider is not OCP conformant"; cat report.json; exit 1;
+contextgraph-inspect stdio --json -- ./my-provider > report.json || {
+  echo "provider is not Context Graph Protocol conformant"; cat report.json; exit 1;
 }
 ```
 
@@ -84,10 +84,10 @@ Sample colored output for a fully conformant provider:
 `ConformanceReport` — call it directly from an integration test:
 
 ```rust
-use ocp_conformance::{ProviderTarget, run_conformance};
+use contextgraph_conformance::{ProviderTarget, run_conformance};
 
 #[tokio::test]
-async fn my_provider_is_ocp_conformant() {
+async fn my_provider_is_contextgraph_conformant() {
     let report = run_conformance(ProviderTarget::Stdio {
         program: env!("CARGO_BIN_EXE_my_provider").to_string(),
         args: vec![],
@@ -117,11 +117,11 @@ async fn my_provider_is_ocp_conformant() {
 the failed checks), and `tally()` (`(passed, failed, skipped)` counts) for
 building your own reporting on top.
 
-## The `ocp-example-docs` fixture, for reference
+## The `contextgraph-example-docs` fixture, for reference
 
-`ocp-conformance`'s own test suite
-(`ocp-conformance/tests/conformance_suite.rs`) runs the checks against a real
-bundled reference provider, `ocp-example-docs`, including a `--misbehave
+`contextgraph-conformance`'s own test suite
+(`contextgraph-conformance/tests/conformance_suite.rs`) runs the checks against a real
+bundled reference provider, `contextgraph-example-docs`, including a `--misbehave
 <mode>` flag that deliberately trips one check at a time (`lying-costs`,
 `bad-score`, `empty-citation`, `bad-version`, `crash-on-query`,
 `crash-on-garbage`). Reading those tests is the fastest way to see exactly

@@ -1,5 +1,5 @@
 name: Feature request
-description: Propose an addition or change to OCP
+description: Propose an addition or change to Context Graph Protocol
 title: "feat: "
 labels: ["enhancement", "needs-triage"]
 body:
@@ -13,11 +13,11 @@ body:
     id: area
     attributes:
       label: Affected crate / surface
-      description: Which part of OCP would this affect?
+      description: Which part of Context Graph Protocol would this affect?
       options:
-        - ocp-types (wire types)
-        - ocp-host (host runtime / transports / consent)
-        - ocp-conformance (conformance suite / ocp-inspect)
+        - contextgraph-types (wire types)
+        - contextgraph-host (host runtime / transports / consent)
+        - contextgraph-conformance (conformance suite / contextgraph-inspect)
         - documentation / spec
         - other
     validations:
@@ -26,7 +26,7 @@ body:
     id: problem
     attributes:
       label: What are you trying to do?
-      description: The concrete use case or workflow that OCP doesn't support today.
+      description: The concrete use case or workflow that Context Graph Protocol doesn't support today.
       placeholder: |
         I'm building a provider that needs to return graph-structured context,
         but the current Frame relation...
@@ -47,9 +47,9 @@ body:
     attributes:
       label: Protocol-stability impact
       options:
-        - label: This change is additive (new optional field / check) — safe within ocp/1
+        - label: This change is additive (new optional field / check) — safe within contextgraph/1
           required: false
-        - label: This change is wire-breaking — would require ocp/2
+        - label: This change is wire-breaking — would require contextgraph/2
           required: false
         - label: Not sure
           required: false

@@ -62,8 +62,8 @@ class DocumentationSiteWitness(unittest.TestCase):
                     + ", ".join(missing)
                 )
 
-            if "ocp-logo.svg" not in source:
-                problems.append("the site never renders the repository's OCP logo")
+            if "contextgraph-logo.svg" not in source:
+                problems.append("the site never renders the repository's Context Graph Protocol logo")
 
             theme_files = [path for path in authored if path.suffix == ".css"]
             theme = "\n".join(

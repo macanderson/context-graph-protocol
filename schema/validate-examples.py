@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Validate the OCP wire examples against the JSON Schema.
+Validate the Context Graph Protocol wire examples against the JSON Schema.
 
 Usage:
     python3 schema/validate-examples.py
@@ -18,7 +18,7 @@ except ImportError:
     sys.exit("error: this script needs `jsonschema`. Install it: pip install jsonschema")
 
 ROOT = Path(__file__).resolve().parent.parent
-SCHEMA = json.loads((ROOT / "schema" / "ocp-envelope.schema.json").read_text())
+SCHEMA = json.loads((ROOT / "schema" / "contextgraph-envelope.schema.json").read_text())
 failures = 0
 
 
@@ -31,7 +31,7 @@ def check(label: str, ok: bool) -> None:
         failures += 1
 
 
-print("Validating examples against schema/ocp-envelope.schema.json\n")
+print("Validating examples against schema/contextgraph-envelope.schema.json\n")
 
 # 1. NDJSON transcript — one envelope per line.
 ndjson_path = ROOT / "examples" / "full-stdio-session.ndjson"
