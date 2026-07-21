@@ -260,3 +260,106 @@ auditable from the wire all the way up to the invoice line.
 | # | Requirement | Enforced / verified by |
 | - | ----------- | ---------------------- |
 | U1 | A host **MUST** be able to produce a usage report for any query it executed, whose `budget_consumed` equals the summed `token_cost` of the served frames it reports. | `FanOut::usage_report`; `usage_report` conformance case (drives the real fixture, re-sums independently) |
+
+---
+
+## 3. Consent scopes and receipts
+
+### The problem
+
+Consent-gating is one of the seven guarantees: retrieval that transmits workspace content off-machine must be agreed to. `DataFlow.egress` already gates it — but a boolean answers the question only *in the moment it is asked*. When an auditor asks, months later, "**what** left the machine, **to whom**, and **who** agreed?", a `true` in a since-exited process is no answer. And without a shared vocabulary of egress classes, "consent" means something different to every provider.
+
+This section makes consent an **artifact** rather than an event, in two parts: a closed **scope vocabulary** that classes *where* content goes, and durable **consent receipts** that record each grant.
+
+### The egress-scope vocabulary
+
+A provider declares — alongside the boolean `egress` — the [egress scopes](./protocol-surface.md#handshake--capability) its served content falls under, bound to Rust as
+[`EgressScope`](https://docs.rs/contextgraph-types/latest/contextgraph_types/scope/enum.EgressScope.html)
+in the new [`DataFlow.egress_scopes`](./protocol-surface.md#handshake--capability) field. Four **normative base classes** form the closed core:
+
+| Scope | Wire string | Off-machine? | Meaning |
+| ----- | ----------- | ------------ | ------- |
+| `LocalOnly` | `local-only` | no | Nothing leaves the machine. |
+| `OrgTenant` | `org-tenant` | yes | Leaves the machine, stays in the org's own infrastructure. |
+| `ThirdPartyIndex` | `third-party-index` | yes | Content sent to an external index / embedding service. |
+| `ThirdPartyModel` | `third-party-model` | yes | Content sent to an external model API. |
+
+The vocabulary is **extensible** by namespaced custom scopes — `EgressScope::Custom("vendor:scope-name")` — which **MUST** contain a `:` separator with non-empty sides, so a custom scope can never collide with or be mistaken for a base class. Everything other than `local-only` is treated as off-machine, including an unrecognized custom scope: the conservative default is that an unknown destination *leaves*, so a host never under-gates.
+
+**A scope is declared at the provider (data-flow) level, and it governs every frame that provider serves.** There is no per-frame scope: the serving provider's declaration *is* the egress class of each frame it returns. This keeps the consent gate — which fires once, before a query is transmitted — the single place egress is decided, rather than scattering a scope across every frame.
+
+The declaration must be **truthful**: an off-machine scope alongside `egress: false` is a contradiction (a provider claiming local posture while naming a destination that leaves), and a host holds a provider to this at the handshake
+([`DataFlow::scopes_consistent`](https://docs.rs/contextgraph-types/latest/contextgraph_types/struct.DataFlow.html#method.scopes_consistent),
+requirement C5).
+
+### Consent receipts
+
+When a host grants consent, it records a
+[`ConsentReceipt`](https://docs.rs/contextgraph-host/latest/contextgraph_host/consent/struct.ConsentReceipt.html):
+
+```rust
+pub struct ConsentReceipt {
+    pub provider_id: String,        // the provider this authorizes
+    pub scope: EgressScope,         // the exact egress class consented to
+    pub provider_name: String,      // provider identity, pinned at grant time
+    pub provider_version: String,
+    pub grantor: Grantor,           // Human(id) | Policy(id) — who agreed
+    pub granted_at: String,         // RFC 3339
+    pub expires_at: Option<String>, // RFC 3339, if consent lapses
+}
+```
+
+A receipt turns "is this allowed?" (a boolean, now) into "what left, to whom, who agreed, and when?" (a durable record). It pins the provider's identity **at grant time**, so a later rename can't retroactively rewrite what was agreed. Receipts live in an **append-only** ledger
+([`ConsentStore::record_receipt`](https://docs.rs/contextgraph-host/latest/contextgraph_host/consent/struct.ConsentStore.html#method.record_receipt)):
+a new grant never edits or erases an old one, so the history of consent *is* the audit trail, and it is serde-able for durable persistence across host runs.
+
+### Host behavior: reject unconsented egress
+
+A host's pre-query consent gate
+([`ConsentStore::evaluate`](https://docs.rs/contextgraph-host/latest/contextgraph_host/consent/struct.ConsentStore.html#method.evaluate))
+is scope-aware:
+
+- A provider declaring **off-machine egress scopes** is permitted only when *every* such scope has a recorded receipt. A scope with no matching receipt **MUST** cause the query to be refused with a **typed error** —
+  [`HostError::ConsentScopeRequired`](https://docs.rs/contextgraph-host/latest/contextgraph_host/error/enum.HostError.html)
+  naming exactly the scopes that would leave unconsented — and the payload **MUST NOT** be transmitted (requirement C6). A budget-style boolean `ConsentRecord` does **not** satisfy a scope gate; only a receipt for that scope does.
+- A provider declaring only the boolean `egress` flag (no scopes) keeps the pre-scope legacy gate — a `ConsentRecord` unlocks it. This is what keeps the change additive: an existing provider that never declares scopes behaves exactly as before.
+
+The runtime gate is **presence-based** (does a receipt for the scope exist?) and carries no clock, so it never depends on wall-time to make a decision. **Expiry** is a first-class receipt property
+([`ConsentReceipt::is_live`](https://docs.rs/contextgraph-host/latest/contextgraph_host/consent/struct.ConsentReceipt.html#method.is_live)):
+a host that enforces expiry consults
+[`ConsentStore::live_receipt`](https://docs.rs/contextgraph-host/latest/contextgraph_host/consent/struct.ConsentStore.html#method.live_receipt)
+against its own `now`, and treats an expired receipt as absent — re-shutting the gate — while the receipt itself is never pruned from the audit ledger.
+
+### Worked audit scenario: "what left, where, who agreed, when?"
+
+Six months after the fact, an auditor asks whether a customer's repository snippets were ever sent to an external model. The host answers from its persisted consent ledger — no live process required:
+
+```rust
+for receipt in store.receipts_for("acme-cloud-model") {
+    println!(
+        "{scope} — granted by {grantor:?} at {at}{expiry}",
+        scope = receipt.scope,                 // third-party-model
+        grantor = receipt.grantor,             // Human("ops@oxagen.sh")
+        at = receipt.granted_at,               // 2026-01-14T09:02:00Z
+        expiry = receipt.expires_at            // Some("2026-07-14T00:00:00Z")
+            .map(|e| format!(", expiring {e}"))
+            .unwrap_or_default(),
+    );
+}
+```
+
+Every question is answered by a field:
+
+- **What left?** The `scope` (`third-party-model`) — the class of destination — combined with the [usage report](#2-usage-reports)'s `served_frames`, which name the exact frames that provider served.
+- **To whom?** The pinned `provider_name` / `provider_version` at grant time.
+- **Who agreed?** The `grantor` — a named human or a named policy, not an anonymous "yes".
+- **When?** `granted_at`, and `expires_at` if the grant was time-boxed. A query after `expires_at` would have been refused by the gate, so the window of authorized egress is itself on the record.
+
+Because the ledger is append-only, a *revocation* or a lapsed expiry adds to the record rather than erasing it — the audit shows not just the current state but the full history of what was permitted and when.
+
+### Conformance (§3)
+
+| # | Requirement | Enforced / verified by |
+| - | ----------- | ---------------------- |
+| C5 | A provider **MUST** declare its egress scopes (`egress_scopes`) truthfully and consistently with `data_flow.egress`; an off-machine scope alongside `egress: false`, or a non-namespaced custom scope, is a conformance failure. | `DataFlow::scopes_consistent`; `consent-scope` conformance check |
+| C6 | A host **MUST** reject a query to a provider any of whose off-machine egress scopes lacks a recorded consent receipt, with a typed error, before transmitting the payload. | `ConsentStore::evaluate` scope gate; `HostError::ConsentScopeRequired`; host scope-gate test |

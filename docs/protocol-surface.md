@@ -38,6 +38,7 @@ pub struct DataFlow {
     pub reads: bool,   // can see workspace content via query payloads
     pub writes: bool,  // persists context/upsert writes
     pub egress: bool,  // sends anything off the local machine
+    pub egress_scopes: Vec<EgressScope>, // WHERE content goes; empty = boolean-only posture (context-reuse §3)
 }
 
 pub struct ProviderInfo {
@@ -52,6 +53,12 @@ pub struct Capabilities {
     pub graph: bool,
     pub embeddings_fingerprint: Option<String>,
     pub subscribe: bool,
+}
+
+// The closed egress-scope vocabulary (context-reuse §3), serialized as a flat
+// string — the four base classes, plus namespaced `vendor:scope` extensions.
+pub enum EgressScope {
+    LocalOnly, OrgTenant, ThirdPartyIndex, ThirdPartyModel, Custom(String),
 }
 
 pub struct QueryCapability {

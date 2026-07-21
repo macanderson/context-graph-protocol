@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 
-use contextgraph_types::{DataFlow, ProviderInfo};
+use contextgraph_types::{DataFlow, EgressScope, ProviderInfo};
 use serde::{Deserialize, Serialize};
 
 /// A recorded consent decision for one provider. `granted_scope` is the
@@ -46,11 +46,129 @@ impl ConsentRecord {
     }
 }
 
-/// The set of consent decisions a host holds, keyed by provider id.
+/// Who granted a consent receipt (`docs/context-reuse.md` §3). Recorded so the
+/// audit trail names an accountable party, not just a moment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "id", rename_all = "snake_case")]
+pub enum Grantor {
+    /// A human user, identified however the host names them at consent time
+    /// (a user id, email, or display name).
+    Human(String),
+    /// An automated policy, identified by its policy id or name — consent
+    /// granted by a rule rather than a person present in the moment.
+    Policy(String),
+}
+
+/// An audit-grade record that consent was granted for one provider to send
+/// content under one [egress scope](EgressScope) (`docs/context-reuse.md` §3).
+///
+/// A boolean [`ConsentRecord`] answers "is this provider allowed?" *now*, in
+/// this process. A receipt answers "**what** left the machine, **to whom**,
+/// **who** agreed, and **when**?" — years later, from a durable artifact. It
+/// pins the provider's identity at grant time (so a later rename can't
+/// retroactively rewrite what was agreed), names the [`Grantor`], and carries
+/// an optional expiry. Receipts live in an **append-only** ledger
+/// ([`ConsentStore::record_receipt`]): a new grant never edits or erases an old
+/// one, so the history of consent is itself the audit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConsentReceipt {
+    /// The provider id (host routing/consent key) this receipt authorizes.
+    pub provider_id: String,
+    /// The egress scope consented to. Content leaving this provider under this
+    /// scope is authorized; any other off-machine scope it declares is not,
+    /// until its own receipt exists.
+    pub scope: EgressScope,
+    /// The provider's declared name at grant time — pinned so the audit trail
+    /// survives the provider being renamed or swapped.
+    pub provider_name: String,
+    /// The provider's declared version at grant time.
+    pub provider_version: String,
+    /// Who granted consent (a human or a policy).
+    pub grantor: Grantor,
+    /// When consent was granted (RFC 3339), supplied by the host's clock.
+    pub granted_at: String,
+    /// When consent expires (RFC 3339), if it does. `None` ⇒ open-ended.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+}
+
+impl ConsentReceipt {
+    /// Record consent for `provider` to egress under `scope`, granted by
+    /// `grantor` at `granted_at` (an RFC 3339 instant from the host's clock).
+    /// The provider's identity is copied out of `info` and pinned into the
+    /// receipt. Open-ended by default; add an expiry with
+    /// [`with_expiry`](Self::with_expiry).
+    pub fn new(
+        provider_id: impl Into<String>,
+        info: &ProviderInfo,
+        scope: EgressScope,
+        grantor: Grantor,
+        granted_at: impl Into<String>,
+    ) -> Self {
+        Self {
+            provider_id: provider_id.into(),
+            scope,
+            provider_name: info.name.clone(),
+            provider_version: info.version.clone(),
+            grantor,
+            granted_at: granted_at.into(),
+            expires_at: None,
+        }
+    }
+
+    /// Set the receipt's expiry (RFC 3339).
+    pub fn with_expiry(mut self, expires_at: impl Into<String>) -> Self {
+        self.expires_at = Some(expires_at.into());
+        self
+    }
+
+    /// Whether this receipt is still live at `now` (an RFC 3339 instant). A
+    /// receipt with no expiry is always live; otherwise it is live while
+    /// `now < expires_at`.
+    ///
+    /// The comparison is lexicographic on the RFC 3339 strings, which is
+    /// correct for fixed-width UTC (`Z`) timestamps — the form a host stamps —
+    /// so liveness needs no calendar parsing and the type stays dependency-free.
+    /// The runtime consent gate is presence-based (it does not carry a clock);
+    /// a host that enforces expiry consults this against its own `now` (e.g.
+    /// via [`ConsentStore::live_receipt`]).
+    pub fn is_live(&self, now: &str) -> bool {
+        match &self.expires_at {
+            Some(expiry) => now < expiry.as_str(),
+            None => true,
+        }
+    }
+}
+
+/// The host's pre-query consent verdict for one provider — the gate result the
+/// host acts on before transmitting a query (`docs/context-reuse.md` §3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConsentDecision {
+    /// The query may be transmitted: the provider is local, or every off-machine
+    /// egress scope it declares has a recorded receipt, or its legacy boolean
+    /// egress consent is on file.
+    Permitted,
+    /// The provider declares `egress` with **no** egress scopes (the pre-scope
+    /// boolean contract) and no consent is recorded. Transmitting is refused.
+    NeedsConsent,
+    /// The provider declares off-machine egress scope(s) with **no** recorded
+    /// consent receipt. Carries exactly the scopes still lacking a receipt, so
+    /// the host's typed error names what would leave unconsented.
+    NeedsReceipts(Vec<EgressScope>),
+}
+
+/// The set of consent decisions a host holds: a keyed table of legacy boolean
+/// [`ConsentRecord`]s and an **append-only** ledger of scope-level
+/// [`ConsentReceipt`]s (`docs/context-reuse.md` §3). Both are serde-able so a
+/// host can persist a user's decisions — and the receipt ledger — across runs.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ConsentStore {
     #[serde(default)]
     records: HashMap<String, ConsentRecord>,
+    /// Append-only: receipts are pushed, never removed or mutated, so the full
+    /// history of what was agreed survives as the audit trail.
+    #[serde(default)]
+    receipts: Vec<ConsentReceipt>,
 }
 
 impl ConsentStore {
@@ -58,9 +176,54 @@ impl ConsentStore {
         Self::default()
     }
 
-    /// Record (or replace) consent for a provider.
+    /// Record (or replace) legacy boolean consent for a provider.
     pub fn record(&mut self, record: ConsentRecord) {
         self.records.insert(record.provider_id.clone(), record);
+    }
+
+    /// Append a scope-level consent receipt to the audit ledger. Append-only:
+    /// this never removes or edits an earlier receipt (§3).
+    pub fn record_receipt(&mut self, receipt: ConsentReceipt) {
+        self.receipts.push(receipt);
+    }
+
+    /// The full append-only receipt ledger, in the order receipts were granted
+    /// — the audit trail.
+    pub fn receipts(&self) -> &[ConsentReceipt] {
+        &self.receipts
+    }
+
+    /// Every receipt recorded for a provider, in grant order.
+    pub fn receipts_for<'a>(
+        &'a self,
+        provider_id: &'a str,
+    ) -> impl Iterator<Item = &'a ConsentReceipt> {
+        self.receipts
+            .iter()
+            .filter(move |receipt| receipt.provider_id == provider_id)
+    }
+
+    /// Whether any recorded receipt authorizes `scope` for `provider_id`
+    /// (**presence**, ignoring expiry). This is what the zero-clock runtime gate
+    /// consults; a host that also enforces expiry uses [`live_receipt`](Self::live_receipt).
+    pub fn has_receipt(&self, provider_id: &str, scope: &EgressScope) -> bool {
+        self.receipts
+            .iter()
+            .any(|receipt| receipt.provider_id == provider_id && &receipt.scope == scope)
+    }
+
+    /// The receipt authorizing `scope` for `provider_id` that is live at `now`
+    /// (presence **and** non-expiry), if any. A host enforcing expiry gates on
+    /// this against its own clock (`docs/context-reuse.md` §3).
+    pub fn live_receipt(
+        &self,
+        provider_id: &str,
+        scope: &EgressScope,
+        now: &str,
+    ) -> Option<&ConsentReceipt> {
+        self.receipts.iter().find(|receipt| {
+            receipt.provider_id == provider_id && &receipt.scope == scope && receipt.is_live(now)
+        })
     }
 
     /// Withdraw consent for a provider, returning the prior record if any.
@@ -78,18 +241,54 @@ impl ConsentStore {
         self.records.contains_key(provider_id)
     }
 
-    /// Whether a provider needs consent before any query: only egress
-    /// providers do (§3.5). A read/write-only provider is always permitted —
-    /// nothing it can do leaves the machine.
+    /// Whether a provider needs consent before any query: a provider needs it
+    /// if it declares the boolean `egress` flag **or** any off-machine egress
+    /// scope (§3.5, §3). A purely local provider is always permitted — nothing
+    /// it can do leaves the machine.
     pub fn requires_consent(info: &ProviderInfo) -> bool {
-        info.data_flow.egress
+        info.data_flow.egress || info.data_flow.off_machine_scopes().next().is_some()
     }
 
-    /// The gate the host consults before transmitting a query: may we send
-    /// the payload to this provider right now? True unless it declares egress
-    /// and lacks a recorded consent.
+    /// The host's pre-query consent gate: may we transmit a query to this
+    /// provider right now, and if not, *why* (`docs/context-reuse.md` §3)?
+    ///
+    /// - A provider declaring **off-machine egress scopes** is governed by the
+    ///   receipt gate: permitted only when every off-machine scope has a
+    ///   recorded receipt; otherwise [`NeedsReceipts`](ConsentDecision::NeedsReceipts)
+    ///   names the scopes still missing one. (This is presence-based — a host
+    ///   enforcing expiry prunes/consults live receipts with its own clock.)
+    /// - A provider declaring only the **boolean `egress`** flag (no scopes) is
+    ///   governed by the legacy gate: permitted with a recorded [`ConsentRecord`],
+    ///   else [`NeedsConsent`](ConsentDecision::NeedsConsent).
+    /// - A purely local provider is [`Permitted`](ConsentDecision::Permitted).
+    pub fn evaluate(&self, id: &str, info: &ProviderInfo) -> ConsentDecision {
+        let off_machine: Vec<&EgressScope> = info.data_flow.off_machine_scopes().collect();
+        if !off_machine.is_empty() {
+            let missing: Vec<EgressScope> = off_machine
+                .into_iter()
+                .filter(|scope| !self.has_receipt(id, scope))
+                .cloned()
+                .collect();
+            if missing.is_empty() {
+                ConsentDecision::Permitted
+            } else {
+                ConsentDecision::NeedsReceipts(missing)
+            }
+        } else if info.data_flow.egress {
+            if self.is_consented(id) {
+                ConsentDecision::Permitted
+            } else {
+                ConsentDecision::NeedsConsent
+            }
+        } else {
+            ConsentDecision::Permitted
+        }
+    }
+
+    /// The boolean form of [`evaluate`](Self::evaluate): may we send the payload
+    /// to this provider right now?
     pub fn permits(&self, id: &str, info: &ProviderInfo) -> bool {
-        !Self::requires_consent(info) || self.is_consented(id)
+        matches!(self.evaluate(id, info), ConsentDecision::Permitted)
     }
 }
 
@@ -105,6 +304,20 @@ mod tests {
                 reads: true,
                 writes: false,
                 egress: true,
+                egress_scopes: vec![],
+            },
+        }
+    }
+
+    fn scoped_info() -> ProviderInfo {
+        ProviderInfo {
+            name: "contextgraph-cloud".into(),
+            version: "0.1.0".into(),
+            data_flow: DataFlow {
+                reads: true,
+                writes: false,
+                egress: true,
+                egress_scopes: vec![EgressScope::ThirdPartyModel],
             },
         }
     }
@@ -117,6 +330,7 @@ mod tests {
                 reads: true,
                 writes: false,
                 egress: false,
+                egress_scopes: vec![],
             },
         }
     }
@@ -139,7 +353,7 @@ mod tests {
 
         store.record(ConsentRecord::new(
             "contextgraph-github",
-            info.data_flow,
+            info.data_flow.clone(),
             "open issue titles + bodies leave to github.com",
         ));
         assert!(store.permits("contextgraph-github", &info));
@@ -157,7 +371,7 @@ mod tests {
         let info = egress_info();
         store.record(ConsentRecord::new(
             "contextgraph-github",
-            info.data_flow,
+            info.data_flow.clone(),
             "issues",
         ));
         assert!(store.permits("contextgraph-github", &info));
@@ -177,6 +391,7 @@ mod tests {
                 reads: true,
                 writes: false,
                 egress: true,
+                egress_scopes: vec![],
             },
             "issues + PRs",
         ));
@@ -184,5 +399,167 @@ mod tests {
         let back: ConsentStore = serde_json::from_str(&json).unwrap();
         assert_eq!(back, store);
         assert!(back.is_consented("contextgraph-github"));
+    }
+
+    fn receipt(provider: &str, scope: EgressScope) -> ConsentReceipt {
+        ConsentReceipt::new(
+            provider,
+            &scoped_info(),
+            scope,
+            Grantor::Human("alice".into()),
+            "2026-07-21T00:00:00Z",
+        )
+    }
+
+    #[test]
+    fn a_scoped_provider_is_gated_until_every_off_machine_scope_has_a_receipt() {
+        let mut store = ConsentStore::new();
+        let info = scoped_info();
+        assert!(ConsentStore::requires_consent(&info));
+
+        // No receipt yet → the gate names the missing scope, and the query is
+        // refused with the scope-specific decision (not the legacy boolean).
+        match store.evaluate("contextgraph-cloud", &info) {
+            ConsentDecision::NeedsReceipts(missing) => {
+                assert_eq!(missing, vec![EgressScope::ThirdPartyModel]);
+            }
+            other => panic!("expected NeedsReceipts, got {other:?}"),
+        }
+        assert!(!store.permits("contextgraph-cloud", &info));
+
+        // A boolean ConsentRecord does NOT satisfy a scope gate — only a
+        // receipt for the declared scope does.
+        store.record(ConsentRecord::new(
+            "contextgraph-cloud",
+            info.data_flow.clone(),
+            "legacy boolean consent",
+        ));
+        assert!(!store.permits("contextgraph-cloud", &info));
+
+        // Record the receipt for the declared scope → permitted.
+        store.record_receipt(receipt("contextgraph-cloud", EgressScope::ThirdPartyModel));
+        assert_eq!(
+            store.evaluate("contextgraph-cloud", &info),
+            ConsentDecision::Permitted
+        );
+        assert!(store.permits("contextgraph-cloud", &info));
+    }
+
+    #[test]
+    fn a_receipt_for_the_wrong_scope_does_not_unlock_a_different_scope() {
+        let mut store = ConsentStore::new();
+        let info = ProviderInfo {
+            name: "contextgraph-cloud".into(),
+            version: "0.1.0".into(),
+            data_flow: DataFlow {
+                reads: true,
+                writes: false,
+                egress: true,
+                egress_scopes: vec![EgressScope::ThirdPartyIndex, EgressScope::ThirdPartyModel],
+            },
+        };
+        // Only the index scope is consented; the model scope is still missing.
+        store.record_receipt(receipt("contextgraph-cloud", EgressScope::ThirdPartyIndex));
+        match store.evaluate("contextgraph-cloud", &info) {
+            ConsentDecision::NeedsReceipts(missing) => {
+                assert_eq!(missing, vec![EgressScope::ThirdPartyModel]);
+            }
+            other => panic!("expected NeedsReceipts for the model scope, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_local_only_scope_needs_no_receipt() {
+        let store = ConsentStore::new();
+        let info = ProviderInfo {
+            name: "contextgraph-docs".into(),
+            version: "0.1.0".into(),
+            data_flow: DataFlow {
+                reads: true,
+                writes: false,
+                egress: false,
+                egress_scopes: vec![EgressScope::LocalOnly],
+            },
+        };
+        // local-only is on-machine, so it triggers no receipt gate at all.
+        assert!(!ConsentStore::requires_consent(&info));
+        assert!(store.permits("contextgraph-docs", &info));
+    }
+
+    #[test]
+    fn receipts_are_append_only_and_carry_the_full_audit_trail() {
+        let mut store = ConsentStore::new();
+        store.record_receipt(receipt("contextgraph-cloud", EgressScope::ThirdPartyModel));
+        store.record_receipt(
+            ConsentReceipt::new(
+                "contextgraph-cloud",
+                &scoped_info(),
+                EgressScope::ThirdPartyIndex,
+                Grantor::Policy("data-egress-policy-v2".into()),
+                "2026-07-22T00:00:00Z",
+            )
+            .with_expiry("2026-08-22T00:00:00Z"),
+        );
+        // Both receipts retained (append-only), in grant order.
+        assert_eq!(store.receipts().len(), 2);
+        assert_eq!(store.receipts_for("contextgraph-cloud").count(), 2);
+        assert_eq!(store.receipts()[0].scope, EgressScope::ThirdPartyModel);
+        assert!(matches!(store.receipts()[1].grantor, Grantor::Policy(_)));
+    }
+
+    #[test]
+    fn an_expired_receipt_is_not_live_but_stays_in_the_ledger() {
+        let mut store = ConsentStore::new();
+        store.record_receipt(
+            receipt("contextgraph-cloud", EgressScope::ThirdPartyModel)
+                .with_expiry("2026-07-22T00:00:00Z"),
+        );
+        // Live before expiry, not after — but the receipt is never removed.
+        assert!(
+            store
+                .live_receipt(
+                    "contextgraph-cloud",
+                    &EgressScope::ThirdPartyModel,
+                    "2026-07-21T12:00:00Z",
+                )
+                .is_some()
+        );
+        assert!(
+            store
+                .live_receipt(
+                    "contextgraph-cloud",
+                    &EgressScope::ThirdPartyModel,
+                    "2026-07-23T00:00:00Z",
+                )
+                .is_none()
+        );
+        assert_eq!(
+            store.receipts().len(),
+            1,
+            "expiry never prunes the audit trail"
+        );
+    }
+
+    #[test]
+    fn a_receipt_pins_provider_identity_and_grantor_and_round_trips() {
+        let receipt = ConsentReceipt::new(
+            "contextgraph-cloud",
+            &scoped_info(),
+            EgressScope::ThirdPartyModel,
+            Grantor::Human("ops@oxagen.sh".into()),
+            "2026-07-21T00:00:00Z",
+        )
+        .with_expiry("2026-10-21T00:00:00Z");
+        assert_eq!(receipt.provider_name, "contextgraph-cloud");
+        assert_eq!(receipt.provider_version, "0.1.0");
+        assert!(receipt.is_live("2026-08-01T00:00:00Z"));
+        assert!(!receipt.is_live("2026-11-01T00:00:00Z"));
+
+        let json = serde_json::to_string(&receipt).unwrap();
+        let back: ConsentReceipt = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, receipt);
+        // Grantor serializes as a tagged {kind,id} object.
+        assert!(json.contains("\"kind\":\"human\""));
+        assert!(json.contains("\"id\":\"ops@oxagen.sh\""));
     }
 }
