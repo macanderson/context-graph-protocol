@@ -35,6 +35,17 @@ contract: a pre-1.0 revision could still change a field shape or add a
 required check based on real-world provider implementation feedback, before
 the public `contextgraph/1.0` release drops the `-draft` suffix.
 
+The [context-reuse guarantees](./context-reuse.md) (deterministic composition,
+usage reports, consent receipts, `context/verify`) are a worked example of how
+the wire shape grows *additively* within a family: they add only optional
+fields (`content_digest`, `egress_scopes`), a capability-gated method
+(`verify`), and host-side artifacts that ride no new required wire field. A
+`contextgraph/1.0-draft` provider that implements none of them still handshakes
+and answers queries within family `contextgraph/1`; a host that wants them
+degrades to re-query and boolean consent when a provider opts out. That is the
+draft-family additive discipline in practice — no flag day, no deployed
+provider broken.
+
 ## Why version families interoperate
 
 `contextgraph-host::wire::versions_compatible` treats two protocol strings as

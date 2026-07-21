@@ -49,6 +49,7 @@
 //! chose to run, not as a sandboxed principal — real filesystem isolation is
 //! future work.
 
+pub mod compose;
 pub mod consent;
 pub mod error;
 pub mod host;
@@ -57,6 +58,7 @@ pub mod provider;
 pub mod stdio;
 pub mod wire;
 
+pub use compose::compose_context;
 pub use consent::{ConsentRecord, ConsentStore};
 pub use error::HostError;
 pub use host::{FanOut, Host, ProviderOutcome, ProviderResult};

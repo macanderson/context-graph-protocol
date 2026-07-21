@@ -209,10 +209,19 @@ mod tests {
 
     #[test]
     fn version_families_interoperate_within_a_major_but_not_across() {
-        assert!(versions_compatible("contextgraph/1.0-draft", "contextgraph/1.0"));
-        assert!(versions_compatible("contextgraph/1.0-draft", "contextgraph/1.0-draft"));
+        assert!(versions_compatible(
+            "contextgraph/1.0-draft",
+            "contextgraph/1.0"
+        ));
+        assert!(versions_compatible(
+            "contextgraph/1.0-draft",
+            "contextgraph/1.0-draft"
+        ));
         assert!(versions_compatible(PROTOCOL_VERSION, "contextgraph/1.9"));
-        assert!(!versions_compatible("contextgraph/1.0-draft", "contextgraph/2.0"));
+        assert!(!versions_compatible(
+            "contextgraph/1.0-draft",
+            "contextgraph/2.0"
+        ));
         assert!(!versions_compatible("contextgraph/1.0", "mcp/1.0"));
     }
 }

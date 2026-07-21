@@ -64,6 +64,7 @@ mod tests {
             kind: FrameKind::Snippet,
             title: id.into(),
             content: String::new(),
+            content_digest: None,
             uri: None,
             score: 0.5,
             token_cost: cost,

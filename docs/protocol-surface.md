@@ -160,6 +160,22 @@ suite checks both:
   conformance failure, not a cosmetic gap. (Whole-platform convention: raw
   ids are never the primary on-screen identifier.)
 
+## Reusing context across turns
+
+A single retrieval is only half the story. Reusing retrieved context across the
+turns of a session — cheaply, without serving stale evidence, and with an audit
+trail — is governed by four interlocking guarantees specified in the companion
+[**Context reuse**](./context-reuse.md) page: a stable **frame identity** and
+canonical ordering for cache-friendly [deterministic composition](./context-reuse.md#1-deterministic-composition),
+a per-request [usage report](./context-reuse.md#2-usage-reports) for metering,
+[consent scopes and receipts](./context-reuse.md#3-consent-scopes-and-receipts)
+for audit-grade egress records, and a pull-based
+[`context/verify`](./context-reuse.md#4-context-verification) request for cheap
+revalidation. They surface here as the `content_digest` frame field, the
+`egress_scopes` data-flow field, the `verify` capability flag, and the
+`verify` / `verified` envelope variants — all additive within the
+`contextgraph/1` family. Their conformance requirements are consolidated below.
+
 ## Wire framing (defined in `contextgraph-host`, not `contextgraph-types`)
 
 `contextgraph-types` defines the payload shapes above; `contextgraph-host::wire::Envelope`
@@ -240,6 +256,21 @@ host-side requirements. Bold keywords follow [RFC 2119](https://www.rfc-editor.o
 | R1 | A provider **MUST NOT** crash on a malformed line or a bad request. It **SHOULD** reply `error` instead. | `malformed-input-tolerance` conformance check (stdio) |
 | R2 | A provider **MUST** tear down cleanly on `shutdown` (stdio: exit; HTTP: no further requests expected). | `shutdown-clean` conformance check |
 | R3 | Frame `content` **MUST** be treated as untrusted data by the host — delimited as quoted material, never executed as instructions. | `contextgraph-host` host contract |
+
+### Context reuse
+
+The full text for these lives in the companion [Context reuse](./context-reuse.md)
+page; they are consolidated here because this section is the authoritative list.
+
+| # | Requirement | Enforced / verified by |
+| - | ----------- | ---------------------- |
+| D1 | Frames sharing a `FrameId` **MUST** have identical content bytes; changing content **MUST** change `content_digest`. | provider contract; `verify` conformance check |
+| D2 | A host composing a frame set **MUST** emit frames in canonical `FrameId` order, independent of arrival order, and **MUST NOT** let `score`/`token_cost` affect the rendered bytes. | `contextgraph-host::compose_context` |
+| U1 | A host **MUST** be able to produce a usage report for any query it executed, whose consumed total equals the summed `token_cost` of the served frames it reports. | `contextgraph-host::FanOut::usage_report`; `usage-report` conformance check |
+| C5 | A provider **MUST** declare its egress scopes (`egress_scopes`) truthfully and consistently with `data_flow.egress`; an off-machine scope alongside `egress: false` is a conformance failure. | `consent-scope` conformance check |
+| C6 | A host **MUST** reject a frame whose provider declares an egress scope with no live matching [consent receipt](./context-reuse.md#3-consent-scopes-and-receipts), with a typed error, before transmitting the query. | `ConsentStore` scope gate |
+| V1 | A provider advertising the `verify` capability **MUST** answer a `context/verify` request honestly: a current identity ⇒ `valid`; a digest it no longer serves ⇒ `stale`/`gone`/`unknown`, never `valid`. | `verify` conformance check |
+| V2 | A host **MUST** treat a `stale`/`gone` verdict as evicting the frame from the composed context, and **MUST** fall back to re-query for providers without `verify`. | `contextgraph-host` verify support |
 
 ## Version strings
 

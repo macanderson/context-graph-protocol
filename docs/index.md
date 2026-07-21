@@ -18,6 +18,10 @@ Reference documentation for the **Context Graph Protocol** crates:
 - [**Protocol surface**](./protocol-surface.md) — the wire types: context
   frames, queries, capabilities, provenance. Start here to understand *what*
   Context Graph Protocol is.
+- [**Context reuse**](./context-reuse.md) — the four interlocking guarantees
+  that make reusing context across turns cache-friendly, auditable, and safe:
+  deterministic composition (stable frame identity + canonical ordering), usage
+  reports, consent scopes + receipts, and pull-based `context/verify`.
 - [**Implementing a provider**](./implementing-a-provider.md) — how a third
   party builds an Context Graph Protocol provider, in Rust (via `ContextProvider`) or any other
   language (via the wire protocol directly). Start here to *build* something.

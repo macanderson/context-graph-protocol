@@ -5,6 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::identity::FrameId;
+
 /// What kind of thing a frame represents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -66,6 +68,13 @@ pub struct ContextFrame {
     /// Text the host may quote into a prompt. Untrusted data: a conforming
     /// host delimits this as quoted material, never as instructions.
     pub content: String,
+    /// The provider-declared digest of this frame's content bytes — the third
+    /// component of its stable [`FrameId`](crate::FrameId) identity, opaque to
+    /// the protocol (e.g. `sha256:<hex>`, matching the `provenance` digests).
+    /// Absent ⇒ the frame is not verifiable and a host re-queries it rather
+    /// than reusing it unchecked (`docs/context-reuse.md` §1, §4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_digest: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uri: Option<String>,
     /// Provider-normalized relevance in `[0, 1]`.
@@ -94,6 +103,14 @@ impl ContextFrame {
     pub fn has_valid_score(&self) -> bool {
         (0.0..=1.0).contains(&self.score)
     }
+
+    /// The frame's stable identity under the given provider: `(provider id,
+    /// frame id, content digest)`. The digest is carried through from
+    /// [`content_digest`](Self::content_digest), so a frame without one yields
+    /// an unverifiable identity (`docs/context-reuse.md` §1).
+    pub fn identity(&self, provider_id: impl Into<String>) -> FrameId {
+        FrameId::new(provider_id, self.id.clone(), self.content_digest.clone())
+    }
 }
 
 #[cfg(test)]
@@ -106,6 +123,7 @@ mod tests {
             kind: FrameKind::Snippet,
             title: "workspace.ts L120-160".into(),
             content: "export interface Workspace { ... }".into(),
+            content_digest: Some("sha256:abc".into()),
             uri: Some("file:///repo/workspace.ts".into()),
             score: 0.83,
             token_cost: 412,
@@ -143,14 +161,31 @@ mod tests {
     }
 
     #[test]
+    fn identity_carries_the_provider_scope_and_content_digest() {
+        let frame = sample_frame();
+        let id = frame.identity("repo-graph");
+        assert_eq!(id.provider_id, "repo-graph");
+        assert_eq!(id.frame_id, "frm_1");
+        assert_eq!(id.content_digest.as_deref(), Some("sha256:abc"));
+        assert!(id.is_verifiable());
+
+        // A frame without a declared digest yields an unverifiable identity.
+        let mut undigested = frame;
+        undigested.content_digest = None;
+        assert!(!undigested.identity("repo-graph").is_verifiable());
+    }
+
+    #[test]
     fn optional_fields_are_omitted_when_absent() {
         let frame = sample_frame();
         let mut minimal = frame.clone();
         minimal.uri = None;
         minimal.valid_from = None;
+        minimal.content_digest = None;
         minimal.provenance.clear();
         let json = serde_json::to_string(&minimal).unwrap();
         assert!(!json.contains("\"uri\""));
         assert!(!json.contains("\"provenance\""));
+        assert!(!json.contains("\"content_digest\""));
     }
 }

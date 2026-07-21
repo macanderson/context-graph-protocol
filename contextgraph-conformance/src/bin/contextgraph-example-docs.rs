@@ -170,9 +170,11 @@ fn canned_frames(misbehave: Option<Misbehave>) -> Vec<ContextFrame> {
             id: "frm_getting_started".into(),
             kind: FrameKind::Doc,
             title: "Getting Started".into(),
-            content: "Install the reference binding with `cargo add contextgraph-types`, then implement \
+            content:
+                "Install the reference binding with `cargo add contextgraph-types`, then implement \
                       the four required methods."
-                .into(),
+                    .into(),
+            content_digest: Some("sha256:getting-started-v1".into()),
             uri: Some("file:///docs/getting-started.md".into()),
             score: if bad_score { 1.5 } else { 0.82 },
             token_cost,
@@ -202,6 +204,7 @@ fn canned_frames(misbehave: Option<Misbehave>) -> Vec<ContextFrame> {
             content: "Providers declare their data-flow direction at the handshake so hosts can \
                       gate consent before sending any query."
                 .into(),
+            content_digest: Some("sha256:configuration-v1".into()),
             uri: Some("file:///docs/configuration.md".into()),
             score: 0.61,
             token_cost,

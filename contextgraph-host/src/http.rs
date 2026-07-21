@@ -12,7 +12,9 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use contextgraph_types::{Capabilities, ContextQuery, ContextQueryResult, PROTOCOL_VERSION, ProviderInfo};
+use contextgraph_types::{
+    Capabilities, ContextQuery, ContextQueryResult, PROTOCOL_VERSION, ProviderInfo,
+};
 
 use crate::error::HostError;
 use crate::provider::ContextProvider;
@@ -214,6 +216,7 @@ mod tests {
                     kind: FrameKind::Doc,
                     title: "remote doc".into(),
                     content: "remote content".into(),
+                    content_digest: None,
                     uri: Some("https://example.test/doc".into()),
                     score: 0.6,
                     token_cost: 20,
@@ -295,7 +298,9 @@ mod tests {
     async fn a_non_envelope_http_body_is_a_clean_wire_error() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .respond_with(ResponseTemplate::new(200).set_body_string("<html>not contextgraph</html>"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string("<html>not contextgraph</html>"),
+            )
             .mount(&server)
             .await;
 

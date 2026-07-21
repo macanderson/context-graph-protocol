@@ -137,6 +137,7 @@ impl ContextProvider for HealthyProvider {
                 kind: FrameKind::Doc,
                 title: "in-process frame".into(),
                 content: "still here".into(),
+                content_digest: None,
                 uri: None,
                 score: 0.5,
                 token_cost: 8,

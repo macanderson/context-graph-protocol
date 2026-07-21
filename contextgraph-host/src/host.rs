@@ -13,7 +13,10 @@
 
 use std::time::Duration;
 
-use contextgraph_types::{ContextFrame, ContextQuery, ContextQueryResult, DataFlow};
+use contextgraph_types::{
+    ContextFrame, ContextQuery, ContextQueryResult, DataFlow, ProviderUsage, ServedFrame,
+    UsageReport,
+};
 
 use crate::consent::{ConsentRecord, ConsentStore};
 use crate::error::HostError;
@@ -269,6 +272,102 @@ impl FanOut {
         self.accepted_frames().map(|f| f.token_cost as u64).sum()
     }
 
+    /// Every accepted frame paired with the id of the provider that served it
+    /// — the input to deterministic composition (`docs/context-reuse.md` §1).
+    pub fn accepted_with_provider(&self) -> impl Iterator<Item = (&str, &ContextFrame)> {
+        self.outcomes
+            .iter()
+            .filter_map(|outcome| match &outcome.result {
+                ProviderResult::Frames(result) => Some(
+                    result
+                        .frames
+                        .iter()
+                        .map(move |frame| (outcome.provider_id.as_str(), frame)),
+                ),
+                _ => None,
+            })
+            .flatten()
+    }
+
+    /// Compose every accepted frame into a byte-stable context block via the
+    /// deterministic composition contract — canonical order, relevance-free
+    /// rendering (`docs/context-reuse.md` §1). Two fan-outs over the same
+    /// frame set compose to identical bytes, so an unchanged turn extends the
+    /// provider's prompt cache instead of busting it.
+    pub fn compose(&self) -> String {
+        crate::compose::compose_context(self.accepted_with_provider())
+    }
+
+    /// Roll this fan-out up into a per-request [`UsageReport`] for metering
+    /// (`docs/context-reuse.md` §2). One [`ProviderUsage`] per provider the
+    /// query reached: accepted frames are itemized by stable identity and
+    /// declared cost, a budget-lying provider's dropped frames count as
+    /// rejected, and a failed or consent-gated provider served nothing.
+    ///
+    /// The report is a pure function of this fan-out plus the two host-supplied
+    /// scalars: `budget_requested` is the query's `max_tokens`, and `as_of` is
+    /// the accounting snapshot time (an RFC 3339 string the host stamps — the
+    /// report's own as-of, *not* the query's bi-temporal `as_of` pin). The
+    /// result always satisfies [`UsageReport::is_consistent`]: its totals are
+    /// summed from the same served frames it itemizes.
+    pub fn usage_report(&self, query: &ContextQuery, as_of: impl Into<String>) -> UsageReport {
+        let providers: Vec<ProviderUsage> = self
+            .outcomes
+            .iter()
+            .map(|outcome| {
+                let provider_id = outcome.provider_id.clone();
+                match &outcome.result {
+                    ProviderResult::Frames(result) => {
+                        let served_frames: Vec<ServedFrame> = result
+                            .frames
+                            .iter()
+                            .map(|frame| ServedFrame {
+                                frame: frame.identity(&provider_id),
+                                token_cost: frame.token_cost,
+                            })
+                            .collect();
+                        let token_cost = served_frames.iter().map(|s| s.token_cost as u64).sum();
+                        ProviderUsage {
+                            provider_id,
+                            frames_served: served_frames.len() as u32,
+                            frames_rejected: 0,
+                            token_cost,
+                            served_frames,
+                        }
+                    }
+                    // A budget lie: the provider's frames were dropped whole,
+                    // so nothing was served and every offered frame is rejected.
+                    ProviderResult::BudgetLie { dropped_frames, .. } => ProviderUsage {
+                        provider_id,
+                        frames_served: 0,
+                        frames_rejected: *dropped_frames as u32,
+                        token_cost: 0,
+                        served_frames: vec![],
+                    },
+                    // Consent-gated or failed: no frames offered, none served,
+                    // none rejected — the leg simply contributed nothing.
+                    ProviderResult::ConsentRequired(_) | ProviderResult::Failed(_) => {
+                        ProviderUsage {
+                            provider_id,
+                            frames_served: 0,
+                            frames_rejected: 0,
+                            token_cost: 0,
+                            served_frames: vec![],
+                        }
+                    }
+                }
+            })
+            .collect();
+
+        let budget_consumed = providers.iter().map(|p| p.token_cost).sum();
+        UsageReport {
+            budget_requested: query.max_tokens,
+            budget_consumed,
+            as_of: as_of.into(),
+            providers,
+        }
+    }
+
     /// Providers that failed (error, timeout, or crash), with their errors.
     pub fn failures(&self) -> impl Iterator<Item = (&str, &HostError)> {
         self.outcomes
@@ -406,6 +505,7 @@ mod tests {
             kind: FrameKind::Doc,
             title: id.into(),
             content: "c".into(),
+            content_digest: None,
             uri: None,
             score: 0.5,
             token_cost: cost,
@@ -450,6 +550,96 @@ mod tests {
         assert_eq!(fanout.outcomes.len(), 2);
         assert_eq!(fanout.accepted_frames().count(), 3);
         assert_eq!(fanout.total_accepted_tokens(), 250);
+    }
+
+    #[tokio::test]
+    async fn the_host_composes_the_same_frame_set_to_identical_bytes_across_turns() {
+        // The reference host's deterministic-composition round trip
+        // (`docs/context-reuse.md` §1): the same frame set, fanned out twice,
+        // composes to byte-identical bytes — so an unchanged turn extends the
+        // provider's prompt-cache prefix instead of forfeiting it.
+        let mut host = Host::new();
+        host.register(Box::new(FakeProvider::new(
+            "prov-b",
+            false,
+            Behavior::Frames(vec![frame("f2", 100), frame("f1", 100)]),
+        )));
+        host.register(Box::new(FakeProvider::new(
+            "prov-a",
+            false,
+            Behavior::Frames(vec![frame("f3", 50)]),
+        )));
+
+        let first = host.query_all(&query()).await.compose();
+        let second = host.query_all(&query()).await.compose();
+        assert_eq!(
+            first, second,
+            "an unchanged frame set must compose to identical bytes"
+        );
+        // All three frames are present, each fenced exactly once, and the
+        // lower-sorting provider id renders first regardless of registration
+        // order.
+        assert_eq!(first.matches("<frame ").count(), 3);
+        assert!(first.find("prov-a").unwrap() < first.find("prov-b").unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_fan_out_rolls_up_into_a_self_consistent_usage_report() {
+        let mut host = Host::new();
+        host.register(Box::new(FakeProvider::new(
+            "a",
+            false,
+            Behavior::Frames(vec![frame("f1", 100), frame("f2", 100)]),
+        )));
+        // 1200 tokens against a 1000-token budget: dropped as a budget lie.
+        host.register(Box::new(FakeProvider::new(
+            "liar",
+            false,
+            Behavior::Frames(vec![frame("big", 1200)]),
+        )));
+
+        let query = query();
+        let fanout = host.query_all(&query).await;
+        let report = fanout.usage_report(&query, "2026-07-21T00:00:00Z");
+
+        assert_eq!(report.budget_requested, 1000);
+        assert_eq!(report.budget_consumed, 200);
+        assert_eq!(report.as_of, "2026-07-21T00:00:00Z");
+        // The report re-sums from its own itemized frames…
+        assert!(report.is_consistent());
+        assert!(report.within_budget());
+        // …and its consumed total equals an INDEPENDENT re-sum of the accepted
+        // frames — the arithmetic identity, not a build-then-assert tautology.
+        let independent: u64 = fanout.accepted_frames().map(|f| f.token_cost as u64).sum();
+        assert_eq!(report.budget_consumed, independent);
+        assert_eq!(report.budget_consumed, fanout.total_accepted_tokens());
+
+        let a = report
+            .providers
+            .iter()
+            .find(|p| p.provider_id == "a")
+            .expect("provider a is in the report");
+        assert_eq!(a.frames_served, 2);
+        assert_eq!(a.frames_rejected, 0);
+        assert_eq!(a.token_cost, 200);
+        // Served frames are itemized by stable identity for audit walk-back.
+        let ids: Vec<&str> = a
+            .served_frames
+            .iter()
+            .map(|s| s.frame.frame_id.as_str())
+            .collect();
+        assert!(ids.contains(&"f1") && ids.contains(&"f2"));
+        assert!(a.served_frames.iter().all(|s| s.frame.provider_id == "a"));
+
+        let liar = report
+            .providers
+            .iter()
+            .find(|p| p.provider_id == "liar")
+            .expect("the liar is still accounted for");
+        assert_eq!(liar.frames_served, 0);
+        assert_eq!(liar.frames_rejected, 1);
+        assert_eq!(liar.token_cost, 0);
+        assert!(liar.served_frames.is_empty());
     }
 
     #[tokio::test]

@@ -206,6 +206,11 @@
         "kind": { "$ref": "#/$defs/FrameKind" },
         "title": { "type": "string", "minLength": 1 },
         "content": { "type": "string" },
+        "content_digest": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "$comment": "Provider-declared, opaque digest of the frame's content bytes (e.g. sha256:<hex>) — the third component of the frame's stable FrameId identity. Optional: a frame without one is not verifiable and a host re-queries it (docs/context-reuse.md §1, §4)."
+        },
         "uri": { "type": ["string", "null"] },
         "score": {
           "type": "number",
