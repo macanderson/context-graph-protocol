@@ -362,6 +362,15 @@ is willing to tolerate. This is deliberately informative: `verify_frames` holds
 no state, caches no frames, and tracks no turns — the protocol's job is to
 answer the question when asked, not to decide when to ask it.
 
+The window is framed as *host-tolerated* rather than provider-declared on
+purpose. A provider knows how often its sources *tend* to change, but only the
+host knows how much staleness this particular task can absorb, and making the
+window a wire field would push a scheduling decision into the protocol and give
+the host state to keep. A provider that wants to share what it knows can
+advertise a suggested freshness hint as a **future additive capability field**;
+that would inform the host's policy without ever overriding it, and it needs no
+change to the exchange specified here.
+
 Note the ordering payoff: because only *evicted* frames change the composed
 context, a turn in which everything verifies `valid` leaves §1's canonical
 rendering byte-identical, so the prompt prefix — and its cache — survives. Only
