@@ -31,10 +31,10 @@
 //! fixture has `--misbehave` flags that trip each one, proving the suite
 //! catches a broken provider (task deliverable).
 
-use contextgraph_host::{
-    ConsentReceipt, ConsentRecord, ContextProvider, Grantor, Host, HostError, RawStdioConnection,
+use contextgraph_host::{ConsentRecord, ContextProvider, Host, HostError, RawStdioConnection};
+use contextgraph_types::{
+    Capabilities, ConsentReceipt, ContextQuery, ContextQueryResult, Grantor, ProviderInfo,
 };
-use contextgraph_types::{Capabilities, ContextQuery, ContextQueryResult, ProviderInfo};
 
 mod report;
 

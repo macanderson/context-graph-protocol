@@ -14,11 +14,11 @@
 use std::time::Duration;
 
 use contextgraph_types::{
-    ContextFrame, ContextQuery, ContextQueryResult, DataFlow, EgressScope, ProviderUsage,
-    ServedFrame, UsageReport,
+    ConsentReceipt, ContextFrame, ContextQuery, ContextQueryResult, DataFlow, EgressScope,
+    ProviderUsage, ServedFrame, UsageReport,
 };
 
-use crate::consent::{ConsentDecision, ConsentReceipt, ConsentRecord, ConsentStore};
+use crate::consent::{ConsentDecision, ConsentRecord, ConsentStore};
 use crate::error::HostError;
 use crate::provider::{ContextProvider, capability_matches};
 use crate::stdio::StdioProvider;
@@ -456,8 +456,8 @@ pub enum ProviderResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::consent::Grantor;
     use async_trait::async_trait;
+    use contextgraph_types::Grantor;
     use contextgraph_types::capability::QueryCapability;
     use contextgraph_types::{Capabilities, ContextFrame, FrameKind, ProviderInfo};
     use std::sync::Arc;

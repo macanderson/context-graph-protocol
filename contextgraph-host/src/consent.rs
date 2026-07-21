@@ -7,10 +7,17 @@
 //! **names what leaves**. A host never auto-enables egress. Read/write-only
 //! providers carry no such gate. The store is in-memory and serde-able so a
 //! host can persist the user's decisions across runs (task deliverable 4).
+//!
+//! Scope-level consent is recorded as a
+//! [`ConsentReceipt`](contextgraph_types::ConsentReceipt) — a protocol-defined
+//! shape that lives in `contextgraph-types` alongside the usage report, since
+//! any host claiming the consent guarantee must produce it and any auditor must
+//! be able to read it. This module holds the host machinery that *consumes*
+//! receipts: the append-only ledger and the gate.
 
 use std::collections::HashMap;
 
-use contextgraph_types::{DataFlow, EgressScope, ProviderInfo};
+use contextgraph_types::{ConsentReceipt, DataFlow, EgressScope, ProviderInfo};
 use serde::{Deserialize, Serialize};
 
 /// A recorded consent decision for one provider. `granted_scope` is the
@@ -42,100 +49,6 @@ impl ConsentRecord {
             data_flow,
             granted_scope: granted_scope.into(),
             granted_at: None,
-        }
-    }
-}
-
-/// Who granted a consent receipt (`docs/context-reuse.md` §3). Recorded so the
-/// audit trail names an accountable party, not just a moment.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", content = "id", rename_all = "snake_case")]
-pub enum Grantor {
-    /// A human user, identified however the host names them at consent time
-    /// (a user id, email, or display name).
-    Human(String),
-    /// An automated policy, identified by its policy id or name — consent
-    /// granted by a rule rather than a person present in the moment.
-    Policy(String),
-}
-
-/// An audit-grade record that consent was granted for one provider to send
-/// content under one [egress scope](EgressScope) (`docs/context-reuse.md` §3).
-///
-/// A boolean [`ConsentRecord`] answers "is this provider allowed?" *now*, in
-/// this process. A receipt answers "**what** left the machine, **to whom**,
-/// **who** agreed, and **when**?" — years later, from a durable artifact. It
-/// pins the provider's identity at grant time (so a later rename can't
-/// retroactively rewrite what was agreed), names the [`Grantor`], and carries
-/// an optional expiry. Receipts live in an **append-only** ledger
-/// ([`ConsentStore::record_receipt`]): a new grant never edits or erases an old
-/// one, so the history of consent is itself the audit.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ConsentReceipt {
-    /// The provider id (host routing/consent key) this receipt authorizes.
-    pub provider_id: String,
-    /// The egress scope consented to. Content leaving this provider under this
-    /// scope is authorized; any other off-machine scope it declares is not,
-    /// until its own receipt exists.
-    pub scope: EgressScope,
-    /// The provider's declared name at grant time — pinned so the audit trail
-    /// survives the provider being renamed or swapped.
-    pub provider_name: String,
-    /// The provider's declared version at grant time.
-    pub provider_version: String,
-    /// Who granted consent (a human or a policy).
-    pub grantor: Grantor,
-    /// When consent was granted (RFC 3339), supplied by the host's clock.
-    pub granted_at: String,
-    /// When consent expires (RFC 3339), if it does. `None` ⇒ open-ended.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expires_at: Option<String>,
-}
-
-impl ConsentReceipt {
-    /// Record consent for `provider` to egress under `scope`, granted by
-    /// `grantor` at `granted_at` (an RFC 3339 instant from the host's clock).
-    /// The provider's identity is copied out of `info` and pinned into the
-    /// receipt. Open-ended by default; add an expiry with
-    /// [`with_expiry`](Self::with_expiry).
-    pub fn new(
-        provider_id: impl Into<String>,
-        info: &ProviderInfo,
-        scope: EgressScope,
-        grantor: Grantor,
-        granted_at: impl Into<String>,
-    ) -> Self {
-        Self {
-            provider_id: provider_id.into(),
-            scope,
-            provider_name: info.name.clone(),
-            provider_version: info.version.clone(),
-            grantor,
-            granted_at: granted_at.into(),
-            expires_at: None,
-        }
-    }
-
-    /// Set the receipt's expiry (RFC 3339).
-    pub fn with_expiry(mut self, expires_at: impl Into<String>) -> Self {
-        self.expires_at = Some(expires_at.into());
-        self
-    }
-
-    /// Whether this receipt is still live at `now` (an RFC 3339 instant). A
-    /// receipt with no expiry is always live; otherwise it is live while
-    /// `now < expires_at`.
-    ///
-    /// The comparison is lexicographic on the RFC 3339 strings, which is
-    /// correct for fixed-width UTC (`Z`) timestamps — the form a host stamps —
-    /// so liveness needs no calendar parsing and the type stays dependency-free.
-    /// The runtime consent gate is presence-based (it does not carry a clock);
-    /// a host that enforces expiry consults this against its own `now` (e.g.
-    /// via [`ConsentStore::live_receipt`]).
-    pub fn is_live(&self, now: &str) -> bool {
-        match &self.expires_at {
-            Some(expiry) => now < expiry.as_str(),
-            None => true,
         }
     }
 }
@@ -401,6 +314,8 @@ mod tests {
         assert!(back.is_consented("contextgraph-github"));
     }
 
+    use contextgraph_types::Grantor;
+
     fn receipt(provider: &str, scope: EgressScope) -> ConsentReceipt {
         ConsentReceipt::new(
             provider,
@@ -541,25 +456,14 @@ mod tests {
     }
 
     #[test]
-    fn a_receipt_pins_provider_identity_and_grantor_and_round_trips() {
-        let receipt = ConsentReceipt::new(
-            "contextgraph-cloud",
-            &scoped_info(),
-            EgressScope::ThirdPartyModel,
-            Grantor::Human("ops@oxagen.sh".into()),
-            "2026-07-21T00:00:00Z",
-        )
-        .with_expiry("2026-10-21T00:00:00Z");
-        assert_eq!(receipt.provider_name, "contextgraph-cloud");
-        assert_eq!(receipt.provider_version, "0.1.0");
-        assert!(receipt.is_live("2026-08-01T00:00:00Z"));
-        assert!(!receipt.is_live("2026-11-01T00:00:00Z"));
-
-        let json = serde_json::to_string(&receipt).unwrap();
-        let back: ConsentReceipt = serde_json::from_str(&json).unwrap();
-        assert_eq!(back, receipt);
-        // Grantor serializes as a tagged {kind,id} object.
-        assert!(json.contains("\"kind\":\"human\""));
-        assert!(json.contains("\"id\":\"ops@oxagen.sh\""));
+    fn a_serialized_store_carries_its_receipt_ledger_across_runs() {
+        // The ledger is the durable audit artifact, so it must survive the
+        // round-trip a host does when persisting decisions between sessions.
+        let mut store = ConsentStore::new();
+        store.record_receipt(receipt("contextgraph-cloud", EgressScope::ThirdPartyModel));
+        let back: ConsentStore = serde_json::from_str(&serde_json::to_string(&store).unwrap())
+            .expect("a store with receipts round-trips");
+        assert_eq!(back, store);
+        assert!(back.has_receipt("contextgraph-cloud", &EgressScope::ThirdPartyModel));
     }
 }

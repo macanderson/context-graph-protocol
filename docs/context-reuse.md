@@ -295,7 +295,7 @@ requirement C5).
 ### Consent receipts
 
 When a host grants consent, it records a
-[`ConsentReceipt`](https://docs.rs/contextgraph-host/latest/contextgraph_host/consent/struct.ConsentReceipt.html):
+[`ConsentReceipt`](https://docs.rs/contextgraph-types/latest/contextgraph_types/consent/struct.ConsentReceipt.html):
 
 ```rust
 pub struct ConsentReceipt {
@@ -313,6 +313,8 @@ A receipt turns "is this allowed?" (a boolean, now) into "what left, to whom, wh
 ([`ConsentStore::record_receipt`](https://docs.rs/contextgraph-host/latest/contextgraph_host/consent/struct.ConsentStore.html#method.record_receipt)):
 a new grant never edits or erases an old one, so the history of consent *is* the audit trail, and it is serde-able for durable persistence across host runs.
 
+Like the [usage report](#2-usage-reports), a receipt is a **host-side artifact, not a wire message** — it rides no envelope variant, and a provider implements nothing to make one possible. It nonetheless lives in `contextgraph-types` rather than the host crate, for the same reason the usage report does: it is a *protocol-defined shape*. Any host in any language that claims the consent guarantee must produce this shape, and an auditor reading a persisted ledger must be able to parse it without depending on one particular host implementation. The ledger and gate that *consume* receipts are host machinery and stay in `contextgraph-host`.
+
 ### Host behavior: reject unconsented egress
 
 A host's pre-query consent gate
@@ -325,7 +327,7 @@ is scope-aware:
 - A provider declaring only the boolean `egress` flag (no scopes) keeps the pre-scope legacy gate — a `ConsentRecord` unlocks it. This is what keeps the change additive: an existing provider that never declares scopes behaves exactly as before.
 
 The runtime gate is **presence-based** (does a receipt for the scope exist?) and carries no clock, so it never depends on wall-time to make a decision. **Expiry** is a first-class receipt property
-([`ConsentReceipt::is_live`](https://docs.rs/contextgraph-host/latest/contextgraph_host/consent/struct.ConsentReceipt.html#method.is_live)):
+([`ConsentReceipt::is_live`](https://docs.rs/contextgraph-types/latest/contextgraph_types/consent/struct.ConsentReceipt.html#method.is_live)):
 a host that enforces expiry consults
 [`ConsentStore::live_receipt`](https://docs.rs/contextgraph-host/latest/contextgraph_host/consent/struct.ConsentStore.html#method.live_receipt)
 against its own `now`, and treats an expired receipt as absent — re-shutting the gate — while the receipt itself is never pruned from the audit ledger.
