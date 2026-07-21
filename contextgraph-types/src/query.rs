@@ -51,6 +51,40 @@ impl ContextQueryResult {
     pub fn respects_budget(&self, max_tokens: u32) -> bool {
         self.total_token_cost() <= max_tokens as u64
     }
+
+    /// Whether the provider honored the query's `max_frames` cap
+    /// (`SPEC.md` §B4).
+    ///
+    /// `max_frames` was part of the query contract from the beginning and was
+    /// audited by nothing: a provider returning ten thousand one-token frames
+    /// against `max_frames: 8` passed every check. Frame count is a real cost
+    /// — each frame carries a title, a citation label, and rendering chrome the
+    /// token budget does not capture.
+    pub fn respects_frame_limit(&self, max_frames: u32) -> bool {
+        self.frames.len() as u64 <= max_frames as u64
+    }
+
+    /// Frames whose declared `token_cost` does not match the canonical count
+    /// for their content (`SPEC.md` §B3).
+    ///
+    /// Returns ids so a host's audit report can name the offending frames
+    /// rather than only the provider.
+    pub fn frames_with_dishonest_cost(&self) -> Vec<&str> {
+        self.frames
+            .iter()
+            .filter(|f| !f.declares_honest_token_cost())
+            .map(|f| f.id.as_str())
+            .collect()
+    }
+
+    /// The sum of the *canonical* costs of the returned frames — what the
+    /// provider's frames actually cost, as opposed to what it claimed.
+    pub fn canonical_token_cost(&self) -> u64 {
+        self.frames
+            .iter()
+            .map(|f| f.canonical_token_cost() as u64)
+            .sum()
+    }
 }
 
 #[cfg(test)]
@@ -114,5 +148,58 @@ mod tests {
             dropped_estimate: None,
         };
         assert!(!result.respects_budget(300));
+    }
+
+    /// A frame whose declared cost is the canonical cost of its content.
+    fn honest_frame(id: &str, content: &str) -> ContextFrame {
+        let mut frame = frame_with_cost(id, 0);
+        frame.content = content.to_string();
+        frame.token_cost = frame.canonical_token_cost();
+        frame
+    }
+
+    #[test]
+    fn frame_limit_catches_the_provider_that_floods_with_cheap_frames() {
+        // The exact hole from issue #10: ten thousand one-token frames against
+        // `max_frames: 8` used to pass everything, because only the token
+        // budget was audited.
+        let flood = ContextQueryResult {
+            frames: (0..50)
+                .map(|i| honest_frame(&format!("f{i}"), "x"))
+                .collect(),
+            truncated: false,
+            dropped_estimate: None,
+        };
+        assert!(flood.respects_budget(10_000), "the token budget is fine");
+        assert!(!flood.respects_frame_limit(8), "but the frame cap is not");
+        assert!(flood.respects_frame_limit(50), "boundary is inclusive");
+    }
+
+    #[test]
+    fn an_honest_result_reports_no_dishonest_frames() {
+        let result = ContextQueryResult {
+            frames: vec![honest_frame("a", "abcd"), honest_frame("b", "abcdefgh")],
+            truncated: false,
+            dropped_estimate: None,
+        };
+        assert!(result.frames_with_dishonest_cost().is_empty());
+        assert_eq!(result.total_token_cost(), result.canonical_token_cost());
+    }
+
+    #[test]
+    fn dishonest_frames_are_named_and_the_true_cost_is_recoverable() {
+        let mut liar = honest_frame("liar", &"x".repeat(4_000));
+        liar.token_cost = 1; // claims 1, actually costs 1_000
+        let result = ContextQueryResult {
+            frames: vec![honest_frame("honest", "abcd"), liar],
+            truncated: false,
+            dropped_estimate: None,
+        };
+
+        assert_eq!(result.frames_with_dishonest_cost(), vec!["liar"]);
+        // The declared sum sails under a budget the real content blows past.
+        assert_eq!(result.total_token_cost(), 2);
+        assert_eq!(result.canonical_token_cost(), 1_001);
+        assert!(result.respects_budget(100));
     }
 }
