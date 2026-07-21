@@ -170,9 +170,10 @@ fn canned_frames(misbehave: Option<Misbehave>) -> Vec<ContextFrame> {
             id: "frm_getting_started".into(),
             kind: FrameKind::Doc,
             title: "Getting Started".into(),
-            content: "Install the reference binding with `cargo add contextgraph-types`, then implement \
+            content:
+                "Install the reference binding with `cargo add contextgraph-types`, then implement \
                       the four required methods."
-                .into(),
+                    .into(),
             uri: Some("file:///docs/getting-started.md".into()),
             score: if bad_score { 1.5 } else { 0.82 },
             token_cost,

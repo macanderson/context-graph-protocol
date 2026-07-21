@@ -26,7 +26,9 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use contextgraph_types::{Capabilities, ContextQuery, ContextQueryResult, PROTOCOL_VERSION, ProviderInfo};
+use contextgraph_types::{
+    Capabilities, ContextQuery, ContextQueryResult, PROTOCOL_VERSION, ProviderInfo,
+};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex as TokioMutex;

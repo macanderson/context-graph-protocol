@@ -144,7 +144,9 @@ mod tests {
         ));
         assert!(store.permits("contextgraph-github", &info));
         assert_eq!(
-            store.get("contextgraph-github").map(|r| r.granted_scope.as_str()),
+            store
+                .get("contextgraph-github")
+                .map(|r| r.granted_scope.as_str()),
             Some("open issue titles + bodies leave to github.com")
         );
     }
@@ -153,9 +155,15 @@ mod tests {
     fn revoking_consent_reshuts_the_gate() {
         let mut store = ConsentStore::new();
         let info = egress_info();
-        store.record(ConsentRecord::new("contextgraph-github", info.data_flow, "issues"));
+        store.record(ConsentRecord::new(
+            "contextgraph-github",
+            info.data_flow,
+            "issues",
+        ));
         assert!(store.permits("contextgraph-github", &info));
-        let revoked = store.revoke("contextgraph-github").expect("a record existed");
+        let revoked = store
+            .revoke("contextgraph-github")
+            .expect("a record existed");
         assert_eq!(revoked.provider_id, "contextgraph-github");
         assert!(!store.permits("contextgraph-github", &info));
     }

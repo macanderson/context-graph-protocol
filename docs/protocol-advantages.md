@@ -1,7 +1,7 @@
 # The Context Graph Protocol: Advantages and Uniqueness
 
-> **Research note.** This page is a standalone analysis of why the Open Context
-> Protocol (Context Graph Protocol) represents a qualitatively different approach to context
+> **Research note.** This page is a standalone analysis of why the Context Graph
+> Protocol (CGP) represents a qualitatively different approach to context
 > retrieval for AI coding agents. It is written for engineers and researchers
 > evaluating retrieval architectures, not for a quick start. For the
 > implementation guide, see [Implementing a provider](./implementing-a-provider.md);
@@ -16,8 +16,8 @@ Every production AI coding agent retrieves context: code snippets, symbol
 definitions, documentation, prior episodes, graph relationships. The
 overwhelming industry practice is to treat retrieval as an opaque blob-pipe —
 a vector search or a grep result stuffed into a prompt with no accountability
-for cost, provenance, consent, or citation. The **Context Graph Protocol
-(Context Graph Protocol)**, implemented in this repository as `contextgraph-types`, `contextgraph-host`, and
+for cost, provenance, consent, or citation. **CGP**, implemented in this
+repository as `contextgraph-types`, `contextgraph-host`, and
 `contextgraph-conformance`, takes a fundamentally different position: **context is a
 first-class, typed, budgeted, provenance-carrying, consent-gated, and
 conformance-verified unit of exchange.** Every frame that enters a prompt is
@@ -25,7 +25,7 @@ traceable to its source, honest about its cost, gated by recorded consent, and
 machine-checked for contract compliance — context that an agent, a host, or an
 auditor can trust as evidence rather than accept on faith.
 
-This document articulates the seven advantages that distinguish Context Graph Protocol from prior
+This document articulates the seven advantages that distinguish CGP from prior
 approaches, maps each to its enforcement mechanism in the implementation, and
 explains why the combination is irreducible: removing any single property
 collapses the trust model back to the blob-pipe.
