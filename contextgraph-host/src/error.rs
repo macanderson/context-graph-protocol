@@ -1,5 +1,5 @@
 //! `HostError` — the one typed error the host runtime raises
-//! (`SPEC.md` §10 (robustness) "fail loud"). Everything a fan-out or a single
+//! (`SPEC.md` §10 "fail loud"). Everything a fan-out or a single
 //! provider exchange can go wrong with is a named variant here; nothing in
 //! the hot path panics. `contextgraph-host` owns its own error type rather than
 //! borrowing `stella`'s so the crate stays industry-facing and dependency-
@@ -24,7 +24,7 @@ pub enum HostError {
     },
 
     /// A line/body could not be encoded to or decoded from the wire envelope
-    /// (`SPEC.md` §2 (transport bindings)). A malformed provider message is a
+    /// (`SPEC.md` §2). A malformed provider message is a
     /// clean error, never a host crash (task deliverable 5).
     #[error("wire encode/decode error: {0}")]
     Wire(String),
@@ -49,7 +49,7 @@ pub enum HostError {
 
     /// The provider declares `egress` and has no recorded consent, so the
     /// host refuses to transmit a query to it (`SPEC.md`
-    /// §3.5 — a host MUST NOT auto-enable egress providers). The query
+    /// SPEC.md §4 — a host MUST NOT auto-enable egress providers). The query
     /// payload never left the host.
     #[error(
         "provider {id} declares egress and requires one-time consent naming what leaves before it can be queried"

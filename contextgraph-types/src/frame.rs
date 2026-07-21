@@ -1,5 +1,5 @@
-//! `ContextFrame` — the unit of exchange between an Context Graph Protocol host and a provider.
-//! `SPEC.md` §6 (frames) fixes this exact
+//! `ContextFrame` — the unit of exchange between a CGP host and a provider.
+//! `SPEC.md` §6 fixes this exact
 //! shape; frames, never blobs, carry relevance, cost, and provenance so a
 //! budgeting, citing host can compose sources honestly.
 

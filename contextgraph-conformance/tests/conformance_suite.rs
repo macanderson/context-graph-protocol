@@ -1,5 +1,5 @@
 //! End-to-end conformance-suite tests against the real `contextgraph-example-docs`
-//! fixture (`SPEC.md` §11 (conformance)). A well-behaved provider passes
+//! fixture (`SPEC.md` §11). A well-behaved provider passes
 //! every check; each `--misbehave` mode trips exactly the check it violates,
 //! proving the suite catches a broken provider (task deliverable).
 

@@ -1,19 +1,19 @@
 //! Stdio transport: a child-process Context Graph Protocol provider spoken to over its
-//! stdin/stdout (`SPEC.md` §3 (handshake) "local providers: child
+//! stdin/stdout (`SPEC.md` §3 "local providers: child
 //! processes over stdio").
 //!
 //! Two layers:
 //!
 //! - [`RawStdioConnection`] — the low-level framed pipe. Public because
 //!   conformance tooling needs byte-level control (e.g. injecting a
-//!   malformed line to probe provider robustness, §3.6). It owns the child,
+//!   malformed line to probe provider robustness, SPEC.md §11). It owns the child,
 //!   spawns it under the Context Graph Protocol isolation contract, and guarantees the process
 //!   group dies on drop/shutdown.
 //! - [`StdioProvider`] — a [`ContextProvider`] built on the connection: it
 //!   handshakes once, caches the provider's identity + capabilities, and
 //!   serves queries as one request/response round-trip apiece.
 //!
-//! ## Isolation (`SPEC.md` §4 (consent) and §10 (robustness), `SPEC.md` §7)
+//! ## Isolation (`SPEC.md` §4 and §10, `SPEC.md` §7)
 //!
 //! The child is spawned with a **scrubbed environment** — `env_clear()` then
 //! an allowlist of only `PATH` (so the program resolves) and `HOME`. No
@@ -73,7 +73,7 @@ pub struct RawStdioConnection {
 }
 
 impl RawStdioConnection {
-    /// Spawn `program` with `args` as an Context Graph Protocol provider child, under the
+    /// Spawn `program` with `args` as a CGP provider child, under the
     /// isolation contract (scrubbed env, own process group). Does **not**
     /// handshake — call [`RawStdioConnection::handshake`] next.
     pub async fn spawn(program: &str, args: &[String]) -> Result<Self, HostError> {
@@ -86,7 +86,7 @@ impl RawStdioConnection {
         cmd.stderr(Stdio::inherit());
         cmd.kill_on_drop(true);
 
-        // Scrub the environment: no inherited credentials (§3.5). Allowlist
+        // Scrub the environment: no inherited credentials. Allowlist
         // only PATH (so `program` resolves) and HOME.
         cmd.env_clear();
         if let Ok(path) = std::env::var("PATH") {
@@ -103,7 +103,7 @@ impl RawStdioConnection {
             // SAFETY: `setsid` is async-signal-safe and only reparents the
             // child's own process-group membership in the window between fork
             // and exec — the same narrowly-scoped OS-boundary use
-            // `stella-tools`' bash tool makes (`SPEC.md` §1.2).
+            // `stella-tools`' bash tool makes.
             unsafe {
                 cmd.pre_exec(|| {
                     libc::setsid();
@@ -152,7 +152,7 @@ impl RawStdioConnection {
     }
 
     /// Write a raw line to the provider's stdin verbatim — the escape hatch
-    /// conformance uses to inject a malformed line (§3.6). A trailing `\n` is
+    /// conformance uses to inject a malformed line (SPEC.md §11). A trailing `\n` is
     /// appended if missing so the provider's line reader unblocks.
     pub async fn send_raw_line(&mut self, line: &str) -> Result<(), HostError> {
         let label = self.label.clone();
@@ -232,7 +232,7 @@ impl RawStdioConnection {
         }
     }
 
-    /// Perform the Context Graph Protocol handshake (§3.2): send `handshake`, expect
+    /// Perform the Context Graph Protocol handshake (SPEC.md §3): send `handshake`, expect
     /// `handshake_ack`, and reject an incompatible protocol version with a
     /// named error. Bounded by [`HANDSHAKE_TIMEOUT`] so a silent provider
     /// fails cleanly rather than hanging (task deliverable 1).
@@ -557,7 +557,7 @@ mod tests {
         }
         assert!(
             !child_keys.contains(&leaked),
-            "scrubbed child leaked parent env var `{leaked}` — credentials must not cross (§3.5)"
+            "scrubbed child leaked parent env var `{leaked}` — credentials must not cross"
         );
     }
 }

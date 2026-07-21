@@ -1,4 +1,4 @@
-//! The typed conformance report (`SPEC.md` §11 (conformance)). Each check
+//! The typed conformance report (`SPEC.md` §11). Each check
 //! carries a pass/fail/skip status and an evidence string, so "not
 //! conformant" always says *why*. Serde-derivable so `contextgraph-inspect --json`
 //! and CI can consume it.
@@ -70,7 +70,7 @@ pub struct ConformanceReport {
 
 impl ConformanceReport {
     /// True when no check failed (skips don't fail a run). This is the
-    /// "Context Graph Protocol conformant for your declared capability set" verdict (§3.6).
+    /// "Context Graph Protocol conformant for your declared capability set" verdict (SPEC.md §11).
     pub fn passed(&self) -> bool {
         !self
             .checks

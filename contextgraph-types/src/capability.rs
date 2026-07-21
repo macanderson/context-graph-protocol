@@ -1,7 +1,7 @@
 //! Handshake and capability negotiation types
-//! (`SPEC.md` §3 (handshake)). `DataFlow` is
+//! (`SPEC.md` §3). `DataFlow` is
 //! the security-critical field: hosts surface it at install/consent time,
-//! and `egress: true` providers must never be auto-enabled (§3.5).
+//! and `egress: true` providers must never be auto-enabled (SPEC.md §4).
 
 use serde::{Deserialize, Serialize};
 

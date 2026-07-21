@@ -1,5 +1,5 @@
 //! `context/query` request/response shapes
-//! (`SPEC.md` §5 (query)). Budget-aware
+//! (`SPEC.md` §5). Budget-aware
 //! by contract: every query carries `max_tokens`; a conforming provider
 //! never returns more than the budget and never lies about cost.
 
@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::frame::{ContextFrame, FrameKind};
 
-/// A request to an Context Graph Protocol provider for context frames relevant to a goal.
+/// A request to a CGP provider for context frames relevant to a goal.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ContextQuery {
     /// The task/turn goal driving retrieval.

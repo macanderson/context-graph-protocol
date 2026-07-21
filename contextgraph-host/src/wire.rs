@@ -47,15 +47,15 @@ use crate::error::HostError;
 
 /// One Context Graph Protocol message. Every variant is a small, versioned, `type`-tagged JSON
 /// object; the host writes exactly one per line (NDJSON) over stdio and one
-/// per HTTP body (`SPEC.md` §2 (transport bindings)).
+/// per HTTP body (`SPEC.md` §2).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Envelope {
     /// Host hello: opens the exchange with the protocol version the host
-    /// speaks (§3.2 `initialize`).
+    /// speaks (SPEC.md §3 `initialize`).
     Handshake { protocol_version: String },
     /// Provider hello-back: its protocol version, identity + declared
-    /// data-flow direction, and negotiated capabilities (§3.2). The host
+    /// data-flow direction, and negotiated capabilities (SPEC.md §3). The host
     /// checks the version and surfaces `provider.data_flow` at consent time.
     HandshakeAck {
         protocol_version: String,

@@ -1,12 +1,13 @@
 //! The [`Host`] — one uniform handle over every provider, and the fan-out
-//! router (`SPEC.md` §2.3, §3.3; `SPEC.md` §7).
+//! router.
 //!
-//! The host does the four jobs providers never do (§7): routes a query to
-//! capability-matching providers, gates consent so nothing reaches an
-//! unconsented egress provider, enforces per-provider timeouts, and audits
-//! budget honesty — a provider that returns frames summing above the query
-//! budget lied about `token_cost`, so its frames are dropped with a loud
-//! named report rather than silently trusted (§3.3, task deliverable 3).
+//! The host does the four jobs providers never do: routes a query to
+//! capability-matching providers (`SPEC.md` §5), gates consent so nothing
+//! reaches an unconsented egress provider (`SPEC.md` §4, C1–C2), enforces
+//! per-provider timeouts, and audits budget honesty — a provider that returns
+//! frames summing above the query budget lied about `token_cost`, so its frames
+//! are dropped with a loud named report rather than silently trusted
+//! (`SPEC.md` §7, B2).
 //! Per-provider isolation is total: one provider erroring, timing out, being
 //! dropped for a budget lie, or crashing mid-query never poisons the others
 //! (task deliverable 5).
@@ -63,7 +64,7 @@ impl Host {
     }
 
     /// Spawn and register a child-process provider over stdio, completing the
-    /// handshake (`SPEC.md` §3 (handshake)).
+    /// handshake (`SPEC.md` §3).
     pub async fn add_stdio(
         &mut self,
         id: impl Into<String>,
@@ -87,7 +88,7 @@ impl Host {
     }
 
     /// Record consent for a provider, unlocking an egress provider for
-    /// querying (§3.5).
+    /// querying.
     pub fn record_consent(&mut self, record: ConsentRecord) {
         self.consent.record(record);
     }
@@ -123,7 +124,7 @@ impl Host {
     /// Query a single provider by id, honoring the consent gate and the
     /// per-provider timeout. Querying an unconsented egress provider is
     /// [`HostError::ConsentRequired`] and the payload is never transmitted
-    /// (§3.5).
+    ///.
     pub async fn query_provider(
         &self,
         id: &str,
@@ -211,7 +212,7 @@ impl Host {
             };
 
         // Budget honesty: frames that sum above the query budget are a lie
-        // about `token_cost`. Drop them, report loudly (§3.3).
+        // about `token_cost`. Drop them, report loudly (SPEC.md §5).
         if !result.respects_budget(query.max_tokens) {
             return ProviderOutcome {
                 provider_id: id,
@@ -280,7 +281,7 @@ impl FanOut {
     }
 
     /// Providers whose frames were dropped for exceeding the query budget —
-    /// the loud report the host must surface, never swallow (§3.3).
+    /// the loud report the host must surface, never swallow (SPEC.md §5).
     pub fn budget_liars(&self) -> impl Iterator<Item = &ProviderOutcome> {
         self.outcomes
             .iter()
@@ -302,14 +303,14 @@ pub enum ProviderResult {
     /// Frames the host accepted: passed consent, timeout, and budget honesty.
     Frames(ContextQueryResult),
     /// The provider's frames summed above the query budget — a `token_cost`
-    /// lie. Dropped and reported (§3.3).
+    /// lie. Dropped and reported (SPEC.md §5).
     BudgetLie {
         claimed_tokens: u64,
         max_tokens: u32,
         dropped_frames: usize,
     },
     /// Skipped: an egress provider without recorded consent. The query
-    /// payload was **not** transmitted (§3.5).
+    /// payload was **not** transmitted.
     ConsentRequired(DataFlow),
     /// The provider errored, timed out, or crashed mid-query.
     Failed(HostError),

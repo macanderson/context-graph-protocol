@@ -1,6 +1,6 @@
-# Implementing an Context Graph Protocol provider
+# Implementing a CGP provider
 
-There are two ways to implement an Context Graph Protocol provider, depending on whether you're
+There are two ways to implement a CGP provider, depending on whether you're
 writing Rust that runs inside the same process as the host, or a standalone
 program (in any language) that the host talks to as a child process or a
 remote HTTP endpoint.
@@ -141,7 +141,7 @@ budget, set `truncated: true`, and optionally `dropped_estimate`.
 Every frame needs a non-empty `title` and a non-empty `citation_label` — a
 host must be able to cite what it used without falling back to a bare id.
 This is checked by the `frame-validity` conformance check and is a
-platform-wide convention, not an Context Graph Protocol-specific quirk.
+platform-wide convention, not a CGP-specific quirk.
 
 ### A complete minimal example
 

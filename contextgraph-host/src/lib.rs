@@ -17,19 +17,19 @@
 //! # Shape
 //!
 //! - [`Envelope`] + [`wire`] — the versioned NDJSON message envelope and its
-//!   framing (§3.1). Version mismatch is a named error, never a hang.
+//!   framing (SPEC.md §2). Version mismatch is a named error, never a hang.
 //! - [`ContextProvider`] — the one trait every source implements, whether
-//!   in-process, a stdio child, or a remote HTTP endpoint (§3.2, §3.3).
+//!   in-process, a stdio child, or a remote HTTP endpoint (SPEC.md §3, SPEC.md §5).
 //! - [`StdioProvider`] / [`RawStdioConnection`] — child-process transport
-//!   with scrubbed-environment isolation and process-group teardown (§3.5).
-//! - [`HttpProvider`] — remote streamable-HTTP transport (§3.2).
+//!   with scrubbed-environment isolation and process-group teardown.
+//! - [`HttpProvider`] — remote streamable-HTTP transport (SPEC.md §3).
 //! - [`ConsentStore`] — the gate that keeps an egress provider un-queried
-//!   until the user consents, naming what leaves (§3.5).
+//!   until the user consents, naming what leaves (SPEC.md §4).
 //! - [`Host`] — registers all three provider kinds behind one handle and
 //!   [`Host::query_all`] fans a query out concurrently, enforcing timeouts,
-//!   consent, and budget honesty (§2.3, §7).
+//!   consent, and budget honesty (SPEC.md §4 and §7).
 //!
-//! # Isolation invariants (`SPEC.md` §4 (consent) and §10 (robustness))
+//! # Isolation invariants (`SPEC.md` §4 and §10)
 //!
 //! What is enforced today: a stdio child is spawned with a **scrubbed
 //! environment** (`env_clear` plus a `PATH`/`HOME` allowlist), so it inherits

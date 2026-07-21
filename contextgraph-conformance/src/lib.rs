@@ -1,5 +1,5 @@
 //! `contextgraph-conformance` — the public Context Graph Protocol conformance suite
-//! (`SPEC.md` §11 (conformance)).
+//! (`SPEC.md` §11).
 //!
 //! "Context Graph Protocol conformant" means *green on this suite for your declared capability
 //! set* — a checkable claim, which is what makes third-party adoption safe.
@@ -10,15 +10,15 @@
 //! The checks (all against the frozen `contextgraph-types` contracts):
 //!
 //! - **handshake** — the provider completes the handshake and reports a
-//!   non-empty identity + capabilities (§3.2).
+//!   non-empty identity + capabilities (SPEC.md §3).
 //! - **frame-validity** — queried frames pass `contextgraph-types` validation: score
-//!   in `[0, 1]`, a non-empty title, a non-empty `citation_label` (§3.4 —
+//!   in `[0, 1]`, a non-empty title, a non-empty `citation_label` (SPEC.md §6 —
 //!   "NEVER a bare uuid").
 //! - **budget-honesty** — returned frames' summed `token_cost` never exceeds
-//!   the query budget (§3.3 — "never lies about cost").
-//! - **shutdown-clean** — the provider tears down without error (§3.2).
+//!   the query budget (SPEC.md §5 — "never lies about cost").
+//! - **shutdown-clean** — the provider tears down without error (SPEC.md §3).
 //! - **malformed-input-tolerance** — a garbage line is ignored-or-errored,
-//!   never crashing the host (§3.5, task deliverable). Wire-level, so it
+//!   never crashing the host (SPEC.md §10, task deliverable). Wire-level, so it
 //!   applies to stdio providers.
 //!
 //! The suite is deliberately adversarial: pointed at a provider that lies
@@ -221,7 +221,7 @@ async fn run_query_and_shutdown_checks(host: Host, id: &str, checks: &mut Vec<Ch
 /// Wire-level probe: complete the handshake on a fresh connection, inject a
 /// malformed line, then send a valid query. A conforming provider ignores or
 /// cleanly errors on the garbage and stays alive to answer the query; a
-/// provider that dies on one bad line fails (§3.5).
+/// provider that dies on one bad line fails (SPEC.md §10).
 async fn malformed_stdio_probe(program: &str, args: &[String]) -> CheckResult {
     let mut conn = match RawStdioConnection::spawn(program, args).await {
         Ok(conn) => conn,
@@ -284,7 +284,7 @@ async fn malformed_stdio_probe(program: &str, args: &[String]) -> CheckResult {
 }
 
 /// The query the suite probes every provider with — no `kinds` filter, so any
-/// provider is asked for its best frames (§3.3).
+/// provider is asked for its best frames (SPEC.md §5).
 pub fn sample_query() -> ContextQuery {
     ContextQuery {
         goal: "conformance probe: return your most relevant frames".into(),
@@ -299,7 +299,7 @@ pub fn sample_query() -> ContextQuery {
 }
 
 /// Validate a query result's frames against the `ContextFrame` contract
-/// (§3.4). Returns `(passed, evidence)`. Zero frames is permitted — a
+/// (SPEC.md §6). Returns `(passed, evidence)`. Zero frames is permitted — a
 /// provider may simply have nothing relevant.
 pub fn check_frames(result: &ContextQueryResult) -> (bool, String) {
     if result.frames.is_empty() {

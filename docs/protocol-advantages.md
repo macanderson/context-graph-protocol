@@ -254,7 +254,7 @@ everything.
 **Why this matters.** The alternative to a conformance suite is a
 documentation page that says "please be honest about costs and include citation
 labels." Documentation is advisory; conformance is verifiable. A third party
-building an Context Graph Protocol provider can run `contextgraph-inspect` in their CI and gate on it —
+building a CGP provider can run `contextgraph-inspect` in their CI and gate on it —
 the same binary, the same checks, that the reference host runs. This makes
 interoperability a *testable property* rather than a *trust assumption*.
 
