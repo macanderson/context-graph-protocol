@@ -13,7 +13,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use contextgraph_types::{
-    Capabilities, ContextQuery, ContextQueryResult, PROTOCOL_VERSION, ProviderInfo,
+    Capabilities, ContextQuery, ContextQueryResult, PROTOCOL_VERSION, ProviderInfo, VerifyRequest,
+    VerifyResponse,
 };
 
 use crate::error::HostError;
@@ -165,6 +166,30 @@ impl ContextProvider for HttpProvider {
             other => Err(HostError::UnexpectedEnvelope {
                 id: self.id.clone(),
                 expected: "frames".into(),
+                got: envelope_kind(&other).into(),
+            }),
+        }
+    }
+
+    async fn verify(&self, request: &VerifyRequest) -> Result<VerifyResponse, HostError> {
+        let reply = post_envelope(
+            &self.client,
+            &self.url,
+            &Envelope::Verify {
+                request: request.clone(),
+            },
+            &self.id,
+        )
+        .await?;
+        match reply {
+            Envelope::Verified { response } => Ok(response),
+            Envelope::Error { message } => Err(HostError::Provider {
+                id: self.id.clone(),
+                message,
+            }),
+            other => Err(HostError::UnexpectedEnvelope {
+                id: self.id.clone(),
+                expected: "verified".into(),
                 got: envelope_kind(&other).into(),
             }),
         }

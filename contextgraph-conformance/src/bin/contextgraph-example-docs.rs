@@ -17,8 +17,8 @@ use clap::{Parser, ValueEnum};
 use contextgraph_host::wire::Envelope;
 use contextgraph_types::capability::QueryCapability;
 use contextgraph_types::{
-    Capabilities, ContextFrame, ContextQueryResult, DataFlow, EgressScope, FrameKind,
-    PROTOCOL_VERSION, Provenance, ProviderInfo,
+    Capabilities, ContextFrame, ContextQueryResult, DataFlow, FrameKind, FrameVerdict,
+    PROTOCOL_VERSION, Provenance, ProviderInfo, Verdict, VerifyRequest, VerifyResponse,
 };
 
 /// Ways this fixture can deliberately violate the protocol, each tripping a
@@ -41,11 +41,25 @@ enum Misbehave {
     /// Exit on receiving a malformed line (trips
     /// `malformed-input-tolerance`).
     CrashOnGarbage,
+    /// Answer `valid` to every `context/verify` entry without comparing
+    /// digests — the rubber stamp that makes reuse unsafe (trips
+    /// `verify-honesty`).
+    RubberStampVerify,
+    /// Advertise `verify` support at the handshake but answer `unknown` to
+    /// everything — a provider that claims a capability it does not have
+    /// (trips `verify-honesty`).
+    HollowVerify,
     /// Declare an off-machine egress scope (`third-party-index`) alongside
     /// `egress: false` — a scope that contradicts the data-flow posture
     /// (trips `consent-scope`).
     ScopeLie,
 }
+
+/// The digests this fixture currently serves, one per canned frame. Verify
+/// answers are derived from these, so the fixture's `context/verify` verdicts
+/// and the frames it serves can never drift apart.
+const GETTING_STARTED_DIGEST: &str = "sha256:getting-started-v1";
+const CONFIGURATION_DIGEST: &str = "sha256:configuration-v1";
 
 #[derive(Parser)]
 #[command(
@@ -115,6 +129,21 @@ fn main() {
                     },
                 );
             }
+            Envelope::Verify { request } => {
+                let response = match args.misbehave {
+                    // Claims every held frame is still good without comparing
+                    // a single digest — the lie `verify-honesty` catches.
+                    Some(Misbehave::RubberStampVerify) => {
+                        VerifyResponse::uniform(&request, Verdict::Valid)
+                    }
+                    // Advertises verify but can never vouch for anything.
+                    Some(Misbehave::HollowVerify) => {
+                        VerifyResponse::uniform(&request, Verdict::Unknown)
+                    }
+                    _ => verify_honestly(&request),
+                };
+                write_envelope(&mut stdout, &Envelope::Verified { response });
+            }
             Envelope::Shutdown => std::process::exit(0),
             // handshake_ack / frames / error are host→provider-invalid inputs;
             // a provider ignores them.
@@ -163,7 +192,55 @@ fn capabilities() -> Capabilities {
         graph: false,
         embeddings_fingerprint: None,
         subscribe: false,
+        // This fixture can compare a presented digest against the one it
+        // currently serves, so it advertises pull-based verification (§4). It
+        // cannot watch its sources, so it does not advertise `subscribe` — the
+        // exact provider shape verify exists for.
+        verify: true,
     }
+}
+
+/// The digest this fixture serves for a frame id *right now*, or `None` if it
+/// does not serve that frame at all.
+fn current_digest(frame_id: &str) -> Option<&'static str> {
+    match frame_id {
+        "frm_getting_started" => Some(GETTING_STARTED_DIGEST),
+        "frm_configuration" => Some(CONFIGURATION_DIGEST),
+        _ => None,
+    }
+}
+
+/// Answer a `context/verify` request honestly, by comparing each presented
+/// digest against the one this provider currently serves (§4).
+///
+/// This is the whole provider-side contract: the digest is provider-declared
+/// and opaque, so only the provider can say whether the bytes behind an
+/// identity still match. A digest that differs from the current one is exactly
+/// what a mutated source looks like from here.
+fn verify_honestly(request: &VerifyRequest) -> VerifyResponse {
+    VerifyResponse::new(
+        request
+            .frames
+            .iter()
+            .map(|frame| {
+                let verdict = match current_digest(&frame.frame_id) {
+                    // Never served, or no longer served: nothing to revalidate.
+                    None => Verdict::Gone,
+                    Some(current) => match frame.content_digest.as_deref() {
+                        // Nothing presented to compare against.
+                        None => Verdict::Unknown,
+                        Some(presented) if presented == current => Verdict::Valid,
+                        // The source moved on. Offer the current digest so the
+                        // host can tell what it would be re-fetching.
+                        Some(_) => Verdict::Stale {
+                            replacement_digest: Some(current.to_string()),
+                        },
+                    },
+                };
+                FrameVerdict::new(frame.clone(), verdict)
+            })
+            .collect(),
+    )
 }
 
 fn canned_frames(misbehave: Option<Misbehave>) -> Vec<ContextFrame> {
@@ -186,7 +263,7 @@ fn canned_frames(misbehave: Option<Misbehave>) -> Vec<ContextFrame> {
                 "Install the reference binding with `cargo add contextgraph-types`, then implement \
                       the four required methods."
                     .into(),
-            content_digest: Some("sha256:getting-started-v1".into()),
+            content_digest: Some(GETTING_STARTED_DIGEST.into()),
             uri: Some("file:///docs/getting-started.md".into()),
             score: if bad_score { 1.5 } else { 0.82 },
             token_cost,
@@ -216,7 +293,7 @@ fn canned_frames(misbehave: Option<Misbehave>) -> Vec<ContextFrame> {
             content: "Providers declare their data-flow direction at the handshake so hosts can \
                       gate consent before sending any query."
                 .into(),
-            content_digest: Some("sha256:configuration-v1".into()),
+            content_digest: Some(CONFIGURATION_DIGEST.into()),
             uri: Some("file:///docs/configuration.md".into()),
             score: 0.61,
             token_cost,

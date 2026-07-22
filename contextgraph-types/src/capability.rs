@@ -81,6 +81,16 @@ pub struct Capabilities {
     pub embeddings_fingerprint: Option<String>,
     #[serde(default)]
     pub subscribe: bool,
+    /// Whether this provider answers `context/verify` — pull-based
+    /// revalidation of frames a host already holds (`docs/context-reuse.md`
+    /// §4). Defaults to `false`, so a provider that says nothing is treated as
+    /// not supporting it and the host falls back to re-querying.
+    ///
+    /// Independent of [`subscribe`](Self::subscribe): push and pull freshness
+    /// are complementary, and a provider may advertise either, both, or
+    /// neither.
+    #[serde(default)]
+    pub verify: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -95,6 +105,27 @@ pub struct QueryCapability {
 mod tests {
     use super::*;
     use crate::scope::EgressScope;
+
+    #[test]
+    fn verify_support_defaults_off_and_is_independent_of_subscribe() {
+        // A provider that says nothing must not be assumed to verify — the
+        // host falls back to re-querying (§4).
+        let caps = Capabilities::default();
+        assert!(!caps.verify);
+        assert!(!caps.subscribe);
+
+        // Absent from the wire ⇒ still false, so pre-§4 providers keep working.
+        let back: Capabilities = serde_json::from_str(r#"{"upsert":false}"#).unwrap();
+        assert!(!back.verify);
+
+        // Push and pull freshness are independent axes.
+        let pull_only: Capabilities =
+            serde_json::from_str(r#"{"verify":true,"subscribe":false}"#).unwrap();
+        assert!(pull_only.verify && !pull_only.subscribe);
+        let push_only: Capabilities =
+            serde_json::from_str(r#"{"verify":false,"subscribe":true}"#).unwrap();
+        assert!(!push_only.verify && push_only.subscribe);
+    }
 
     #[test]
     fn egress_provider_data_flow_roundtrips() {
@@ -191,6 +222,7 @@ mod tests {
             graph: false,
             embeddings_fingerprint: Some("bge-small-v1".into()),
             subscribe: false,
+            verify: true,
         };
         let json = serde_json::to_string(&caps).unwrap();
         let back: Capabilities = serde_json::from_str(&json).unwrap();

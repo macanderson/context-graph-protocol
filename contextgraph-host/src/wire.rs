@@ -18,7 +18,9 @@
 //! protocol family up front (§3.2), and a mismatch is a named error, never a
 //! hang.
 
-use contextgraph_types::{Capabilities, ContextQuery, ContextQueryResult, ProviderInfo};
+use contextgraph_types::{
+    Capabilities, ContextQuery, ContextQueryResult, ProviderInfo, VerifyRequest, VerifyResponse,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::error::HostError;
@@ -44,6 +46,13 @@ pub enum Envelope {
     Query { query: ContextQuery },
     /// Provider → host budgeted, provenance-carrying frames (§3.3 response).
     Frames { result: ContextQueryResult },
+    /// Host → provider revalidation request: are these held frames still
+    /// valid (`docs/context-reuse.md` §4 `context/verify`)? Carries frame
+    /// identities only — never bodies. Capability-gated: a host sends it only
+    /// to a provider advertising [`Capabilities::verify`](contextgraph_types::Capabilities::verify).
+    Verify { request: VerifyRequest },
+    /// Provider → host per-frame verdicts (§4 response).
+    Verified { response: VerifyResponse },
     /// Lifecycle teardown; the provider should exit cleanly (§3.2).
     Shutdown,
     /// Provider-reported failure — lets a provider report a bad request
@@ -60,6 +69,8 @@ pub fn envelope_kind(env: &Envelope) -> &'static str {
         Envelope::HandshakeAck { .. } => "handshake_ack",
         Envelope::Query { .. } => "query",
         Envelope::Frames { .. } => "frames",
+        Envelope::Verify { .. } => "verify",
+        Envelope::Verified { .. } => "verified",
         Envelope::Shutdown => "shutdown",
         Envelope::Error { .. } => "error",
     }

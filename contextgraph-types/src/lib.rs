@@ -15,6 +15,7 @@ pub mod identity;
 pub mod query;
 pub mod scope;
 pub mod usage;
+pub mod verify;
 
 pub use capability::{Capabilities, DataFlow, ProviderInfo};
 pub use consent::{ConsentReceipt, Grantor};
@@ -23,6 +24,7 @@ pub use identity::{FrameId, canonical_order};
 pub use query::{ContextQuery, ContextQueryResult};
 pub use scope::EgressScope;
 pub use usage::{ProviderUsage, ServedFrame, UsageReport};
+pub use verify::{FrameVerdict, Verdict, VerifyRequest, VerifyResponse};
 
 /// The protocol version string this crate implements. Frozen to `contextgraph/1.0`
 /// only at the public v1.0 release (`06-context-protocol.md` §3).

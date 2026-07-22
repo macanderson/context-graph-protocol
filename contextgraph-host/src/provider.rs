@@ -10,7 +10,10 @@
 //! support").
 
 use async_trait::async_trait;
-use contextgraph_types::{Capabilities, ContextQuery, ContextQueryResult, FrameKind, ProviderInfo};
+use contextgraph_types::{
+    Capabilities, ContextQuery, ContextQueryResult, FrameKind, ProviderInfo, Verdict,
+    VerifyRequest, VerifyResponse,
+};
 
 use crate::error::HostError;
 
@@ -38,6 +41,19 @@ pub trait ContextProvider: Send + Sync {
     /// a provider that over-runs its budget is caught by the host, not
     /// trusted (`crate::host`).
     async fn query(&self, query: &ContextQuery) -> Result<ContextQueryResult, HostError>;
+
+    /// Revalidate frames the host already holds, without any frame body
+    /// travelling (`docs/context-reuse.md` §4 `context/verify`).
+    ///
+    /// Defaults to answering [`Verdict::Unknown`](contextgraph_types::Verdict::Unknown)
+    /// for every requested identity, so an existing provider implements
+    /// nothing and is simply treated as unable to vouch for its frames — the
+    /// host then re-queries them. A provider that overrides this **MUST** also
+    /// advertise [`Capabilities::verify`](contextgraph_types::Capabilities::verify),
+    /// since the host only asks providers that declare support.
+    async fn verify(&self, request: &VerifyRequest) -> Result<VerifyResponse, HostError> {
+        Ok(VerifyResponse::uniform(request, Verdict::Unknown))
+    }
 
     /// Shut the provider down cleanly (§3.2 lifecycle). In-process providers
     /// default to a no-op; transport-backed providers send `shutdown` and

@@ -17,6 +17,12 @@
       "$ref": "#/$defs/Frames"
     },
     {
+      "$ref": "#/$defs/Verify"
+    },
+    {
+      "$ref": "#/$defs/Verified"
+    },
+    {
       "$ref": "#/$defs/Shutdown"
     },
     {
@@ -76,6 +82,28 @@
       "additionalProperties": false
     },
 
+    "Verify": {
+      "type": "object",
+      "description": "host -> provider. Revalidate frames the host already holds (context/verify, docs/context-reuse.md §4). Carries frame identities only — NEVER frame bodies, so verification costs bytes rather than tokens. Capability-gated: a host sends this only to a provider whose handshake advertised capabilities.verify.",
+      "properties": {
+        "type": { "const": "verify" },
+        "request": { "$ref": "#/$defs/VerifyRequest" }
+      },
+      "required": ["type", "request"],
+      "additionalProperties": false
+    },
+
+    "Verified": {
+      "type": "object",
+      "description": "provider -> host. One verdict per frame identity the provider is answering for (docs/context-reuse.md §4). No frame bodies travel here either; a stale verdict may carry the replacement DIGEST, never the replacement content.",
+      "properties": {
+        "type": { "const": "verified" },
+        "response": { "$ref": "#/$defs/VerifyResponse" }
+      },
+      "required": ["type", "response"],
+      "additionalProperties": false
+    },
+
     "Shutdown": {
       "type": "object",
       "description": "host -> provider. No payload. A well-behaved provider exits cleanly (stdio) or expects no further requests (HTTP).",
@@ -94,6 +122,68 @@
         "message": { "type": "string", "minLength": 1 }
       },
       "required": ["type", "message"],
+      "additionalProperties": false
+    },
+
+    "FrameId": {
+      "type": "object",
+      "description": "The stable identity of one frame's exact content bytes: (provider id, frame id, content digest). The spine shared by deterministic composition, usage reports, and context/verify (docs/context-reuse.md §1).",
+      "properties": {
+        "provider_id": { "type": "string", "minLength": 1 },
+        "frame_id": { "type": "string", "minLength": 1 },
+        "content_digest": {
+          "type": ["string", "null"],
+          "$comment": "Provider-declared and opaque. Absent ⇒ the frame is not verifiable and a host re-queries it rather than reusing it unchecked (§1 D4)."
+        }
+      },
+      "required": ["provider_id", "frame_id"],
+      "additionalProperties": false
+    },
+
+    "VerifyRequest": {
+      "type": "object",
+      "description": "The frame identities a host asks a provider to revalidate. Identities only — no frame bodies (docs/context-reuse.md §4).",
+      "properties": {
+        "frames": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/FrameId" },
+          "$comment": "A host SHOULD only include identities carrying a content_digest; a digest-less frame cannot be revalidated and is re-queried instead."
+        }
+      },
+      "required": ["frames"],
+      "additionalProperties": false
+    },
+
+    "VerdictStatus": {
+      "enum": ["valid", "stale", "gone", "unknown"],
+      "description": "A provider's answer for one frame (docs/context-reuse.md §4). `valid` — content unchanged, the host MAY keep reusing the body it holds. `stale` — the frame exists but its content changed; the host MUST NOT keep serving its copy. `gone` — the frame no longer exists, and re-querying this identity is pointless. `unknown` — the provider cannot say; the host MUST NOT read this as validity. A host reuses a frame ONLY on `valid`: reuse requires a positive answer, never the absence of a negative one."
+    },
+
+    "FrameVerdict": {
+      "type": "object",
+      "description": "One frame's verdict, flattened onto the identity it answers. The identity is echoed in FULL rather than implied by position, so a host correlates by matching and a provider that reorders, omits, or duplicates entries cannot shift a `valid` onto the wrong frame. An identity that comes back with no entry is treated as `unknown` — silence is not validity.",
+      "properties": {
+        "frame": { "$ref": "#/$defs/FrameId" },
+        "status": { "$ref": "#/$defs/VerdictStatus" },
+        "replacement_digest": {
+          "type": ["string", "null"],
+          "$comment": "Only meaningful with status `stale`: the provider's CURRENT digest for the frame, offered so a host can tell what it would be re-fetching. A digest, never a body. Optional — a provider that knows the content changed but not what it is now still answers `stale` honestly."
+        }
+      },
+      "required": ["frame", "status"],
+      "additionalProperties": false
+    },
+
+    "VerifyResponse": {
+      "type": "object",
+      "description": "A provider's answer to a VerifyRequest (docs/context-reuse.md §4).",
+      "properties": {
+        "verdicts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/FrameVerdict" }
+        }
+      },
+      "required": ["verdicts"],
       "additionalProperties": false
     },
 
@@ -160,7 +250,11 @@
         "upsert": { "type": "boolean" },
         "graph": { "type": "boolean" },
         "embeddings_fingerprint": { "type": ["string", "null"] },
-        "subscribe": { "type": "boolean" }
+        "subscribe": { "type": "boolean" },
+        "verify": {
+          "type": "boolean",
+          "$comment": "Whether the provider answers context/verify (docs/context-reuse.md §4). Optional and defaults to false, so a pre-§4 provider is treated as unsupported and the host falls back to re-querying. Independent of `subscribe` — push and pull freshness are complementary."
+        }
       },
       "required": ["query", "upsert", "graph", "subscribe"],
       "additionalProperties": false

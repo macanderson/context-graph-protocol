@@ -27,7 +27,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use contextgraph_types::{
-    Capabilities, ContextQuery, ContextQueryResult, PROTOCOL_VERSION, ProviderInfo,
+    Capabilities, ContextQuery, ContextQueryResult, PROTOCOL_VERSION, ProviderInfo, VerifyRequest,
+    VerifyResponse,
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
@@ -377,6 +378,26 @@ impl ContextProvider for StdioProvider {
             other => Err(HostError::UnexpectedEnvelope {
                 id: self.id.clone(),
                 expected: "frames".into(),
+                got: envelope_kind(&other).into(),
+            }),
+        }
+    }
+
+    async fn verify(&self, request: &VerifyRequest) -> Result<VerifyResponse, HostError> {
+        let mut conn = self.conn.lock().await;
+        conn.send(&Envelope::Verify {
+            request: request.clone(),
+        })
+        .await?;
+        match conn.recv().await? {
+            Envelope::Verified { response } => Ok(response),
+            Envelope::Error { message } => Err(HostError::Provider {
+                id: self.id.clone(),
+                message,
+            }),
+            other => Err(HostError::UnexpectedEnvelope {
+                id: self.id.clone(),
+                expected: "verified".into(),
                 got: envelope_kind(&other).into(),
             }),
         }

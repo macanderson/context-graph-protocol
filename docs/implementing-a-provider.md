@@ -64,6 +64,8 @@ Both transports carry the same message vocabulary, `contextgraph-host::wire::Env
 | `handshake_ack` | provider → host | `{ protocol_version, provider: ProviderInfo, capabilities: Capabilities }` |
 | `query` | host → provider | `{ query: ContextQuery }` |
 | `frames` | provider → host | `{ result: ContextQueryResult }` |
+| `verify` | host → provider | `{ request: VerifyRequest }` — *only if you advertise `verify`* |
+| `verified` | provider → host | `{ response: VerifyResponse }` |
 | `shutdown` | host → provider | *(no payload)* |
 | `error` | provider → host | `{ message: String }` |
 
@@ -85,7 +87,19 @@ their `serde_json` serialization, field names and all.
    `error` reply lets you report a problem without dying — a provider that
    exits on a bad request fails the `malformed-input-tolerance` conformance
    check).
-3. **Shutdown.** The host sends `shutdown`; a well-behaved provider exits
+3. **Zero or more verifications** *(optional).* If you set
+   `capabilities.verify`, the host may send `verify` with a batch of frame
+   identities and expect `verified` back with one verdict each — `valid`,
+   `stale` (optionally naming your current digest), `gone`, or `unknown`.
+   **Never send frame bodies in a `verified` reply**: the whole point is that
+   revalidation costs bytes rather than tokens, so the host re-queries when it
+   actually wants new content. Answer by comparing the digest the host presents
+   against the one you currently serve — a mismatch is `stale`, and answering
+   `valid` for bytes you are not serving fails the `verify-honesty` conformance
+   check. Leave `verify` unset (the default) and the host simply re-queries your
+   frames instead; nothing breaks. See
+   [context-reuse §4](./context-reuse.md#4-context-verification).
+4. **Shutdown.** The host sends `shutdown`; a well-behaved provider exits
    cleanly (stdio: exit the process; HTTP: nothing further to do — the host
    doesn't expect a reply).
 
