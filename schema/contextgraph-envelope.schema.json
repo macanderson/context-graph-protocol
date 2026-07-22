@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://context-graph-protocol.org/schema/contextgraph-envelope.schema.json",
   "title": "Context Graph Protocol envelope",
-  "description": "A single Context Graph Protocol message — the unit exchanged on the wire (one object per NDJSON line over stdio, one request/response body over streamable HTTP). An envelope is an internally-tagged enum: the `type` field selects the variant and sits at the same level as the payload fields. Validate one message at a time against this root schema; validate individual payloads against the entries in `$defs`.",
+  "description": "A single Context Graph Protocol message \u2014 the unit exchanged on the wire (one object per NDJSON line over stdio, one request/response body over streamable HTTP). An envelope is an internally-tagged enum: the `type` field selects the variant and sits at the same level as the payload fields. Validate one message at a time against this root schema; validate individual payloads against the entries in `$defs`.",
   "oneOf": [
     {
       "$ref": "#/$defs/Handshake"
@@ -35,50 +35,90 @@
       "pattern": "^contextgraph/[0-9]+\\.[0-9]+(-draft)?$",
       "description": "Context Graph Protocol protocol version string. Grammar: contextgraph/MAJOR.MINOR with an optional -draft suffix. Two versions interoperate iff they share a major family (the substring up to the first dot)."
     },
-
     "Handshake": {
       "type": "object",
       "description": "host -> provider. The host names the protocol version it speaks.",
       "properties": {
-        "type": { "const": "handshake" },
-        "protocol_version": { "$ref": "#/$defs/versionString" }
+        "type": {
+          "const": "handshake"
+        },
+        "protocol_version": {
+          "$ref": "#/$defs/versionString"
+        }
       },
-      "required": ["type", "protocol_version"],
+      "required": [
+        "type",
+        "protocol_version"
+      ],
       "additionalProperties": false
     },
-
     "HandshakeAck": {
       "type": "object",
       "description": "provider -> host. The provider replies with its own version, identity, and capabilities. If data_flow.egress is true, a conforming host MUST NOT auto-enable this provider.",
       "properties": {
-        "type": { "const": "handshake_ack" },
-        "protocol_version": { "$ref": "#/$defs/versionString" },
-        "provider": { "$ref": "#/$defs/ProviderInfo" },
-        "capabilities": { "$ref": "#/$defs/Capabilities" }
+        "type": {
+          "const": "handshake_ack"
+        },
+        "protocol_version": {
+          "$ref": "#/$defs/versionString"
+        },
+        "provider": {
+          "$ref": "#/$defs/ProviderInfo"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/Capabilities"
+        }
       },
-      "required": ["type", "protocol_version", "provider", "capabilities"],
+      "required": [
+        "type",
+        "protocol_version",
+        "provider",
+        "capabilities"
+      ],
       "additionalProperties": false
     },
-
     "Query": {
       "type": "object",
       "description": "host -> provider. A retrieval request carrying a hard token budget (max_tokens).",
       "properties": {
-        "type": { "const": "query" },
-        "query": { "$ref": "#/$defs/ContextQuery" }
+        "type": {
+          "const": "query"
+        },
+        "query": {
+          "$ref": "#/$defs/ContextQuery"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Correlation id; a provider MUST echo it on the reply (SPEC.md H4)."
+        }
       },
-      "required": ["type", "query"],
+      "required": [
+        "type",
+        "query"
+      ],
       "additionalProperties": false
     },
-
     "Frames": {
       "type": "object",
       "description": "provider -> host. The answer: a ContextQueryResult whose frames' token_cost MUST sum to at most the query's max_tokens.",
       "properties": {
-        "type": { "const": "frames" },
-        "result": { "$ref": "#/$defs/ContextQueryResult" }
+        "type": {
+          "const": "frames"
+        },
+        "result": {
+          "$ref": "#/$defs/ContextQueryResult"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Correlation id; a provider MUST echo it on the reply (SPEC.md H4)."
+        }
       },
-      "required": ["type", "result"],
+      "required": [
+        "type",
+        "result"
+      ],
       "additionalProperties": false
     },
 
@@ -108,20 +148,48 @@
       "type": "object",
       "description": "host -> provider. No payload. A well-behaved provider exits cleanly (stdio) or expects no further requests (HTTP).",
       "properties": {
-        "type": { "const": "shutdown" }
+        "type": {
+          "const": "shutdown"
+        }
       },
-      "required": ["type"],
+      "required": [
+        "type"
+      ],
       "additionalProperties": false
     },
-
     "Error": {
       "type": "object",
       "description": "provider -> host. Report a problem without crashing. A provider that exits on a bad request fails the malformed-input-tolerance conformance check.",
       "properties": {
-        "type": { "const": "error" },
-        "message": { "type": "string", "minLength": 1 }
+        "type": {
+          "const": "error"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Correlation id; a provider MUST echo it on the reply (SPEC.md H4)."
+        },
+        "code": {
+          "type": "string",
+          "description": "Machine-readable error classification (SPEC.md Errors). The vocabulary is OPEN: an unrecognised code MUST be treated as `internal`, which is why this is not an enum \u2014 constraining it would make adding a code a breaking change.",
+          "examples": [
+            "bad_request",
+            "unsupported_kind",
+            "budget_unsatisfiable",
+            "unavailable",
+            "shutting_down",
+            "internal"
+          ]
+        }
       },
-      "required": ["type", "message"],
+      "required": [
+        "type",
+        "message"
+      ],
       "additionalProperties": false
     },
 
@@ -191,69 +259,111 @@
       "type": "object",
       "description": "Declares what a provider does with data. `egress` is the security-critical field: a conforming host gates egress providers behind recorded, named consent. `egress_scopes` (optional) classes WHERE content goes, for scope-level consent receipts.",
       "properties": {
-        "reads": { "type": "boolean" },
-        "writes": { "type": "boolean" },
-        "egress": { "type": "boolean" },
+        "reads": {
+          "type": "boolean"
+        },
+        "writes": {
+          "type": "boolean"
+        },
+        "egress": {
+          "type": "boolean"
+        },
         "egress_scopes": {
           "type": "array",
-          "items": { "$ref": "#/$defs/EgressScope" },
+          "items": {
+            "$ref": "#/$defs/EgressScope"
+          },
           "$comment": "Optional (omitted when empty). Each entry is one of the four base scopes or a namespaced custom scope. An off-machine scope (anything but local-only) alongside egress:false is a conformance failure (docs/context-reuse.md §3, C5)."
         }
       },
-      "required": ["reads", "writes", "egress"],
+      "required": [
+        "reads",
+        "writes",
+        "egress"
+      ],
       "additionalProperties": false
     },
-
     "EgressScope": {
       "type": "string",
       "description": "Where a provider's served content may go (docs/context-reuse.md §3). One of the four normative base classes, or a namespaced custom scope (vendor:scope-name, a ':' with non-empty sides).",
       "anyOf": [
-        { "enum": ["local-only", "org-tenant", "third-party-index", "third-party-model"] },
-        { "pattern": "^[^:]+:[^:]+" }
+        {
+          "enum": [
+            "local-only",
+            "org-tenant",
+            "third-party-index",
+            "third-party-model"
+          ]
+        },
+        {
+          "pattern": "^[^:]+:[^:]+"
+        }
       ]
     },
-
     "ProviderInfo": {
       "type": "object",
       "description": "Provider identity + declared data-flow direction, surfaced at consent time.",
       "properties": {
-        "name": { "type": "string", "minLength": 1 },
-        "version": { "type": "string", "minLength": 1 },
-        "data_flow": { "$ref": "#/$defs/DataFlow" }
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "data_flow": {
+          "$ref": "#/$defs/DataFlow"
+        }
       },
-      "required": ["name", "version", "data_flow"],
+      "required": [
+        "name",
+        "version",
+        "data_flow"
+      ],
       "additionalProperties": false
     },
-
     "QueryCapability": {
       "type": "object",
-      "description": "Which frame kinds and filters this provider serves.",
+      "description": "The retrieval surface a provider offers: the frame kinds it serves.",
       "properties": {
         "kinds": {
           "type": "array",
-          "items": { "type": "string" }
-        },
-        "filters": {
-          "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       },
-      "required": ["kinds", "filters"],
+      "required": [
+        "kinds"
+      ],
       "additionalProperties": false
     },
-
     "Capabilities": {
       "type": "object",
-      "description": "What a provider can do: query kinds/filters, upsert, graph, embedding fingerprint, subscriptions.",
+      "description": "What a provider can do: query kinds, request correlation, graph support, and the embedding space it indexes. Every field is a capability a host can actually exercise (ADR 0004).",
       "properties": {
-        "query": { "$ref": "#/$defs/QueryCapability" },
-        "upsert": { "type": "boolean" },
-        "graph": { "type": "boolean" },
-        "embeddings_fingerprint": { "type": ["string", "null"] },
-        "subscribe": { "type": "boolean" },
+        "query": {
+          "$ref": "#/$defs/QueryCapability"
+        },
+        "correlation": {
+          "type": "boolean",
+          "description": "Provider echoes a request's `id` on its reply, enabling pipelining (SPEC.md H4)."
+        },
+        "graph": {
+          "type": "boolean"
+        },
+        "embeddings_fingerprint": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Embedding space identity: <model-id>/<dimensions>[/<normalization>] (SPEC.md E1).",
+          "pattern": "^[^/]+/[0-9]+(/[^/]+)?$"
+        },
         "verify": {
           "type": "boolean",
-          "$comment": "Whether the provider answers context/verify (docs/context-reuse.md §4). Optional and defaults to false, so a pre-§4 provider is treated as unsupported and the host falls back to re-querying. Independent of `subscribe` — push and pull freshness are complementary."
+          "$comment": "Whether the provider answers context/verify (docs/context-reuse.md §4). Optional and defaults to false, so a pre-§4 provider is treated as unsupported and the host falls back to re-querying."
         },
         "representations": {
           "type": "array",
@@ -265,59 +375,109 @@
           "$comment": "Whether the provider answers context/resolve for a frame's content_ref. Compact/reference support implies resolve support."
         }
       },
-      "required": ["query", "upsert", "graph", "subscribe"],
+      "required": [
+        "query"
+      ],
       "additionalProperties": false
     },
-
     "ContextQuery": {
       "type": "object",
       "description": "A retrieval request. max_tokens is a hard contract, not a hint.",
       "properties": {
-        "goal": { "type": "string", "minLength": 1 },
-        "query_text": { "type": ["string", "null"] },
+        "goal": {
+          "type": "string",
+          "minLength": 1
+        },
+        "query_text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "embedding": {
-          "type": ["array", "null"],
-          "items": { "type": "number" }
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number"
+          }
         },
         "kinds": {
           "type": "array",
-          "items": { "$ref": "#/$defs/FrameKind" }
+          "items": {
+            "$ref": "#/$defs/FrameKind"
+          }
         },
         "anchors": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
-        "max_frames": { "$ref": "#/$defs/u32" },
-        "max_tokens": { "$ref": "#/$defs/u32" },
-        "as_of": { "type": ["string", "null"] },
+        "max_frames": {
+          "$ref": "#/$defs/u32"
+        },
+        "max_tokens": {
+          "$ref": "#/$defs/u32"
+        },
+        "as_of": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$",
+          "description": "RFC 3339 UTC timestamp, uppercase T and Z (SPEC.md F4)."
+        },
         "representation_preferences": {
           "type": "array",
           "items": { "$ref": "#/$defs/Representation" },
           "$comment": "Ordered preference; the provider returns the first representation it supports. Absent/empty ⇒ [full]."
         }
       },
-      "required": ["goal", "kinds", "anchors", "max_frames", "max_tokens"],
+      "required": [
+        "goal",
+        "kinds",
+        "anchors",
+        "max_frames",
+        "max_tokens"
+      ],
       "additionalProperties": false
     },
-
     "ContextQueryResult": {
       "type": "object",
       "description": "The response to a query. truncated is true if more candidates existed than fit the budget.",
       "properties": {
         "frames": {
           "type": "array",
-          "items": { "$ref": "#/$defs/ContextFrame" }
+          "items": {
+            "$ref": "#/$defs/ContextFrame"
+          }
         },
-        "truncated": { "type": "boolean" },
-        "dropped_estimate": { "$ref": "#/$defs/u32Nullable" }
+        "truncated": {
+          "type": "boolean"
+        },
+        "dropped_estimate": {
+          "$ref": "#/$defs/u32Nullable"
+        }
       },
-      "required": ["frames", "truncated"],
+      "required": [
+        "frames",
+        "truncated"
+      ],
       "additionalProperties": false
     },
-
     "FrameKind": {
       "type": "string",
-      "enum": ["snippet", "symbol", "fact", "doc", "memory", "episode", "graph"]
+      "enum": [
+        "snippet",
+        "symbol",
+        "fact",
+        "doc",
+        "memory",
+        "episode",
+        "graph"
+      ]
     },
 
     "Representation": {
@@ -363,18 +523,36 @@
 
     "ContextFrame": {
       "type": "object",
-      "description": "The unit of exchange. A frame is not a string — it is a structured record of relevance, cost, provenance, and validity. content is untrusted data: a conforming host delimits it as quoted material and never executes it.",
+      "description": "The unit of exchange. A frame is not a string \u2014 it is a structured record of relevance, cost, provenance, and validity. content is untrusted data: a conforming host delimits it as quoted material and never executes it.",
       "properties": {
-        "id": { "type": "string", "minLength": 1 },
-        "kind": { "$ref": "#/$defs/FrameKind" },
-        "title": { "type": "string", "minLength": 1 },
-        "content": { "type": "string" },
-        "content_digest": {
-          "type": ["string", "null"],
-          "minLength": 1,
-          "$comment": "Provider-declared, opaque digest of the frame's content bytes (e.g. sha256:<hex>) — the third component of the frame's stable FrameId identity. Optional: a frame without one is not verifiable and a host re-queries it (docs/context-reuse.md §1, §4)."
+        "id": {
+          "type": "string",
+          "minLength": 1
         },
-        "uri": { "type": ["string", "null"] },
+        "kind": {
+          "$ref": "#/$defs/FrameKind"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "content": {
+          "type": "string"
+        },
+        "content_digest": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "$comment": "Provider-declared, opaque digest of the frame's content bytes (e.g. sha256:<hex>) \u2014 the third component of the frame's stable FrameId identity. Optional: a frame without one is not verifiable and a host re-queries it (docs/context-reuse.md \u00a71, \u00a74)."
+        },
+        "uri": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "representation": {
           "$ref": "#/$defs/Representation",
           "$comment": "How the frame carries content. Absent ⇒ full (legacy); full frames omit this field on the wire."
@@ -394,28 +572,60 @@
           "minimum": 0,
           "maximum": 1
         },
-        "token_cost": { "$ref": "#/$defs/u32" },
+        "token_cost": {
+          "$ref": "#/$defs/u32"
+        },
         "canonical_token_cost": {
           "$ref": "#/$defs/u32",
           "$comment": "Token cost of the complete canonical source content. If token_cost or canonical_token_cost is present, tokenizer_ref should name the tokenizer."
         },
         "tokenizer_ref": { "type": "string", "minLength": 1 },
-        "valid_from": { "type": ["string", "null"] },
-        "valid_to": { "type": ["string", "null"] },
-        "recorded_at": { "type": ["string", "null"] },
+        "valid_from": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$",
+          "description": "RFC 3339 UTC timestamp, uppercase T and Z (SPEC.md F4)."
+        },
+        "valid_to": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$",
+          "description": "RFC 3339 UTC timestamp, uppercase T and Z (SPEC.md F4)."
+        },
+        "recorded_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$",
+          "description": "RFC 3339 UTC timestamp, uppercase T and Z (SPEC.md F4)."
+        },
         "provenance": {
           "type": "array",
-          "items": { "$ref": "#/$defs/Provenance" }
+          "items": {
+            "$ref": "#/$defs/Provenance"
+          }
         },
         "citation_label": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "minLength": 1,
           "$comment": "Optional in the wire type (Option<String>), but the frame-validity conformance check requires a non-empty citation_label. A provider MUST include one to pass conformance."
         },
-        "embedding": { "$ref": "#/$defs/FrameEmbeddingNullable" },
+        "embedding": {
+          "$ref": "#/$defs/FrameEmbeddingNullable"
+        },
         "relations": {
           "type": "array",
-          "items": { "$ref": "#/$defs/Relation" }
+          "items": {
+            "$ref": "#/$defs/Relation"
+          }
         }
       },
       "required": ["id", "kind", "title", "score", "token_cost", "provenance", "relations"],
@@ -461,65 +671,123 @@
       ],
       "additionalProperties": false
     },
-
     "Provenance": {
       "type": "object",
       "description": "An origin entry for a frame. NOTE: the Rust field is named `kind`, but it serializes to `type` on the wire.",
       "properties": {
-        "type": { "type": "string", "minLength": 1 },
-        "uri": { "type": ["string", "null"] },
-        "range": { "type": ["string", "null"] },
-        "digest": { "type": ["string", "null"] },
-        "method": { "type": ["string", "null"] },
-        "by": { "type": ["string", "null"] }
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "uri": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "range": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "digest": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Content digest: sha256:<64 lowercase hex> (SPEC.md F5)."
+        },
+        "method": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       },
-      "required": ["type"],
+      "required": [
+        "type"
+      ],
       "additionalProperties": false
     },
-
     "Relation": {
       "type": "object",
       "description": "A graph edge. A relation is surfaced by its human display_name, never a raw target id.",
       "properties": {
-        "rel": { "type": "string", "minLength": 1 },
-        "target_uri": { "type": "string", "minLength": 1 },
-        "display_name": { "type": ["string", "null"] }
+        "rel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target_uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "display_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       },
-      "required": ["rel", "target_uri"],
+      "required": [
+        "rel",
+        "target_uri"
+      ],
       "additionalProperties": false
     },
-
     "FrameEmbedding": {
       "type": "object",
       "description": "A frame embedding. The vector payload itself is elidable; fingerprint is the stable identifier.",
       "properties": {
-        "fingerprint": { "type": "string", "minLength": 1 },
+        "fingerprint": {
+          "type": "string",
+          "minLength": 1
+        },
         "vector": {
-          "type": ["array", "null"],
-          "items": { "type": "number" }
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number"
+          }
         }
       },
-      "required": ["fingerprint"],
+      "required": [
+        "fingerprint"
+      ],
       "additionalProperties": false
     },
-
     "FrameEmbeddingNullable": {
       "oneOf": [
-        { "$ref": "#/$defs/FrameEmbedding" },
-        { "type": "null" }
+        {
+          "$ref": "#/$defs/FrameEmbedding"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
-
     "u32": {
       "type": "integer",
       "minimum": 0,
       "maximum": 4294967295
     },
-
     "u32Nullable": {
       "oneOf": [
-        { "$ref": "#/$defs/u32" },
-        { "type": "null" }
+        {
+          "$ref": "#/$defs/u32"
+        },
+        {
+          "type": "null"
+        }
       ]
     }
   }

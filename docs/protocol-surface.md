@@ -1,4 +1,11 @@
-# Context Graph Protocol protocol surface
+# CGP protocol surface
+
+> **This page is now a guided tour, not the normative text.**
+> The single normative home of the protocol is [`SPEC.md`](../SPEC.md) at the
+> repository root, which carries the stable requirement anchors (`H1`, `B3`,
+> `F5`, …). Where this page and `SPEC.md` disagree, `SPEC.md` wins — and the
+> disagreement is a bug worth filing.
+
 
 This is the normative shape of the Context Graph Protocol as bound to
 Rust types by [`contextgraph-types`](https://crates.io/crates/contextgraph-types). Every type

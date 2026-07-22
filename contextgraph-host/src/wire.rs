@@ -1,25 +1,48 @@
-//! The Context Graph Protocol wire envelope and its framing.
+//! The CGP wire envelope and its framing (`SPEC.md` §Transport bindings).
 //!
-//! `06-context-protocol.md` §1/§3.1 states Context Graph Protocol "rides MCP's transport and
-//! lifecycle conventions (JSON-RPC 2.0, stdio + streamable HTTP,
-//! initialize/capabilities handshake)". The spec leaves the concrete
-//! reference-host framing to the binding; this host frames every message as
-//! **newline-delimited JSON (NDJSON) — exactly one `serde_json` value per
-//! line** — because it is the simplest thing that is unambiguous over a pipe
-//! and trivially reimplementable in the TS/Python provider kits
-//! (`06-context-protocol.md` §3.6). The `type`-tagged variants below are the
-//! Context Graph Protocol method vocabulary the spec calls "the delta": `handshake` ↔
-//! `initialize`, `query` ↔ `context/query`, `frames` ↔ its response,
-//! `shutdown` ↔ lifecycle teardown (§3.2, §3.3). HTTP providers receive the
-//! same envelope as a JSON request body and reply with one as the response
-//! body (§3.2 "streamable HTTP").
+//! # This is not JSON-RPC
 //!
-//! The envelope is **versioned**: the handshake exchange negotiates the
-//! protocol family up front (§3.2), and a mismatch is a named error, never a
-//! hang.
+//! Earlier revisions of this module claimed CGP "rides MCP's transport and
+//! lifecycle conventions (JSON-RPC 2.0, ...)". That was not true of the wire it
+//! described, and the claim has been withdrawn — see
+//! [ADR 0002](../../docs/adr/0002-request-correlation-and-the-json-rpc-question.md).
+//! CGP's envelope is a bespoke `type`-tagged JSON object: there is no
+//! `jsonrpc` member, no `method`/`params` split. Its *lifecycle* is informed by
+//! MCP (a handshake that negotiates version and capabilities before any
+//! payload moves), but the framing is its own.
+//!
+//! A JSON-RPC **binding** — an alternate encoding of this same semantic layer —
+//! may be specified later without touching frame or query semantics and without
+//! a new protocol family. Keeping the semantic layer and the transport binding
+//! separate is what makes that possible.
+//!
+//! # Framing
+//!
+//! Every message is **newline-delimited JSON (NDJSON): exactly one
+//! `serde_json` value per line** — the simplest thing that is unambiguous over
+//! a pipe and trivially reimplementable in a provider kit in any language. HTTP
+//! providers receive the same envelope as a JSON request body and reply with
+//! one as the response body.
+//!
+//! The envelope is **versioned**: the handshake negotiates the protocol family
+//! up front, and a mismatch is a named error, never a hang (`SPEC.md` §H3).
+//!
+//! # Correlation
+//!
+//! `query`, `frames`, and `error` carry an optional [`id`](Envelope). A
+//! provider **MUST** echo the `id` of the request it is answering. An envelope
+//! with no `id` is a *notification*: it expects no reply, which is the shape a
+//! future push-invalidation extension needs
+//! (`docs/sketches/push-invalidation.md`).
+//!
+//! `id` is optional so that a provider written against an earlier revision
+//! stays conformant: a host that has not seen a provider echo an `id` **MUST**
+//! fall back to lock-step. Concurrency is negotiated by observation, not by a
+//! capability flag.
 
 use contextgraph_types::{
-    Capabilities, ContextQuery, ContextQueryResult, ProviderInfo, VerifyRequest, VerifyResponse,
+    Capabilities, ContextQuery, ContextQueryResult, ErrorCode, ProviderInfo, VerifyRequest,
+    VerifyResponse,
 };
 use serde::{Deserialize, Serialize};
 
@@ -27,38 +50,130 @@ use crate::error::HostError;
 
 /// One Context Graph Protocol message. Every variant is a small, versioned, `type`-tagged JSON
 /// object; the host writes exactly one per line (NDJSON) over stdio and one
-/// per HTTP body (`06-context-protocol.md` §3.1-§3.3).
+/// per HTTP body (`SPEC.md` §2).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Envelope {
     /// Host hello: opens the exchange with the protocol version the host
-    /// speaks (§3.2 `initialize`).
+    /// speaks (SPEC.md §3 `initialize`).
     Handshake { protocol_version: String },
     /// Provider hello-back: its protocol version, identity + declared
-    /// data-flow direction, and negotiated capabilities (§3.2). The host
+    /// data-flow direction, and negotiated capabilities (SPEC.md §3). The host
     /// checks the version and surfaces `provider.data_flow` at consent time.
     HandshakeAck {
         protocol_version: String,
         provider: ProviderInfo,
         capabilities: Capabilities,
     },
-    /// Host → provider retrieval request (§3.3 `context/query`).
-    Query { query: ContextQuery },
-    /// Provider → host budgeted, provenance-carrying frames (§3.3 response).
-    Frames { result: ContextQueryResult },
+    /// Host → provider retrieval request (`context/query`).
+    Query {
+        /// Correlation id. A provider **MUST** echo it on the reply.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        query: ContextQuery,
+    },
+    /// Provider → host budgeted, provenance-carrying frames.
+    Frames {
+        /// The `id` of the `query` this answers, echoed verbatim.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        result: ContextQueryResult,
+    },
     /// Host → provider revalidation request: are these held frames still
     /// valid (`docs/context-reuse.md` §4 `context/verify`)? Carries frame
     /// identities only — never bodies. Capability-gated: a host sends it only
     /// to a provider advertising [`Capabilities::verify`](contextgraph_types::Capabilities::verify).
     Verify { request: VerifyRequest },
-    /// Provider → host per-frame verdicts (§4 response).
+    /// Provider → host per-frame verdicts.
     Verified { response: VerifyResponse },
-    /// Lifecycle teardown; the provider should exit cleanly (§3.2).
+    /// Lifecycle teardown; the provider should exit cleanly.
     Shutdown,
     /// Provider-reported failure — lets a provider report a bad request
-    /// without dying (§3.5 "fail loud"). The host maps this to
+    /// without dying (`SPEC.md` §R1 "fail loud"). The host maps this to
     /// [`HostError::Provider`].
-    Error { message: String },
+    Error {
+        /// The `id` of the request that failed, when the failure is
+        /// attributable to one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        /// Machine-readable classification (`SPEC.md` §Errors). Optional so
+        /// that a provider written against an earlier revision stays
+        /// conformant; a host treats its absence as
+        /// [`ErrorCode::Internal`](contextgraph_types::ErrorCode::Internal).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        code: Option<ErrorCode>,
+        /// Human-readable detail. Always present: the code is for the machine,
+        /// the message is for whoever reads the log.
+        message: String,
+    },
+}
+
+impl Envelope {
+    /// The correlation id this envelope carries, if any.
+    ///
+    /// `None` means one of two things, and the caller can tell them apart from
+    /// context: either the envelope is a lifecycle message that never carries
+    /// one (`handshake`, `shutdown`), or the peer does not implement
+    /// correlation and the exchange must stay lock-step.
+    pub fn correlation_id(&self) -> Option<&str> {
+        match self {
+            Envelope::Query { id, .. }
+            | Envelope::Frames { id, .. }
+            | Envelope::Error { id, .. } => id.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// The error code carried by an `error` envelope, defaulting to
+    /// [`ErrorCode::Internal`] when the provider declared none.
+    ///
+    /// Defaulting to `Internal` rather than to something retryable is the
+    /// conservative reading: a host must not infer "safe to retry" from a
+    /// provider's silence.
+    pub fn error_code(&self) -> Option<ErrorCode> {
+        match self {
+            Envelope::Error { code, .. } => Some(code.clone().unwrap_or(ErrorCode::Internal)),
+            _ => None,
+        }
+    }
+}
+
+/// Mint a fresh correlation id.
+///
+/// Ids need only be unique among the exchanges in flight on one connection; a
+/// process-wide counter satisfies that with no per-connection state and no
+/// randomness dependency. They are opaque to the provider, which must echo the
+/// string verbatim rather than parse it.
+pub fn next_correlation_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(1);
+    format!("q{}", COUNTER.fetch_add(1, Ordering::Relaxed))
+}
+
+/// Check that a reply carries the correlation id of the request it answers
+/// (`SPEC.md` §H4).
+///
+/// `sent` is `None` when the provider did not declare `correlation`, in which
+/// case the exchange is lock-step and there is nothing to verify.
+pub fn verify_correlation(
+    provider_id: &str,
+    sent: Option<&str>,
+    echoed: Option<&str>,
+) -> Result<(), HostError> {
+    let Some(expected) = sent else {
+        return Ok(());
+    };
+    match echoed {
+        Some(got) if got == expected => Ok(()),
+        // A correlation-declaring provider that answers without an id, or with
+        // the wrong one, is worse than one that never declared it: a host that
+        // accepted the reply anyway could hand one caller's frames to another.
+        other => Err(HostError::CorrelationMismatch {
+            id: provider_id.to_string(),
+            expected: expected.to_string(),
+            got: other.unwrap_or("<absent>").to_string(),
+        }),
+    }
 }
 
 /// The human name of an envelope variant, for error messages that report
@@ -94,7 +209,7 @@ pub fn decode_line(line: &str) -> Result<Envelope, HostError> {
 /// family** — the substring up to the first `.`. So `contextgraph/1.0-draft` and
 /// `contextgraph/1.0` interoperate (both `contextgraph/1`), while `contextgraph/2.0` does not. This is
 /// what lets the public v1.0 freeze drop the `-draft` suffix without a flag
-/// day (`06-context-protocol.md` §3).
+/// day (`SPEC.md`).
 pub fn versions_compatible(a: &str, b: &str) -> bool {
     protocol_family(a) == protocol_family(b)
 }
@@ -128,7 +243,6 @@ mod tests {
             capabilities: Capabilities {
                 query: QueryCapability {
                     kinds: vec!["doc".into()],
-                    filters: vec![],
                 },
                 ..Capabilities::default()
             },
@@ -147,6 +261,7 @@ mod tests {
             },
             sample_ack(),
             Envelope::Query {
+                id: None,
                 query: ContextQuery {
                     goal: "g".into(),
                     query_text: None,
@@ -160,6 +275,7 @@ mod tests {
                 },
             },
             Envelope::Frames {
+                id: None,
                 result: ContextQueryResult {
                     frames: vec![],
                     truncated: false,
@@ -168,6 +284,8 @@ mod tests {
             },
             Envelope::Shutdown,
             Envelope::Error {
+                id: None,
+                code: None,
                 message: "m".into(),
             },
         ];
@@ -206,11 +324,12 @@ mod tests {
             representation_preferences: vec![],
         };
         let env = Envelope::Query {
+            id: None,
             query: query.clone(),
         };
         let line = encode_line(&env).unwrap();
         match decode_line(&line).unwrap() {
-            Envelope::Query { query: back } => assert_eq!(back, query),
+            Envelope::Query { query: back, .. } => assert_eq!(back, query),
             other => panic!("expected query, got {}", envelope_kind(&other)),
         }
     }

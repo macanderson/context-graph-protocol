@@ -3,10 +3,10 @@
 //! Every context source — an in-process built-in, a child process over
 //! stdio, or a remote HTTP endpoint — reaches the host through one trait,
 //! [`ContextProvider`]. Its shape mirrors the two Context Graph Protocol methods a host always
-//! needs: capability negotiation (cached from the handshake, §3.2) and
-//! `context/query` (§3.3). `stella-context` and any other Rust agent drive
+//! needs: capability negotiation (cached from the handshake, SPEC.md §3) and
+//! `context/query` (SPEC.md §5). `stella-context` and any other Rust agent drive
 //! all three provider kinds through this single interface
-//! (`02-architecture.md` §2 — "usable by any other Rust agent that wants Context Graph Protocol
+//! (`SPEC.md` §1 — "usable by any other Rust agent that wants Context Graph Protocol
 //! support").
 
 use async_trait::async_trait;
@@ -24,20 +24,20 @@ use crate::error::HostError;
 #[async_trait]
 pub trait ContextProvider: Send + Sync {
     /// The provider's host-facing id — its routing key and its consent key
-    /// (`06-context-protocol.md` §3.5).
+    /// (`SPEC.md` §4 and §10).
     fn id(&self) -> &str;
 
     /// Identity + declared data-flow direction, surfaced at consent time
-    /// (§3.2, §3.5).
+    /// (SPEC.md §3, ).
     fn info(&self) -> &ProviderInfo;
 
-    /// Capabilities negotiated at the handshake (§3.2) — which frame kinds
+    /// Capabilities negotiated at the handshake (SPEC.md §3) — which frame kinds
     /// and filters this provider serves, whether it upserts, does graph, is
     /// an embedder, or supports subscriptions.
     fn capabilities(&self) -> &Capabilities;
 
     /// Answer a context query with budgeted, provenance-carrying frames
-    /// (§3.3). The host — not the provider — enforces the budget and consent;
+    /// (SPEC.md §5). The host — not the provider — enforces the budget and consent;
     /// a provider that over-runs its budget is caught by the host, not
     /// trusted (`crate::host`).
     async fn query(&self, query: &ContextQuery) -> Result<ContextQueryResult, HostError>;
@@ -55,7 +55,7 @@ pub trait ContextProvider: Send + Sync {
         Ok(VerifyResponse::uniform(request, Verdict::Unknown))
     }
 
-    /// Shut the provider down cleanly (§3.2 lifecycle). In-process providers
+    /// Shut the provider down cleanly (SPEC.md §3 lifecycle). In-process providers
     /// default to a no-op; transport-backed providers send `shutdown` and
     /// reap their child. Overridable.
     async fn shutdown(&self) -> Result<(), HostError> {
@@ -80,7 +80,7 @@ pub fn frame_kind_name(kind: FrameKind) -> &'static str {
 
 /// Whether a provider is worth querying for a given request. A query with no
 /// `kinds` filter matches every provider (the host wants everyone's best
-/// frames, §3.3); otherwise a provider matches when it declares at least one
+/// frames, SPEC.md §5); otherwise a provider matches when it declares at least one
 /// of the requested frame kinds. Used by `query_all` to fan out only to
 /// relevant providers.
 pub fn capability_matches(caps: &Capabilities, query: &ContextQuery) -> bool {
@@ -102,7 +102,6 @@ mod tests {
         Capabilities {
             query: QueryCapability {
                 kinds: kinds.iter().map(|k| k.to_string()).collect(),
-                filters: vec![],
             },
             ..Capabilities::default()
         }

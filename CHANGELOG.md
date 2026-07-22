@@ -26,6 +26,35 @@ which. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1
   (`ContextFrame::representation_invariants`), the JSON Schema, and conformance
   tests. See
   [docs/adr/0005-frame-representations.md](./docs/adr/0005-frame-representations.md).
+- `SPEC.md` — the single normative specification, self-contained and with stable
+  requirement anchors (#3).
+- `MIGRATION.md` — rename map, breaking-change list, and the GitHub
+  redirect-hazard warning for downstreams pinning the old URL (#30).
+- CI: fmt, clippy, test, MSRV, conformance green **and** `--misbehave` red,
+  schema validation, examples/types round-trip (#2).
+- `docs/adr/` — ADR 0002 (request correlation), 0003 (canonical token
+  accounting), 0004 (dead capability surface).
+- Canonical token accounting: `budget_tokens`, conformance requirement B3 (#8).
+- Structured error codes with host-reaction guidance; open vocabulary (#9).
+- Request correlation: `Capabilities.correlation`, envelope `id`, H4 (#4).
+- Format validation: RFC 3339 UTC timestamp profile (F4), `sha256:` digest
+  grammar (F5) (#10, #12).
+- `max_frames` audit (B4) and graph relation `display_name` check (G1) (#7, #10).
+- Recommended relation vocabulary `frame::rel` (#7).
+- Embedding fingerprint format and exact-match rule (E1) (#11).
+
+### Removed
+- **Breaking:** `Capabilities.upsert`, `Capabilities.subscribe`, and
+  `QueryCapability.filters` — negotiable at handshake but unreachable by any
+  host. Wire-compatible; Rust API breaking (#5, #6, #11).
+
+### Changed
+- **Breaking:** `token_cost` MUST now equal the canonical count for its content.
+  Providers that under-declared cost were previously green (#8).
+- Withdrew the incorrect claim that CGP rides JSON-RPC 2.0 (#4).
+- Code comments cite `SPEC.md` anchors instead of a private repository (#3).
+
+### Added
 - [`schema/contextgraph-envelope.schema.json`](./schema/contextgraph-envelope.schema.json) — a
   machine-readable JSON Schema (Draft 2020-12) for the Context Graph Protocol envelope and all wire
   types. Validates in any language (`ajv`, Python `jsonschema`, Rust

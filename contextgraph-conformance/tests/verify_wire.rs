@@ -77,10 +77,12 @@ async fn a_real_stdio_provider_answers_a_verify_exchange_honestly() {
         .await
         .expect("fixture handshakes");
 
+    // The fixture derives each frame's digest from `fixture_digest(seed)`:
+    // frm_getting_started uses seed 1, frm_configuration uses seed 2.
     let served = FrameId::new(
         "docs",
         "frm_getting_started",
-        Some("sha256:getting-started-v1".into()),
+        Some("sha256:0101010101010101010101010101010101010101010101010101010101010101".into()),
     );
     let mutated = FrameId::new(
         "docs",
@@ -103,7 +105,9 @@ async fn a_real_stdio_provider_answers_a_verify_exchange_honestly() {
     assert_eq!(
         outcome.drop_reason(&mutated),
         Some(&DropReason::Stale {
-            replacement_digest: Some("sha256:configuration-v1".into())
+            replacement_digest: Some(
+                "sha256:0202020202020202020202020202020202020202020202020202020202020202".into()
+            )
         }),
         "a mutated digest must come back stale, carrying the current digest"
     );
