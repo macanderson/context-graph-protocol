@@ -387,6 +387,14 @@
         "content": {
           "type": "string"
         },
+        "content_digest": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "$comment": "Provider-declared, opaque digest of the frame's content bytes (e.g. sha256:<hex>) \u2014 the third component of the frame's stable FrameId identity. Optional: a frame without one is not verifiable and a host re-queries it (docs/context-reuse.md \u00a71, \u00a74)."
+        },
         "uri": {
           "type": [
             "string",
