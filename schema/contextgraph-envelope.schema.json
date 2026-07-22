@@ -99,14 +99,28 @@
 
     "DataFlow": {
       "type": "object",
-      "description": "Declares what a provider does with data. `egress` is the security-critical field: a conforming host gates egress providers behind recorded, named consent.",
+      "description": "Declares what a provider does with data. `egress` is the security-critical field: a conforming host gates egress providers behind recorded, named consent. `egress_scopes` (optional) classes WHERE content goes, for scope-level consent receipts.",
       "properties": {
         "reads": { "type": "boolean" },
         "writes": { "type": "boolean" },
-        "egress": { "type": "boolean" }
+        "egress": { "type": "boolean" },
+        "egress_scopes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/EgressScope" },
+          "$comment": "Optional (omitted when empty). Each entry is one of the four base scopes or a namespaced custom scope. An off-machine scope (anything but local-only) alongside egress:false is a conformance failure (docs/context-reuse.md §3, C5)."
+        }
       },
       "required": ["reads", "writes", "egress"],
       "additionalProperties": false
+    },
+
+    "EgressScope": {
+      "type": "string",
+      "description": "Where a provider's served content may go (docs/context-reuse.md §3). One of the four normative base classes, or a namespaced custom scope (vendor:scope-name, a ':' with non-empty sides).",
+      "anyOf": [
+        { "enum": ["local-only", "org-tenant", "third-party-index", "third-party-model"] },
+        { "pattern": "^[^:]+:[^:]+" }
+      ]
     },
 
     "ProviderInfo": {

@@ -4,8 +4,8 @@
 //! proving the suite catches a broken provider (task deliverable).
 
 use contextgraph_conformance::{
-    CHECK_BUDGET_HONESTY, CHECK_FRAME_VALIDITY, CHECK_HANDSHAKE, CHECK_MALFORMED, CHECK_SHUTDOWN,
-    CheckStatus, ProviderTarget, run_conformance,
+    CHECK_BUDGET_HONESTY, CHECK_CONSENT_SCOPE, CHECK_FRAME_VALIDITY, CHECK_HANDSHAKE,
+    CHECK_MALFORMED, CHECK_SHUTDOWN, CheckStatus, ProviderTarget, run_conformance,
 };
 
 /// Path to the fixture binary, built automatically for integration tests.
@@ -37,10 +37,11 @@ async fn a_well_behaved_provider_is_fully_conformant() {
         "expected conformant; failures: {:?}",
         report.failures().collect::<Vec<_>>()
     );
-    // All five checks ran and passed (none skipped for a stdio provider).
-    assert_eq!(report.checks.len(), 5);
+    // All six checks ran and passed (none skipped for a stdio provider).
+    assert_eq!(report.checks.len(), 6);
     for name in [
         CHECK_HANDSHAKE,
+        CHECK_CONSENT_SCOPE,
         CHECK_FRAME_VALIDITY,
         CHECK_BUDGET_HONESTY,
         CHECK_SHUTDOWN,
@@ -48,6 +49,15 @@ async fn a_well_behaved_provider_is_fully_conformant() {
     ] {
         assert_eq!(status_of(&report, name), CheckStatus::Pass, "{name}");
     }
+}
+
+#[tokio::test]
+async fn an_off_machine_scope_declared_with_egress_false_fails_consent_scope() {
+    let report = run_conformance(target(&["--misbehave", "scope-lie"])).await;
+    assert!(!report.passed());
+    assert_eq!(status_of(&report, CHECK_CONSENT_SCOPE), CheckStatus::Fail);
+    // The handshake itself was fine — only the scope check caught the lie.
+    assert_eq!(status_of(&report, CHECK_HANDSHAKE), CheckStatus::Pass);
 }
 
 #[tokio::test]

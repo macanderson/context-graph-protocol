@@ -25,7 +25,12 @@
     "provider": {
       "name": "cloud-docs",
       "version": "1.4.0",
-      "data_flow": { "reads": true, "writes": false, "egress": true }
+      "data_flow": {
+        "reads": true,
+        "writes": false,
+        "egress": true,
+        "egress_scopes": ["third-party-model"]
+      }
     },
     "capabilities": {
       "query": { "kinds": ["doc"], "filters": [] },

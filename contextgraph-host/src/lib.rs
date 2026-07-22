@@ -59,7 +59,7 @@ pub mod stdio;
 pub mod wire;
 
 pub use compose::compose_context;
-pub use consent::{ConsentRecord, ConsentStore};
+pub use consent::{ConsentDecision, ConsentRecord, ConsentStore};
 pub use error::HostError;
 pub use host::{FanOut, Host, ProviderOutcome, ProviderResult};
 pub use http::HttpProvider;

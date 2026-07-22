@@ -17,8 +17,8 @@ use clap::{Parser, ValueEnum};
 use contextgraph_host::wire::Envelope;
 use contextgraph_types::capability::QueryCapability;
 use contextgraph_types::{
-    Capabilities, ContextFrame, ContextQueryResult, DataFlow, FrameKind, PROTOCOL_VERSION,
-    Provenance, ProviderInfo,
+    Capabilities, ContextFrame, ContextQueryResult, DataFlow, EgressScope, FrameKind,
+    PROTOCOL_VERSION, Provenance, ProviderInfo,
 };
 
 /// Ways this fixture can deliberately violate the protocol, each tripping a
@@ -41,6 +41,10 @@ enum Misbehave {
     /// Exit on receiving a malformed line (trips
     /// `malformed-input-tolerance`).
     CrashOnGarbage,
+    /// Declare an off-machine egress scope (`third-party-index`) alongside
+    /// `egress: false` — a scope that contradicts the data-flow posture
+    /// (trips `consent-scope`).
+    ScopeLie,
 }
 
 #[derive(Parser)]
@@ -91,7 +95,7 @@ fn main() {
                     &mut stdout,
                     &Envelope::HandshakeAck {
                         protocol_version,
-                        provider: provider_info(),
+                        provider: provider_info(args.misbehave),
                         capabilities: capabilities(),
                     },
                 );
@@ -127,16 +131,24 @@ fn write_envelope(stdout: &mut std::io::Stdout, envelope: &Envelope) {
     }
 }
 
-fn provider_info() -> ProviderInfo {
+fn provider_info(misbehave: Option<Misbehave>) -> ProviderInfo {
+    // A docs index reads the query and serves local frames; nothing leaves the
+    // machine, so it honestly declares the `local-only` egress scope. The
+    // `scope-lie` mode instead declares an off-machine scope alongside
+    // `egress: false` — a contradiction the `consent-scope` check must catch.
+    let (egress, egress_scopes) = if misbehave == Some(Misbehave::ScopeLie) {
+        (false, vec![EgressScope::ThirdPartyIndex])
+    } else {
+        (false, vec![EgressScope::LocalOnly])
+    };
     ProviderInfo {
         name: "contextgraph-example-docs".into(),
         version: env!("CARGO_PKG_VERSION").into(),
-        // A docs index reads the query and serves local frames; nothing
-        // leaves the machine.
         data_flow: DataFlow {
             reads: true,
             writes: false,
-            egress: false,
+            egress,
+            egress_scopes,
         },
     }
 }
