@@ -12,6 +12,20 @@
 }
 
 .marketing-page {
+  /*
+   * Page-level zoom, scoped to the marketing layout. This page is authored
+   * almost entirely in px, so a root font-size bump would not scale it.
+   * `zoom` scales it uniformly, exactly like a browser zoom, and unlike
+   * `transform: scale` it keeps sticky headers and document flow intact.
+   * Tune this single value to taste.
+   *
+   * Deliberately NOT on `html`: media queries are evaluated against the
+   * unzoomed viewport, so a zoomed root makes every breakpoint fire while
+   * the layout actually has 1/zoom of that width to work with. The docs
+   * layout is responsive and breaks under that mismatch — its tables
+   * overflow and get clipped by the layout grid's `overflow-x-clip`.
+   */
+  zoom: 1.07;
   margin: 0;
   background: var(--paper);
   color: var(--ink);
