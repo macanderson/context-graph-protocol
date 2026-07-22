@@ -18,14 +18,26 @@ const FIXTURE_FILES: [&str; 5] = [
     "normalization-vectors.json",
     "strict-validation.invalid.json",
 ];
-const FRAME_FIELDS: [&str; 14] = [
+// The pinned `contextgraph-1.0-draft` strict frame profile. `content_digest` is
+// intentionally excluded here as it was before the representation work; the nine
+// representation/cost fields below are additive and default-absent.
+const FRAME_FIELDS: [&str; 23] = [
     "id",
     "kind",
     "title",
     "content",
     "uri",
+    "representation",
+    "content_fidelity",
+    "canonical_content_hash",
+    "content_ref",
+    "transform",
+    "minimum_content_fidelity",
+    "inline_content_requirement",
     "score",
     "token_cost",
+    "canonical_token_cost",
+    "tokenizer_ref",
     "valid_from",
     "valid_to",
     "recorded_at",

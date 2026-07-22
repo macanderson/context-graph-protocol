@@ -17,7 +17,7 @@ use clap::{Parser, ValueEnum};
 use contextgraph_host::wire::Envelope;
 use contextgraph_types::capability::QueryCapability;
 use contextgraph_types::{
-    Capabilities, ContextFrame, ContextQueryResult, DataFlow, FrameKind, FrameVerdict,
+    Capabilities, ContextFrame, ContextQueryResult, DataFlow, EgressScope, FrameKind, FrameVerdict,
     PROTOCOL_VERSION, Provenance, ProviderInfo, Verdict, VerifyRequest, VerifyResponse,
 };
 
@@ -197,6 +197,9 @@ fn capabilities() -> Capabilities {
         // cannot watch its sources, so it does not advertise `subscribe` — the
         // exact provider shape verify exists for.
         verify: true,
+        // Serves inline full frames only; it does not resolve references.
+        representations: vec![],
+        resolve: false,
     }
 }
 
@@ -255,62 +258,55 @@ fn canned_frames(misbehave: Option<Misbehave>) -> Vec<ContextFrame> {
     };
 
     vec![
-        ContextFrame {
-            id: "frm_getting_started".into(),
-            kind: FrameKind::Doc,
-            title: "Getting Started".into(),
-            content:
+        {
+            let mut frame = ContextFrame::full(
+                "frm_getting_started",
+                FrameKind::Doc,
+                "Getting Started",
                 "Install the reference binding with `cargo add contextgraph-types`, then implement \
-                      the four required methods."
-                    .into(),
-            content_digest: Some(GETTING_STARTED_DIGEST.into()),
-            uri: Some("file:///docs/getting-started.md".into()),
-            score: if bad_score { 1.5 } else { 0.82 },
-            token_cost,
-            valid_from: None,
-            valid_to: None,
-            recorded_at: None,
-            provenance: vec![Provenance {
+                      the four required methods.",
+                if bad_score { 1.5 } else { 0.82 },
+                token_cost,
+            );
+            frame.content_digest = Some(GETTING_STARTED_DIGEST.into());
+            frame.uri = Some("file:///docs/getting-started.md".into());
+            frame.provenance = vec![Provenance {
                 kind: "file".into(),
                 uri: Some("file:///docs/getting-started.md".into()),
                 range: Some("L1-40".into()),
                 digest: None,
                 method: None,
                 by: Some("contextgraph-example-docs".into()),
-            }],
-            citation_label: Some(if empty_citation {
+            }];
+            frame.citation_label = Some(if empty_citation {
                 String::new()
             } else {
                 "getting-started.md L1-40".into()
-            }),
-            embedding: None,
-            relations: vec![],
+            });
+            frame
         },
-        ContextFrame {
-            id: "frm_configuration".into(),
-            kind: FrameKind::Doc,
-            title: "Configuration".into(),
-            content: "Providers declare their data-flow direction at the handshake so hosts can \
-                      gate consent before sending any query."
-                .into(),
-            content_digest: Some(CONFIGURATION_DIGEST.into()),
-            uri: Some("file:///docs/configuration.md".into()),
-            score: 0.61,
-            token_cost,
-            valid_from: None,
-            valid_to: None,
-            recorded_at: None,
-            provenance: vec![Provenance {
+        {
+            let mut frame = ContextFrame::full(
+                "frm_configuration",
+                FrameKind::Doc,
+                "Configuration",
+                "Providers declare their data-flow direction at the handshake so hosts can \
+                      gate consent before sending any query.",
+                0.61,
+                token_cost,
+            );
+            frame.content_digest = Some(CONFIGURATION_DIGEST.into());
+            frame.uri = Some("file:///docs/configuration.md".into());
+            frame.provenance = vec![Provenance {
                 kind: "file".into(),
                 uri: Some("file:///docs/configuration.md".into()),
                 range: Some("L1-25".into()),
                 digest: None,
                 method: None,
                 by: Some("contextgraph-example-docs".into()),
-            }],
-            citation_label: Some("configuration.md L1-25".into()),
-            embedding: None,
-            relations: vec![],
+            }];
+            frame.citation_label = Some("configuration.md L1-25".into());
+            frame
         },
     ]
 }

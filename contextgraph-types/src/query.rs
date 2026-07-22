@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::frame::{ContextFrame, FrameKind};
+use crate::frame::{ContextFrame, FrameKind, Representation};
 
 /// A request to an Context Graph Protocol provider for context frames relevant to a goal.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -27,6 +27,33 @@ pub struct ContextQuery {
     /// Pin retrieval to a point in time for bi-temporal facts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub as_of: Option<String>,
+    /// Ordered [frame representation](Representation) preference. The provider
+    /// returns the first supported representation it can satisfy. Empty on the
+    /// wire ⇒ the default `[full]`, so pre-representation hosts are unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub representation_preferences: Vec<Representation>,
+}
+
+impl ContextQuery {
+    /// The effective ordered representation preference, defaulting to `[full]`
+    /// when the host stated none (the legacy behavior).
+    pub fn preferred_representations(&self) -> Vec<Representation> {
+        if self.representation_preferences.is_empty() {
+            vec![Representation::Full]
+        } else {
+            self.representation_preferences.clone()
+        }
+    }
+
+    /// The representation a provider should return: the first
+    /// [preferred](Self::preferred_representations) one it supports. `None` ⇒
+    /// none of the requested representations is supported and the provider must
+    /// answer `unsupported_representation`.
+    pub fn select_representation(&self, supported: &[Representation]) -> Option<Representation> {
+        self.preferred_representations()
+            .into_iter()
+            .find(|wanted| supported.contains(wanted))
+    }
 }
 
 /// The response to a `context/query` call.
@@ -59,23 +86,7 @@ mod tests {
     use crate::frame::ContextFrame;
 
     fn frame_with_cost(id: &str, cost: u32) -> ContextFrame {
-        ContextFrame {
-            id: id.into(),
-            kind: FrameKind::Snippet,
-            title: id.into(),
-            content: String::new(),
-            content_digest: None,
-            uri: None,
-            score: 0.5,
-            token_cost: cost,
-            valid_from: None,
-            valid_to: None,
-            recorded_at: None,
-            provenance: vec![],
-            citation_label: None,
-            embedding: None,
-            relations: vec![],
-        }
+        ContextFrame::full(id, FrameKind::Snippet, id, String::new(), 0.5, cost)
     }
 
     #[test]
@@ -89,10 +100,57 @@ mod tests {
             max_frames: 20,
             max_tokens: 4000,
             as_of: None,
+            representation_preferences: vec![],
         };
         let json = serde_json::to_string(&query).unwrap();
         let back: ContextQuery = serde_json::from_str(&json).unwrap();
         assert_eq!(back, query);
+    }
+
+    #[test]
+    fn representation_preferences_default_to_full_and_select_first_supported() {
+        // A host that states nothing gets the legacy `[full]` behavior, and the
+        // field is omitted from the wire.
+        let mut query = ContextQuery {
+            goal: "g".into(),
+            query_text: None,
+            embedding: None,
+            kinds: vec![],
+            anchors: vec![],
+            max_frames: 1,
+            max_tokens: 10,
+            as_of: None,
+            representation_preferences: vec![],
+        };
+        assert_eq!(
+            query.preferred_representations(),
+            vec![Representation::Full]
+        );
+        assert!(
+            !serde_json::to_string(&query)
+                .unwrap()
+                .contains("representation_preferences")
+        );
+        assert_eq!(
+            query.select_representation(&[Representation::Full]),
+            Some(Representation::Full)
+        );
+
+        // With an explicit preference, the provider returns the first it can
+        // satisfy; if none is supported, it must answer unsupported.
+        query.representation_preferences = vec![Representation::Reference, Representation::Full];
+        assert_eq!(
+            query.select_representation(&[Representation::Full]),
+            Some(Representation::Full),
+        );
+        assert_eq!(
+            query.select_representation(&[Representation::Reference, Representation::Full]),
+            Some(Representation::Reference),
+        );
+        assert_eq!(
+            query.select_representation(&[Representation::Compact]),
+            None
+        );
     }
 
     #[test]

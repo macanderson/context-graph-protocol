@@ -156,6 +156,7 @@ mod tests {
                     max_frames: 1,
                     max_tokens: 1,
                     as_of: None,
+                    representation_preferences: vec![],
                 },
             },
             Envelope::Frames {
@@ -202,6 +203,7 @@ mod tests {
             max_frames: 5,
             max_tokens: 2000,
             as_of: None,
+            representation_preferences: vec![],
         };
         let env = Envelope::Query {
             query: query.clone(),

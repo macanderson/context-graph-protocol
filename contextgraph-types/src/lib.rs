@@ -19,7 +19,10 @@ pub mod verify;
 
 pub use capability::{Capabilities, DataFlow, ProviderInfo};
 pub use consent::{ConsentReceipt, Grantor};
-pub use frame::{ContextFrame, FrameKind, Provenance, Relation};
+pub use frame::{
+    ContentFidelity, ContentRef, ContextFrame, FrameEmbedding, FrameKind, InlineContentRequirement,
+    Provenance, Relation, Representation, Transform,
+};
 pub use identity::{FrameId, canonical_order};
 pub use query::{ContextQuery, ContextQueryResult};
 pub use scope::EgressScope;

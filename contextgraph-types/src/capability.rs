@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::frame::Representation;
 use crate::scope::EgressScope;
 
 /// Declares what a provider does with data, so a host can gate consent
@@ -91,6 +92,42 @@ pub struct Capabilities {
     /// neither.
     #[serde(default)]
     pub verify: bool,
+    /// The [frame representations](Representation) this provider can return
+    /// (build prompt §"Capability negotiation"). Empty ⇒ `full` only, the
+    /// legacy default, so a provider that says nothing keeps working.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub representations: Vec<Representation>,
+    /// Whether this provider answers `context/resolve` for a frame's
+    /// [`content_ref`](crate::ContentRef). Compact/reference support **implies**
+    /// resolve support ([`representations_consistent`](Self::representations_consistent)).
+    #[serde(default)]
+    pub resolve: bool,
+}
+
+impl Capabilities {
+    /// The representations this provider actually offers, defaulting to `[full]`
+    /// when it advertised none (the legacy contract).
+    pub fn offered_representations(&self) -> Vec<Representation> {
+        if self.representations.is_empty() {
+            vec![Representation::Full]
+        } else {
+            self.representations.clone()
+        }
+    }
+
+    /// Whether the advertised representations are honest: `compact`/`reference`
+    /// both hand the host a [`content_ref`](crate::ContentRef) to rehydrate, so
+    /// a provider that cannot [`resolve`](Self::resolve) must not advertise
+    /// them. A provider offering only `full` is always consistent.
+    pub fn representations_consistent(&self) -> bool {
+        if self.resolve {
+            return true;
+        }
+        !self
+            .representations
+            .iter()
+            .any(|rep| matches!(rep, Representation::Compact | Representation::Reference))
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -223,9 +260,56 @@ mod tests {
             embeddings_fingerprint: Some("bge-small-v1".into()),
             subscribe: false,
             verify: true,
+            representations: vec![Representation::Full, Representation::Reference],
+            resolve: true,
         };
         let json = serde_json::to_string(&caps).unwrap();
         let back: Capabilities = serde_json::from_str(&json).unwrap();
         assert_eq!(back, caps);
+    }
+
+    #[test]
+    fn representation_capability_defaults_to_full_only_and_is_wire_omitted() {
+        // A provider that says nothing offers `full` only, and neither new
+        // field disturbs the pre-representation wire form (resolve defaults
+        // false and is a plain bool, representations omits when empty).
+        let caps = Capabilities::default();
+        assert_eq!(caps.offered_representations(), vec![Representation::Full]);
+        assert!(caps.representations_consistent());
+        let json = serde_json::to_string(&caps).unwrap();
+        assert!(!json.contains("representations"));
+
+        // Absent from the wire ⇒ still full-only, so pre-representation
+        // providers keep working.
+        let back: Capabilities = serde_json::from_str(r#"{"upsert":false}"#).unwrap();
+        assert_eq!(back.offered_representations(), vec![Representation::Full]);
+        assert!(!back.resolve);
+    }
+
+    #[test]
+    fn reference_or_compact_without_resolve_is_inconsistent() {
+        // Compact/reference hand the host a content_ref to rehydrate; a
+        // provider that cannot resolve must not advertise them.
+        let lying = Capabilities {
+            representations: vec![Representation::Reference],
+            resolve: false,
+            ..Capabilities::default()
+        };
+        assert!(!lying.representations_consistent());
+
+        let honest = Capabilities {
+            representations: vec![Representation::Reference],
+            resolve: true,
+            ..Capabilities::default()
+        };
+        assert!(honest.representations_consistent());
+
+        // Advertising only `full` never requires resolve.
+        let full_only = Capabilities {
+            representations: vec![Representation::Full],
+            resolve: false,
+            ..Capabilities::default()
+        };
+        assert!(full_only.representations_consistent());
     }
 }

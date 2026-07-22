@@ -57,15 +57,17 @@ fn reference_frame_without_inline_content_deserializes() {
     // Round-trip back to the wire and check the normative invariants on the
     // serialized form, so this test does not depend on the chosen Rust API.
     let value = serde_json::to_value(&frame).expect("frame must serialize");
-    let obj = value.as_object().expect("frame serializes as a JSON object");
+    let obj = value
+        .as_object()
+        .expect("frame serializes as a JSON object");
 
     // Never encode a reference as `content: ""` (or any inline content).
     match obj.get("content") {
         None => {}
         Some(serde_json::Value::Null) => {}
-        Some(other) => panic!(
-            "reference frame must not carry inline content on the wire, got: {other}"
-        ),
+        Some(other) => {
+            panic!("reference frame must not carry inline content on the wire, got: {other}")
+        }
     }
 
     // Reference frames must state their representation and keep the
@@ -104,7 +106,9 @@ fn legacy_full_frame_still_deserializes_without_representation() {
         .expect("legacy full ContextFrames must continue to deserialize");
 
     let value = serde_json::to_value(&frame).expect("frame must serialize");
-    let obj = value.as_object().expect("frame serializes as a JSON object");
+    let obj = value
+        .as_object()
+        .expect("frame serializes as a JSON object");
     assert_eq!(
         obj.get("content").and_then(|v| v.as_str()),
         Some("export interface Workspace { }"),
