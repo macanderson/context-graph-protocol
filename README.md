@@ -1,4 +1,4 @@
-<div style="text-align: left; margin: 10px 0;">
+<div style="text-align: center; margin: 10px auto;">
   <img src="./assets/contextgraph-logo.svg" width="400px" height="100%">
 </div>
 
