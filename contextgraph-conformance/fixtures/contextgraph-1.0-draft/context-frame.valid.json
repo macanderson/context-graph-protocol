@@ -1,0 +1,128 @@
+{
+  "cases": [
+    {
+      "name": "fully_populated_frame",
+      "source": {
+        "id": "frame:policy:retry",
+        "kind": "doc",
+        "title": "Retry policy — café",
+        "content": "Use \"exponential\" backoff.\nRetry at most 3 times.",
+        "uri": "file:///repo/docs/retry%20policy.md",
+        "score": 0.875,
+        "token_cost": 42,
+        "valid_from": "2026-01-01T00:00:00Z",
+        "valid_to": "2026-12-31T23:59:59Z",
+        "recorded_at": "2026-07-21T12:34:56Z",
+        "provenance": [
+          {
+            "type": "file",
+            "uri": "file:///repo/docs/retry%20policy.md",
+            "range": "L10-18",
+            "digest": "sha256:4f2dcbad0f03f6e1c61f9e2d76d7392b4590f40dc13f5413c6f501d6f9844938",
+            "method": "file-read",
+            "by": "repo-indexer"
+          },
+          {
+            "type": "derivation",
+            "uri": "contextgraph://repo-indexer/retry-policy",
+            "range": "step:2",
+            "digest": "sha256:28b51d9a2827bbfa917c22ce95eafed9939c914186e0053e1837d0d17b5f07c8",
+            "method": "summary",
+            "by": "context-provider"
+          }
+        ],
+        "citation_label": "retry policy.md L10-18",
+        "embedding": {
+          "fingerprint": "text-embedding-v1:sha256:67f8e7",
+          "vector": [0.125, -0.5, 1.0]
+        },
+        "relations": [
+          {
+            "rel": "documents",
+            "target_uri": "symbol:///repo/src/retry.rs#RetryPolicy",
+            "display_name": "RetryPolicy"
+          },
+          {
+            "rel": "applies_to",
+            "target_uri": "service:///café-api",
+            "display_name": "Café API"
+          }
+        ]
+      },
+      "expected_normalized": {
+        "id": "frame:policy:retry",
+        "kind": "doc",
+        "title": "Retry policy — café",
+        "content": "Use \"exponential\" backoff.\nRetry at most 3 times.",
+        "uri": "file:///repo/docs/retry%20policy.md",
+        "score": 0.875,
+        "token_cost": 42,
+        "valid_from": "2026-01-01T00:00:00Z",
+        "valid_to": "2026-12-31T23:59:59Z",
+        "recorded_at": "2026-07-21T12:34:56Z",
+        "provenance": [
+          {
+            "type": "file",
+            "uri": "file:///repo/docs/retry%20policy.md",
+            "range": "L10-18",
+            "digest": "sha256:4f2dcbad0f03f6e1c61f9e2d76d7392b4590f40dc13f5413c6f501d6f9844938",
+            "method": "file-read",
+            "by": "repo-indexer"
+          },
+          {
+            "type": "derivation",
+            "uri": "contextgraph://repo-indexer/retry-policy",
+            "range": "step:2",
+            "digest": "sha256:28b51d9a2827bbfa917c22ce95eafed9939c914186e0053e1837d0d17b5f07c8",
+            "method": "summary",
+            "by": "context-provider"
+          }
+        ],
+        "citation_label": "retry policy.md L10-18",
+        "embedding": {
+          "fingerprint": "text-embedding-v1:sha256:67f8e7",
+          "vector": [0.125, -0.5, 1.0]
+        },
+        "relations": [
+          {
+            "rel": "documents",
+            "target_uri": "symbol:///repo/src/retry.rs#RetryPolicy",
+            "display_name": "RetryPolicy"
+          },
+          {
+            "rel": "applies_to",
+            "target_uri": "service:///café-api",
+            "display_name": "Café API"
+          }
+        ]
+      },
+      "expected_jcs_utf8": "{\"citation_label\":\"retry policy.md L10-18\",\"content\":\"Use \\\"exponential\\\" backoff.\\nRetry at most 3 times.\",\"embedding\":{\"fingerprint\":\"text-embedding-v1:sha256:67f8e7\",\"vector\":[0.125,-0.5,1]},\"id\":\"frame:policy:retry\",\"kind\":\"doc\",\"provenance\":[{\"by\":\"repo-indexer\",\"digest\":\"sha256:4f2dcbad0f03f6e1c61f9e2d76d7392b4590f40dc13f5413c6f501d6f9844938\",\"method\":\"file-read\",\"range\":\"L10-18\",\"type\":\"file\",\"uri\":\"file:///repo/docs/retry%20policy.md\"},{\"by\":\"context-provider\",\"digest\":\"sha256:28b51d9a2827bbfa917c22ce95eafed9939c914186e0053e1837d0d17b5f07c8\",\"method\":\"summary\",\"range\":\"step:2\",\"type\":\"derivation\",\"uri\":\"contextgraph://repo-indexer/retry-policy\"}],\"recorded_at\":\"2026-07-21T12:34:56Z\",\"relations\":[{\"display_name\":\"RetryPolicy\",\"rel\":\"documents\",\"target_uri\":\"symbol:///repo/src/retry.rs#RetryPolicy\"},{\"display_name\":\"Café API\",\"rel\":\"applies_to\",\"target_uri\":\"service:///café-api\"}],\"score\":0.875,\"title\":\"Retry policy — café\",\"token_cost\":42,\"uri\":\"file:///repo/docs/retry%20policy.md\",\"valid_from\":\"2026-01-01T00:00:00Z\",\"valid_to\":\"2026-12-31T23:59:59Z\"}",
+      "sha256": "sha256:951215831233d2b64b9a3d6a738dfd6e1ba458c77bf66713f2b82f902a230931"
+    },
+    {
+      "name": "minimal_frame",
+      "source": {
+        "id": "frame:minimal",
+        "kind": "fact",
+        "title": "Minimal conforming frame",
+        "content": "Default arrays are omitted on the wire.",
+        "score": 1.0,
+        "token_cost": 0,
+        "citation_label": "minimal fixture"
+      },
+      "expected_normalized": {
+        "id": "frame:minimal",
+        "kind": "fact",
+        "title": "Minimal conforming frame",
+        "content": "Default arrays are omitted on the wire.",
+        "score": 1.0,
+        "token_cost": 0,
+        "citation_label": "minimal fixture",
+        "provenance": [],
+        "relations": []
+      },
+      "expected_jcs_utf8": "{\"citation_label\":\"minimal fixture\",\"content\":\"Default arrays are omitted on the wire.\",\"id\":\"frame:minimal\",\"kind\":\"fact\",\"provenance\":[],\"relations\":[],\"score\":1,\"title\":\"Minimal conforming frame\",\"token_cost\":0}",
+      "sha256": "sha256:8c1fae7b4b83a331e2c2b5bdb134922a1bb13f32ae6380408e629008d91e072e"
+    }
+  ]
+}

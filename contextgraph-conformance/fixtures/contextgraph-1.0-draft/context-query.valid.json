@@ -1,0 +1,21 @@
+{
+  "cases": [
+    {
+      "name": "minimal_query",
+      "source": {
+        "goal": "Find retry guidance for the café service",
+        "max_frames": 8,
+        "max_tokens": 2048
+      },
+      "expected_normalized": {
+        "goal": "Find retry guidance for the café service",
+        "max_frames": 8,
+        "max_tokens": 2048,
+        "kinds": [],
+        "anchors": []
+      },
+      "expected_jcs_utf8": "{\"anchors\":[],\"goal\":\"Find retry guidance for the café service\",\"kinds\":[],\"max_frames\":8,\"max_tokens\":2048}",
+      "sha256": "sha256:08f2db49252b77c5930844d3b4726fe0f370b59a458887c894adf40c4b853906"
+    }
+  ]
+}

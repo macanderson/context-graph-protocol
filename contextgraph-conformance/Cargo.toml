@@ -44,3 +44,5 @@ name = "contextgraph-example-docs"
 path = "src/bin/contextgraph-example-docs.rs"
 
 [dev-dependencies]
+serde_json_canonicalizer = "0.3.2"
+sha2 = "0.11.0"

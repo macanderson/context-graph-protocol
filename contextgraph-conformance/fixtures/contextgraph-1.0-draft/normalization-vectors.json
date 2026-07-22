@@ -1,0 +1,63 @@
+{
+  "vectors": [
+    {
+      "name": "unicode",
+      "input_json": "{\"€\":\"Euro Sign\",\"\\r\":\"Carriage Return\",\"דּ\":\"Hebrew Letter Dalet With Dagesh\",\"1\":\"One\",\"😀\":\"Emoji: Grinning Face\",\"\\u0080\":\"Control\",\"ö\":\"Latin Small Letter O With Diaeresis\"}",
+      "expected_normalized": {
+        "€": "Euro Sign",
+        "\r": "Carriage Return",
+        "דּ": "Hebrew Letter Dalet With Dagesh",
+        "1": "One",
+        "😀": "Emoji: Grinning Face",
+        "\u0080": "Control",
+        "ö": "Latin Small Letter O With Diaeresis"
+      },
+      "expected_jcs_utf8": "{\"\\r\":\"Carriage Return\",\"1\":\"One\",\"\u0080\":\"Control\",\"ö\":\"Latin Small Letter O With Diaeresis\",\"€\":\"Euro Sign\",\"😀\":\"Emoji: Grinning Face\",\"דּ\":\"Hebrew Letter Dalet With Dagesh\"}",
+      "sha256": "sha256:5e321556d22018a9656991a9e94f77ec175fa193e52a2429d312f8419ec8b08c"
+    },
+    {
+      "name": "escaping",
+      "input_json": "{\"solidus\":\"/\",\"quote\":\"\\\"\",\"backslash\":\"\\\\\",\"controls\":\"\\b\\t\\n\\f\\r\\u0000\",\"unicode\":\"é\"}",
+      "expected_normalized": {
+        "solidus": "/",
+        "quote": "\"",
+        "backslash": "\\",
+        "controls": "\b\t\n\f\r\u0000",
+        "unicode": "é"
+      },
+      "expected_jcs_utf8": "{\"backslash\":\"\\\\\",\"controls\":\"\\b\\t\\n\\f\\r\\u0000\",\"quote\":\"\\\"\",\"solidus\":\"/\",\"unicode\":\"é\"}",
+      "sha256": "sha256:06af4a425329a5aa0a6c0f55e2c930141145fbf485a674d428c89c66a29bfe35"
+    },
+    {
+      "name": "numbers",
+      "input_json": "{\"f\":333333333.33333329,\"a\":1E30,\"e\":4.50,\"d\":2e-3,\"c\":0.000000000000000000000000001,\"b\":-0.0}",
+      "expected_normalized": {
+        "f": 333333333.3333333,
+        "a": 1e+30,
+        "e": 4.5,
+        "d": 0.002,
+        "c": 1e-27,
+        "b": -0.0
+      },
+      "expected_jcs_utf8": "{\"a\":1e+30,\"b\":0,\"c\":1e-27,\"d\":0.002,\"e\":4.5,\"f\":333333333.3333333}",
+      "sha256": "sha256:14ea294f3862821bc72ab4c70570a0d8a8f51eb12dffe55e2f7e3c736d39d498"
+    },
+    {
+      "name": "number_boundaries",
+      "input_json": "{\"min_positive_subnormal\":4.9406564584124654e-324,\"max_finite\":1.7976931348623157e308,\"two_pow_53_minus_1\":9007199254740991.0,\"two_pow_53\":9007199254740992.0,\"two_pow_53_plus_1\":9007199254740993.0,\"fixed_1e_minus_6\":1e-6,\"exponent_1e_minus_7\":1e-7,\"fixed_1e20\":1e20,\"exponent_1e21\":1e21}",
+      "expected_normalized": {
+        "min_positive_subnormal": 5e-324,
+        "max_finite": 1.7976931348623157e308,
+        "two_pow_53_minus_1": 9007199254740991.0,
+        "two_pow_53": 9007199254740992.0,
+        "two_pow_53_plus_1": 9007199254740992.0,
+        "fixed_1e_minus_6": 1e-6,
+        "exponent_1e_minus_7": 1e-7,
+        "fixed_1e20": 1e20,
+        "exponent_1e21": 1e21
+      },
+      "expected_jcs_utf8": "{\"exponent_1e21\":1e+21,\"exponent_1e_minus_7\":1e-7,\"fixed_1e20\":100000000000000000000,\"fixed_1e_minus_6\":0.000001,\"max_finite\":1.7976931348623157e+308,\"min_positive_subnormal\":5e-324,\"two_pow_53\":9007199254740992,\"two_pow_53_minus_1\":9007199254740991,\"two_pow_53_plus_1\":9007199254740992}",
+      "sha256": "sha256:94b70b117c719645b5b0b747dc0535cb86c71e861a79c990e131ee06160dc2e1"
+    }
+  ]
+}
