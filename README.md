@@ -1,5 +1,5 @@
 <div style="text-align: left; margin: 10px 0;">
-  <img src="./assets/contextgraph-logo.svg" width="200px" height="200px">
+  <img src="./assets/contextgraph-logo.svg" width="400px" height="100%">
 </div>
 
 # Context Graph Protocol (draft v0.1.0)
