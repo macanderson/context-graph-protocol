@@ -96,14 +96,6 @@
     background: var(--background);
     color-scheme: light;
     text-rendering: optimizeLegibility;
-    /*
-     * Page-level zoom. The marketing page is authored almost entirely in px
-     * and the docs in rem, so a root font-size bump would only scale the docs.
-     * `zoom` scales both layouts uniformly, exactly like a browser zoom, and
-     * unlike `transform: scale` it keeps sticky headers and document flow intact.
-     * Tune this single value to taste.
-     */
-    zoom: 1.07;
   }
 
   html.dark {
@@ -215,6 +207,29 @@
     border-color: var(--border);
     padding: 0.75rem;
     vertical-align: top;
+  }
+
+  /*
+   * Long identifiers (`contextgraph-host::wire::versions_compatible`) are a
+   * single unbreakable token, so they set the cell's min-content width and
+   * push the whole table past the viewport on narrow screens — where the
+   * docs grid's `overflow-x-clip` silently cuts the last column off. Let
+   * code, and only code, break mid-token inside table cells.
+   */
+  .prose :where(td, th) code {
+    overflow-wrap: anywhere;
+  }
+
+  /*
+   * The docs sticky chrome must be opaque. Fumadocs ships both bars at 80%
+   * alpha over a backdrop blur; against this near-monochrome palette the
+   * table rows scrolling underneath stay legible through them, so the page
+   * reads as a ghosted second table overlapping the real one.
+   */
+  #nd-docs-layout #nd-subnav,
+  #nd-docs-layout [data-toc-popover] > header {
+    background: var(--background);
+    backdrop-filter: none;
   }
 
   .prose :where(code):not(:where(pre *, .not-prose *)) {
