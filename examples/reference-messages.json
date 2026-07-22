@@ -36,7 +36,8 @@
       "data_flow": {
         "reads": true,
         "writes": false,
-        "egress": true
+        "egress": true,
+        "egress_scopes": ["third-party-model"]
       }
     },
     "capabilities": {

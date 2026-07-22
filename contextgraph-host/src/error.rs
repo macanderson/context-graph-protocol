@@ -6,7 +6,7 @@
 //! light (`SPEC.md` §1 — depends only on `contextgraph-types` + transport
 //! crates).
 
-use contextgraph_types::DataFlow;
+use contextgraph_types::{DataFlow, EgressScope};
 
 /// Anything the host runtime can surface while talking to a provider.
 #[derive(Debug, thiserror::Error)]
@@ -55,6 +55,22 @@ pub enum HostError {
         "provider {id} declares egress and requires one-time consent naming what leaves before it can be queried"
     )]
     ConsentRequired { id: String, data_flow: DataFlow },
+
+    /// The provider declares one or more **off-machine egress scopes** with no
+    /// recorded consent receipt, so the host refuses to transmit a query to it
+    /// (`docs/context-reuse.md` §3 — requirement C6). `scopes` names exactly
+    /// the scopes that would leave unconsented. The query payload never left
+    /// the host.
+    ///
+    // NOTE: the stable `code` string for the typed-error-code work (#9) is not
+    // yet assigned; it slots in alongside `ConsentRequired` when #9 lands.
+    #[error(
+        "provider {id} declares egress scope(s) {scopes:?} with no recorded consent receipt; the query was not transmitted"
+    )]
+    ConsentScopeRequired {
+        id: String,
+        scopes: Vec<EgressScope>,
+    },
 
     /// A message of the wrong kind arrived where the protocol expected a
     /// specific envelope (e.g. a `frames` reply to a `query`).

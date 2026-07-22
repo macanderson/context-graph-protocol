@@ -117,6 +117,7 @@ impl ContextProvider for HealthyProvider {
                 reads: true,
                 writes: false,
                 egress: false,
+                egress_scopes: vec![],
             },
         })
     }

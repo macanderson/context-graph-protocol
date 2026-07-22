@@ -422,6 +422,7 @@ mod tests {
                     reads: true,
                     writes: false,
                     egress: false,
+                    egress_scopes: vec![],
                 },
             },
             capabilities: Capabilities {

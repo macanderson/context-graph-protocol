@@ -11,6 +11,10 @@
 //!
 //! - **handshake** — the provider completes the handshake and reports a
 //!   non-empty identity + capabilities (SPEC.md §3).
+//! - **consent-scope** — the provider's declared egress scopes are well-formed
+//!   and consistent with its `data_flow.egress` (`docs/context-reuse.md` §3):
+//!   no off-machine scope alongside `egress: false`, and custom scopes
+//!   namespaced.
 //! - **frame-validity** — queried frames pass `contextgraph-types` validation: score
 //!   in `[0, 1]`, a non-empty title, a non-empty `citation_label` (SPEC.md §6 —
 //!   "NEVER a bare uuid").
@@ -28,7 +32,9 @@
 //! catches a broken provider (task deliverable).
 
 use contextgraph_host::{ConsentRecord, ContextProvider, Host, HostError, RawStdioConnection};
-use contextgraph_types::{Capabilities, ContextQuery, ContextQueryResult, ProviderInfo};
+use contextgraph_types::{
+    Capabilities, ConsentReceipt, ContextQuery, ContextQueryResult, Grantor, ProviderInfo,
+};
 
 mod report;
 
@@ -36,6 +42,7 @@ pub use report::{CheckResult, CheckStatus, ConformanceReport};
 
 /// The stable check names, so reports and callers agree on identifiers.
 pub const CHECK_HANDSHAKE: &str = "handshake";
+pub const CHECK_CONSENT_SCOPE: &str = "consent-scope";
 pub const CHECK_FRAME_VALIDITY: &str = "frame-validity";
 pub const CHECK_BUDGET_HONESTY: &str = "budget-honesty";
 pub const CHECK_SHUTDOWN: &str = "shutdown-clean";
@@ -100,6 +107,7 @@ pub async fn run_conformance(target: ProviderTarget) -> ConformanceReport {
                     describe_handshake(&info, &caps),
                 ));
             }
+            checks.push(check_consent_scopes(&info));
             run_query_and_shutdown_checks(host, &id, &mut checks).await;
         }
         Err(error) => {
@@ -107,7 +115,12 @@ pub async fn run_conformance(target: ProviderTarget) -> ConformanceReport {
                 CHECK_HANDSHAKE,
                 format!("could not establish provider: {error}"),
             ));
-            for name in [CHECK_FRAME_VALIDITY, CHECK_BUDGET_HONESTY, CHECK_SHUTDOWN] {
+            for name in [
+                CHECK_CONSENT_SCOPE,
+                CHECK_FRAME_VALIDITY,
+                CHECK_BUDGET_HONESTY,
+                CHECK_SHUTDOWN,
+            ] {
                 checks.push(CheckResult::skip(name, "handshake failed"));
             }
         }
@@ -155,11 +168,23 @@ async fn build_host(
         }
     };
 
+    // Running the suite *is* consent to the provider's declared flow, so it
+    // isn't spuriously gated. Record the legacy boolean consent, and a receipt
+    // for every off-machine egress scope the provider declares (the scope gate).
     if info.data_flow.egress {
         host.record_consent(ConsentRecord::new(
             id.clone(),
-            info.data_flow,
+            info.data_flow.clone(),
             "conformance run under test",
+        ));
+    }
+    for scope in info.data_flow.off_machine_scopes() {
+        host.record_receipt(ConsentReceipt::new(
+            id.clone(),
+            &info,
+            scope.clone(),
+            Grantor::Policy("conformance-suite".into()),
+            "2026-07-21T00:00:00Z",
         ));
     }
 
@@ -413,6 +438,42 @@ pub fn check_budget(result: &ContextQueryResult, query: &ContextQuery) -> (bool,
         )
     } else {
         (false, problems.join("; "))
+    }
+}
+
+/// Validate a provider's declared egress scopes against its `data_flow`
+/// (`docs/context-reuse.md` §3, requirement C5): every scope must be well-formed
+/// (custom scopes namespaced), and no off-machine scope may be declared with
+/// `egress: false`. A scope-lying provider — one claiming local posture while
+/// naming a destination that leaves — fails here.
+fn check_consent_scopes(info: &ProviderInfo) -> CheckResult {
+    if info.data_flow.scopes_consistent() {
+        let scopes: Vec<&str> = info
+            .data_flow
+            .egress_scopes
+            .iter()
+            .map(|scope| scope.as_str())
+            .collect();
+        CheckResult::pass(
+            CHECK_CONSENT_SCOPE,
+            format!(
+                "declared egress scopes {scopes:?} are well-formed and consistent with egress={}",
+                info.data_flow.egress
+            ),
+        )
+    } else {
+        CheckResult::fail(
+            CHECK_CONSENT_SCOPE,
+            format!(
+                "egress scopes {:?} are inconsistent with egress={}: an off-machine scope alongside egress=false, or a non-namespaced custom scope (§3, C5)",
+                info.data_flow
+                    .egress_scopes
+                    .iter()
+                    .map(|scope| scope.as_str())
+                    .collect::<Vec<_>>(),
+                info.data_flow.egress
+            ),
+        )
     }
 }
 

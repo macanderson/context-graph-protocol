@@ -55,6 +55,39 @@ isn't conformant, so it's CI-friendly.
 
 See [Running conformance][conformance] for the full guide.
 
+## Golden fixtures
+
+The versioned interoperability fixtures live under
+`fixtures/contextgraph-1.0-draft/`. The profile contains fully populated and
+minimal `ContextFrame` cases, a minimal `ContextQuery`, distinct missing- and
+blank-citation cases, strict unknown-field negatives, and RFC 8785 JSON
+Canonicalization Scheme (JCS) normalization vectors. `manifest.json` pins the
+protocol and fixture-profile versions, records the generation command, and
+carries a lowercase SHA-256 digest for every other JSON file in the profile.
+
+The frame and query digest cases each publish four cross-language artifacts:
+the source wire object, expected digest-profile-normalized object, exact JCS
+UTF-8 text, and SHA-256 digest of those canonical bytes. This pinned profile
+materializes omitted `provenance`, `relations`, `kinds`, and `anchors` arrays
+before hashing. It preserves array order and leaves absent optional scalar
+fields absent. Unlike the general forward-compatible protocol types, the
+digest profile rejects unknown frame/query fields, including unknown fields in
+provenance, embedding, and relation objects; the portable negative vectors
+freeze that stricter behavior.
+
+The generic JCS cases additionally cover Unicode/escaping and ECMAScript
+number boundaries such as subnormal and maximum finite values, the `2^53`
+precision boundary, and fixed/exponent transitions. These JCS digests are
+interoperability test vectors, not a new field in the Context Graph Protocol or
+in `ContextFrame`/`ContextQuery` wire messages. Ordinary `serde_json`
+serialization is not a substitute for RFC 8785 canonicalization.
+
+Validate the fixture profile with:
+
+```console
+cargo test -p contextgraph-conformance --test golden_fixtures
+```
+
 ## Depends on
 
 [`contextgraph-types`](https://crates.io/crates/contextgraph-types) and

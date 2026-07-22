@@ -11,23 +11,30 @@
 //! Protocol version: `contextgraph/1.0-draft`.
 
 pub mod capability;
+pub mod consent;
 pub mod error_code;
 pub mod frame;
 pub mod identity;
 pub mod query;
+pub mod scope;
 pub mod token;
+pub mod usage;
 pub mod validate;
 
 pub use capability::{
     Capabilities, DataFlow, ProviderInfo, QueryCapability, embedding_fingerprints_match,
     fingerprint_dimensions,
 };
+pub use consent::{ConsentReceipt, Grantor};
 pub use error_code::{ErrorCode, HostReaction};
 pub use frame::{ContextFrame, FrameEmbedding, FrameKind, Provenance, Relation, rel};
+pub use identity::{FrameId, canonical_order};
 pub use query::{ContextQuery, ContextQueryResult};
+pub use scope::EgressScope;
 pub use token::{
     BYTES_PER_BUDGET_TOKEN, SUGGESTED_HOST_SAFETY_FACTOR, budget_from_model_tokens, budget_tokens,
 };
+pub use usage::{ProviderUsage, ServedFrame, UsageReport};
 pub use validate::{DIGEST_ALGORITHMS, is_protocol_timestamp, is_well_formed_digest};
 
 /// The protocol version string this crate implements. Frozen to `contextgraph/1.0`

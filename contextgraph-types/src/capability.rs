@@ -5,9 +5,14 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::scope::EgressScope;
+
 /// Declares what a provider does with data, so a host can gate consent
 /// before ever sending it a query.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Not `Copy`: [`egress_scopes`](Self::egress_scopes) is an owned `Vec`, so a
+/// `DataFlow` is cloned, not bit-copied.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DataFlow {
     /// Can see workspace content via query payloads.
     #[serde(default)]
@@ -27,6 +32,40 @@ pub struct DataFlow {
     /// one-time consent before enabling a provider with `egress: true`.
     #[serde(default)]
     pub egress: bool,
+    /// The [egress scopes](EgressScope) this provider's served content falls
+    /// under (`docs/context-reuse.md` §3). Empty ⇒ the provider declares only
+    /// the boolean `egress` posture (the pre-scope contract). An off-machine
+    /// scope here is only consistent with `egress == true`
+    /// (see [`scopes_consistent`](Self::scopes_consistent)); a scope governs
+    /// every frame the provider serves.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub egress_scopes: Vec<EgressScope>,
+}
+
+impl DataFlow {
+    /// The declared scopes whose content leaves the machine
+    /// ([`EgressScope::is_off_machine`]).
+    pub fn off_machine_scopes(&self) -> impl Iterator<Item = &EgressScope> {
+        self.egress_scopes.iter().filter(|s| s.is_off_machine())
+    }
+
+    /// Whether the declared scopes are truthful and well-formed
+    /// (`docs/context-reuse.md` §3, requirement C5). A host holds a provider to
+    /// this at the handshake:
+    ///
+    /// - every declared scope MUST be well-formed ([`EgressScope::is_valid`] —
+    ///   custom scopes must be namespaced);
+    /// - an **off-machine scope alongside `egress: false` is a lie** — a
+    ///   provider cannot claim `local-only` posture while declaring content
+    ///   leaves. (The converse is allowed: `egress: true` with no scopes is the
+    ///   legacy boolean contract.)
+    pub fn scopes_consistent(&self) -> bool {
+        if !self.egress_scopes.iter().all(EgressScope::is_valid) {
+            return false;
+        }
+        // An off-machine scope requires the egress bit set.
+        self.egress || self.off_machine_scopes().next().is_none()
+    }
 }
 
 /// Provider identity reported at `initialize`.
@@ -115,6 +154,7 @@ pub fn embedding_fingerprints_match(host: &str, provider: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scope::EgressScope;
 
     #[test]
     fn egress_provider_data_flow_roundtrips() {
@@ -122,6 +162,7 @@ mod tests {
             reads: true,
             writes: false,
             egress: true,
+            egress_scopes: vec![EgressScope::ThirdPartyModel],
         };
         let json = serde_json::to_string(&flow).unwrap();
         let back: DataFlow = serde_json::from_str(&json).unwrap();
@@ -139,6 +180,64 @@ mod tests {
             !flow.egress,
             "default DataFlow must never imply egress consent"
         );
+        assert!(flow.egress_scopes.is_empty());
+        assert!(flow.scopes_consistent());
+    }
+
+    #[test]
+    fn empty_egress_scopes_are_omitted_from_the_wire() {
+        let flow = DataFlow {
+            reads: true,
+            writes: false,
+            egress: false,
+            egress_scopes: vec![],
+        };
+        let json = serde_json::to_string(&flow).unwrap();
+        assert!(
+            !json.contains("egress_scopes"),
+            "an empty scope list must be omitted so the pre-scope wire form is unchanged: {json}"
+        );
+    }
+
+    #[test]
+    fn an_off_machine_scope_with_egress_false_is_inconsistent() {
+        // C5: a provider cannot claim local posture while declaring content
+        // leaves.
+        let lying = DataFlow {
+            reads: true,
+            writes: false,
+            egress: false,
+            egress_scopes: vec![EgressScope::ThirdPartyIndex],
+        };
+        assert!(!lying.scopes_consistent());
+
+        // local-only alongside egress:false is fine.
+        let honest_local = DataFlow {
+            reads: true,
+            writes: false,
+            egress: false,
+            egress_scopes: vec![EgressScope::LocalOnly],
+        };
+        assert!(honest_local.scopes_consistent());
+
+        // An off-machine scope with egress:true is fine.
+        let honest_egress = DataFlow {
+            reads: true,
+            writes: false,
+            egress: true,
+            egress_scopes: vec![EgressScope::ThirdPartyModel],
+        };
+        assert!(honest_egress.scopes_consistent());
+        assert_eq!(honest_egress.off_machine_scopes().count(), 1);
+
+        // A malformed custom scope is inconsistent regardless of egress.
+        let malformed = DataFlow {
+            reads: true,
+            writes: false,
+            egress: true,
+            egress_scopes: vec![EgressScope::Custom("notnamespaced".into())],
+        };
+        assert!(!malformed.scopes_consistent());
     }
 
     #[test]

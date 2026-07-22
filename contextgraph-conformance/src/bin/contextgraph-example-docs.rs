@@ -17,7 +17,7 @@ use clap::{Parser, ValueEnum};
 use contextgraph_host::wire::Envelope;
 use contextgraph_types::capability::QueryCapability;
 use contextgraph_types::{
-    Capabilities, ContextFrame, ContextQueryResult, DataFlow, ErrorCode, FrameKind,
+    Capabilities, ContextFrame, ContextQueryResult, DataFlow, EgressScope, ErrorCode, FrameKind,
     PROTOCOL_VERSION, Provenance, ProviderInfo, budget_tokens,
 };
 
@@ -61,6 +61,10 @@ enum Misbehave {
     /// Answer a correlated query without echoing its `id` (trips
     /// `correlation`).
     DropCorrelationId,
+    /// Declare an off-machine egress scope (`third-party-index`) alongside
+    /// `egress: false` — a scope that contradicts the data-flow posture
+    /// (trips `consent-scope`).
+    ScopeLie,
 }
 
 #[derive(Parser)]
@@ -122,7 +126,7 @@ fn main() {
                     &mut stdout,
                     &Envelope::HandshakeAck {
                         protocol_version,
-                        provider: provider_info(),
+                        provider: provider_info(args.misbehave),
                         capabilities: capabilities(),
                     },
                 );
@@ -168,16 +172,24 @@ fn write_envelope(stdout: &mut std::io::Stdout, envelope: &Envelope) {
     }
 }
 
-fn provider_info() -> ProviderInfo {
+fn provider_info(misbehave: Option<Misbehave>) -> ProviderInfo {
+    // A docs index reads the query and serves local frames; nothing leaves the
+    // machine, so it honestly declares the `local-only` egress scope. The
+    // `scope-lie` mode instead declares an off-machine scope alongside
+    // `egress: false` — a contradiction the `consent-scope` check must catch.
+    let (egress, egress_scopes) = if misbehave == Some(Misbehave::ScopeLie) {
+        (false, vec![EgressScope::ThirdPartyIndex])
+    } else {
+        (false, vec![EgressScope::LocalOnly])
+    };
     ProviderInfo {
         name: "contextgraph-example-docs".into(),
         version: env!("CARGO_PKG_VERSION").into(),
-        // A docs index reads the query and serves local frames; nothing
-        // leaves the machine.
         data_flow: DataFlow {
             reads: true,
             writes: false,
-            egress: false,
+            egress,
+            egress_scopes,
         },
     }
 }
@@ -284,6 +296,13 @@ fn doc_frame(
         kind: FrameKind::Doc,
         title: title.into(),
         content: content.into(),
+        // The digest of the content bytes, matching this frame's file
+        // provenance digest — a well-formed digest keeps the frame's identity
+        // verifiable (`docs/context-reuse.md` §1) and satisfies §F5's grammar.
+        content_digest: Some(match misbehave {
+            Some(Misbehave::MalformedDigest) => "sha256:abc".into(),
+            _ => fixture_digest(digest_seed),
+        }),
         uri: Some(format!("file:///docs/{file}")),
         score,
         token_cost: match misbehave {

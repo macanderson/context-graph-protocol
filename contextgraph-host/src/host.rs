@@ -15,11 +15,11 @@
 use std::time::Duration;
 
 use contextgraph_types::{
-    ContextFrame, ContextQuery, ContextQueryResult, DataFlow, ProviderUsage, ServedFrame,
-    UsageReport,
+    ConsentReceipt, ContextFrame, ContextQuery, ContextQueryResult, DataFlow, EgressScope,
+    ProviderUsage, ServedFrame, UsageReport,
 };
 
-use crate::consent::{ConsentRecord, ConsentStore};
+use crate::consent::{ConsentDecision, ConsentRecord, ConsentStore};
 use crate::error::HostError;
 use crate::provider::{ContextProvider, capability_matches};
 use crate::stdio::StdioProvider;
@@ -90,10 +90,18 @@ impl Host {
         Ok(())
     }
 
-    /// Record consent for a provider, unlocking an egress provider for
-    /// querying.
+    /// Record legacy boolean consent for a provider, unlocking an egress
+    /// provider that declares no scopes for querying (§3.5).
     pub fn record_consent(&mut self, record: ConsentRecord) {
         self.consent.record(record);
+    }
+
+    /// Append a scope-level [`ConsentReceipt`] to the audit ledger, authorizing
+    /// one egress scope for one provider (`docs/context-reuse.md` §3). A
+    /// provider that declares off-machine egress scopes stays gated until every
+    /// such scope has a receipt.
+    pub fn record_receipt(&mut self, receipt: ConsentReceipt) {
+        self.consent.record_receipt(receipt);
     }
 
     /// The consent store (read-only), e.g. to persist decisions.
@@ -126,8 +134,9 @@ impl Host {
 
     /// Query a single provider by id, honoring the consent gate and the
     /// per-provider timeout. Querying an unconsented egress provider is
-    /// [`HostError::ConsentRequired`] and the payload is never transmitted
-    ///.
+    /// [`HostError::ConsentRequired`] (legacy boolean) or
+    /// [`HostError::ConsentScopeRequired`] (an off-machine scope with no
+    /// receipt, §3), and the payload is never transmitted (§3.5).
     pub async fn query_provider(
         &self,
         id: &str,
@@ -139,11 +148,20 @@ impl Host {
             .find(|p| p.id() == id)
             .ok_or_else(|| HostError::UnknownProvider(id.to_string()))?;
 
-        if !self.consent.permits(provider.id(), provider.info()) {
-            return Err(HostError::ConsentRequired {
-                id: id.to_string(),
-                data_flow: provider.info().data_flow,
-            });
+        match self.consent.evaluate(provider.id(), provider.info()) {
+            ConsentDecision::Permitted => {}
+            ConsentDecision::NeedsConsent => {
+                return Err(HostError::ConsentRequired {
+                    id: id.to_string(),
+                    data_flow: provider.info().data_flow.clone(),
+                });
+            }
+            ConsentDecision::NeedsReceipts(scopes) => {
+                return Err(HostError::ConsentScopeRequired {
+                    id: id.to_string(),
+                    scopes,
+                });
+            }
         }
 
         match tokio::time::timeout(self.per_provider_timeout, provider.query(query)).await {
@@ -185,12 +203,26 @@ impl Host {
         let id = provider.id().to_string();
 
         // Consent gate first: the query payload itself may carry workspace
-        // content, so it must never reach an unconsented egress provider.
-        if !self.consent.permits(provider.id(), provider.info()) {
-            return ProviderOutcome {
-                provider_id: id,
-                result: ProviderResult::ConsentRequired(provider.info().data_flow),
-            };
+        // content, so it must never reach an unconsented egress provider —
+        // whether gated by the legacy boolean flag or by an unconsented
+        // off-machine egress scope (§3).
+        match self.consent.evaluate(provider.id(), provider.info()) {
+            ConsentDecision::Permitted => {}
+            ConsentDecision::NeedsConsent => {
+                return ProviderOutcome {
+                    provider_id: id,
+                    result: ProviderResult::ConsentRequired(provider.info().data_flow.clone()),
+                };
+            }
+            ConsentDecision::NeedsReceipts(scopes) => {
+                return ProviderOutcome {
+                    provider_id: id,
+                    result: ProviderResult::ConsentScopeRequired {
+                        data_flow: provider.info().data_flow.clone(),
+                        missing: scopes,
+                    },
+                };
+            }
         }
 
         let result =
@@ -347,15 +379,15 @@ impl FanOut {
                     },
                     // Consent-gated or failed: no frames offered, none served,
                     // none rejected — the leg simply contributed nothing.
-                    ProviderResult::ConsentRequired(_) | ProviderResult::Failed(_) => {
-                        ProviderUsage {
-                            provider_id,
-                            frames_served: 0,
-                            frames_rejected: 0,
-                            token_cost: 0,
-                            served_frames: vec![],
-                        }
-                    }
+                    ProviderResult::ConsentRequired(_)
+                    | ProviderResult::ConsentScopeRequired { .. }
+                    | ProviderResult::Failed(_) => ProviderUsage {
+                        provider_id,
+                        frames_served: 0,
+                        frames_rejected: 0,
+                        token_cost: 0,
+                        served_frames: vec![],
+                    },
                 }
             })
             .collect();
@@ -408,9 +440,16 @@ pub enum ProviderResult {
         max_tokens: u32,
         dropped_frames: usize,
     },
-    /// Skipped: an egress provider without recorded consent. The query
-    /// payload was **not** transmitted.
+    /// Skipped: an egress provider (declaring no scopes) without recorded
+    /// boolean consent. The query payload was **not** transmitted (§3.5).
     ConsentRequired(DataFlow),
+    /// Skipped: the provider declares off-machine egress scope(s) with no
+    /// recorded consent receipt (`docs/context-reuse.md` §3). `missing` names
+    /// the scopes lacking a receipt. The query payload was **not** transmitted.
+    ConsentScopeRequired {
+        data_flow: DataFlow,
+        missing: Vec<EgressScope>,
+    },
     /// The provider errored, timed out, or crashed mid-query.
     Failed(HostError),
 }
@@ -419,6 +458,7 @@ pub enum ProviderResult {
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use contextgraph_types::Grantor;
     use contextgraph_types::capability::QueryCapability;
     use contextgraph_types::{Capabilities, ContextFrame, FrameKind, ProviderInfo};
     use std::sync::Arc;
@@ -441,16 +481,39 @@ mod tests {
 
     impl FakeProvider {
         fn new(id: &str, egress: bool, behavior: Behavior) -> Self {
+            Self::with_data_flow(
+                id,
+                DataFlow {
+                    reads: true,
+                    writes: false,
+                    egress,
+                    egress_scopes: vec![],
+                },
+                behavior,
+            )
+        }
+
+        /// A provider declaring egress scopes, for the scope-consent gate.
+        fn scoped(id: &str, scopes: Vec<EgressScope>, behavior: Behavior) -> Self {
+            Self::with_data_flow(
+                id,
+                DataFlow {
+                    reads: true,
+                    writes: false,
+                    egress: true,
+                    egress_scopes: scopes,
+                },
+                behavior,
+            )
+        }
+
+        fn with_data_flow(id: &str, data_flow: DataFlow, behavior: Behavior) -> Self {
             Self {
                 id: id.into(),
                 info: ProviderInfo {
                     name: id.into(),
                     version: "0.0.1".into(),
-                    data_flow: DataFlow {
-                        reads: true,
-                        writes: false,
-                        egress,
-                    },
+                    data_flow,
                 },
                 capabilities: Capabilities {
                     query: QueryCapability {
@@ -751,8 +814,53 @@ mod tests {
                 reads: true,
                 writes: false,
                 egress: true,
+                egress_scopes: vec![],
             },
             "issue titles leave to github.com",
+        ));
+        let fanout = host.query_all(&query()).await;
+        assert!(queried.load(Ordering::SeqCst));
+        assert_eq!(fanout.accepted_frames().count(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_scoped_egress_provider_is_not_queried_until_a_receipt_is_recorded() {
+        let mut host = Host::new();
+        let provider = FakeProvider::scoped(
+            "cloud",
+            vec![EgressScope::ThirdPartyModel],
+            Behavior::Frames(vec![frame("f", 10)]),
+        );
+        let queried = provider.queried.clone();
+        let info = provider.info().clone();
+        host.register(Box::new(provider));
+
+        // Without a receipt: skipped as a scope-consent gap, and the payload
+        // never left.
+        let fanout = host.query_all(&query()).await;
+        assert_eq!(fanout.accepted_frames().count(), 0);
+        assert!(!queried.load(Ordering::SeqCst), "payload must not be sent");
+        match &fanout.outcomes[0].result {
+            ProviderResult::ConsentScopeRequired { missing, .. } => {
+                assert_eq!(missing, &vec![EgressScope::ThirdPartyModel]);
+            }
+            other => panic!("expected ConsentScopeRequired, got {other:?}"),
+        }
+        // Direct query is the scope-specific typed error naming what would leave.
+        match host.query_provider("cloud", &query()).await {
+            Err(HostError::ConsentScopeRequired { scopes, .. }) => {
+                assert_eq!(scopes, vec![EgressScope::ThirdPartyModel]);
+            }
+            other => panic!("expected ConsentScopeRequired error, got {other:?}"),
+        }
+
+        // After a receipt for the declared scope: queried and accepted.
+        host.record_receipt(ConsentReceipt::new(
+            "cloud",
+            &info,
+            EgressScope::ThirdPartyModel,
+            Grantor::Human("ops@oxagen.sh".into()),
+            "2026-07-21T00:00:00Z",
         ));
         let fanout = host.query_all(&query()).await;
         assert!(queried.load(Ordering::SeqCst));

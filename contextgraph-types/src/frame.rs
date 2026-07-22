@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::identity::FrameId;
 use crate::token::budget_tokens;
 use crate::validate::{is_protocol_timestamp, is_well_formed_digest};
 
@@ -177,6 +178,14 @@ impl ContextFrame {
     /// Conformance suites assert this; providers should self-check too.
     pub fn has_valid_score(&self) -> bool {
         (0.0..=1.0).contains(&self.score)
+    }
+
+    /// The frame's stable identity under the given provider: `(provider id,
+    /// frame id, content digest)`. The digest is carried through from
+    /// [`content_digest`](Self::content_digest), so a frame without one yields
+    /// an unverifiable identity (`docs/context-reuse.md` §1).
+    pub fn identity(&self, provider_id: impl Into<String>) -> FrameId {
+        FrameId::new(provider_id, self.id.clone(), self.content_digest.clone())
     }
 
     /// The cost this frame's content is *required* to declare

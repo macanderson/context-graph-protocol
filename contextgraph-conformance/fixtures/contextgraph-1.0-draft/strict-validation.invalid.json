@@ -1,0 +1,89 @@
+{
+  "cases": [
+    {
+      "name": "frame_top_level_unknown",
+      "target": "frame",
+      "input": {
+        "id": "frame:strict:top-level",
+        "kind": "fact",
+        "title": "Unknown top-level frame field",
+        "content": "General protocol parsing remains forward-compatible.",
+        "score": 0.5,
+        "token_cost": 4,
+        "citation_label": "strict fixture",
+        "future_field": true
+      },
+      "unknown_path": "frame.future_field"
+    },
+    {
+      "name": "frame_provenance_unknown",
+      "target": "frame",
+      "input": {
+        "id": "frame:strict:provenance",
+        "kind": "fact",
+        "title": "Unknown provenance field",
+        "content": "Nested provenance is strict in this digest profile.",
+        "score": 0.5,
+        "token_cost": 4,
+        "citation_label": "strict fixture",
+        "provenance": [
+          {
+            "type": "file",
+            "future_field": true
+          }
+        ]
+      },
+      "unknown_path": "frame.provenance[0].future_field"
+    },
+    {
+      "name": "frame_embedding_unknown",
+      "target": "frame",
+      "input": {
+        "id": "frame:strict:embedding",
+        "kind": "fact",
+        "title": "Unknown embedding field",
+        "content": "Nested embedding is strict in this digest profile.",
+        "score": 0.5,
+        "token_cost": 4,
+        "citation_label": "strict fixture",
+        "embedding": {
+          "fingerprint": "embedding-v1:fixture",
+          "future_field": true
+        }
+      },
+      "unknown_path": "frame.embedding.future_field"
+    },
+    {
+      "name": "frame_relation_unknown",
+      "target": "frame",
+      "input": {
+        "id": "frame:strict:relation",
+        "kind": "fact",
+        "title": "Unknown relation field",
+        "content": "Nested relations are strict in this digest profile.",
+        "score": 0.5,
+        "token_cost": 4,
+        "citation_label": "strict fixture",
+        "relations": [
+          {
+            "rel": "related_to",
+            "target_uri": "contextgraph://fixture/target",
+            "future_field": true
+          }
+        ]
+      },
+      "unknown_path": "frame.relations[0].future_field"
+    },
+    {
+      "name": "query_top_level_unknown",
+      "target": "query",
+      "input": {
+        "goal": "Reject unknown query fields in the pinned profile",
+        "max_frames": 8,
+        "max_tokens": 2048,
+        "future_field": true
+      },
+      "unknown_path": "query.future_field"
+    }
+  ]
+}

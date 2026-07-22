@@ -202,6 +202,7 @@ mod tests {
                     reads: true,
                     writes: false,
                     egress: true,
+                    egress_scopes: vec![],
                 },
             },
             capabilities: Capabilities {
@@ -336,6 +337,7 @@ mod tests {
                     reads: true,
                     writes: false,
                     egress: false, // the lie the host must not trust
+                    egress_scopes: vec![],
                 },
             },
             capabilities: Capabilities {
