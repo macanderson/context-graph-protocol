@@ -1,4 +1,13 @@
+# esbuild / unrs-resolver fetch platform binaries in their install scripts and
+# sharp builds its native image pipeline, so all three must be allowed to build.
+# `allowBuilds` is the pnpm 11 key; `onlyBuiltDependencies` is the pnpm 10
+# equivalent, kept so CI images pinned to pnpm 10 behave the same way.
 allowBuilds:
-  esbuild: set this to true or false
-  sharp: set this to true or false
-  unrs-resolver: set this to true or false
+  esbuild: true
+  sharp: true
+  unrs-resolver: true
+
+onlyBuiltDependencies:
+  - esbuild
+  - sharp
+  - unrs-resolver

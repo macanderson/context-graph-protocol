@@ -96,6 +96,14 @@
     background: var(--background);
     color-scheme: light;
     text-rendering: optimizeLegibility;
+    /*
+     * Page-level zoom. The marketing page is authored almost entirely in px
+     * and the docs in rem, so a root font-size bump would only scale the docs.
+     * `zoom` scales both layouts uniformly, exactly like a browser zoom, and
+     * unlike `transform: scale` it keeps sticky headers and document flow intact.
+     * Tune this single value to taste.
+     */
+    zoom: 1.07;
   }
 
   html.dark {
