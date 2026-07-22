@@ -61,7 +61,9 @@ pub mod wire;
 pub use compose::compose_context;
 pub use consent::{ConsentDecision, ConsentRecord, ConsentStore};
 pub use error::HostError;
-pub use host::{FanOut, Host, ProviderOutcome, ProviderResult};
+pub use host::{
+    DropReason, DroppedFrame, FanOut, Host, ProviderOutcome, ProviderResult, VerifyOutcome,
+};
 pub use http::HttpProvider;
 pub use provider::{ContextProvider, capability_matches, frame_kind_name};
 pub use stdio::{RawStdioConnection, StdioProvider};

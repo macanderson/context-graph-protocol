@@ -52,7 +52,8 @@ pub struct Capabilities {
     pub upsert: bool,
     pub graph: bool,
     pub embeddings_fingerprint: Option<String>,
-    pub subscribe: bool,
+    pub subscribe: bool,  // push invalidation (issue #6)
+    pub verify: bool,     // answers context/verify (context-reuse §4); defaults false
 }
 
 // The closed egress-scope vocabulary (context-reuse §3), serialized as a flat
@@ -183,6 +184,38 @@ revalidation. They surface here as the `content_digest` frame field, the
 `verify` / `verified` envelope variants — all additive within the
 `contextgraph/1` family. Their conformance requirements are consolidated below.
 
+## Context verification
+
+A host revalidates frames it already holds without re-sending any body
+([context-reuse §4](./context-reuse.md#4-context-verification)). Sent only to a
+provider advertising `verify`; otherwise the host re-queries.
+
+```rust
+pub struct VerifyRequest {
+    pub frames: Vec<FrameId>,       // identities only — never frame bodies
+}
+
+pub struct FrameVerdict {
+    pub frame: FrameId,             // echoed in full, so verdicts correlate by match not position
+    pub verdict: Verdict,           // flattened: {"status": "...", ...}
+}
+
+pub enum Verdict {
+    Valid,                                          // unchanged — may keep reusing
+    Stale { replacement_digest: Option<String> },   // changed — a digest, never a body
+    Gone,                                           // no longer exists
+    Unknown,                                        // provider cannot say
+}
+
+pub struct VerifyResponse {
+    pub verdicts: Vec<FrameVerdict>,
+}
+```
+
+A host **MUST** keep reusing a frame only on an explicit `valid` — an identity
+answered `unknown`, or not answered at all, is evicted like any other. Reuse
+requires a positive answer, never the absence of a negative one.
+
 ## Wire framing (defined in `contextgraph-host`, not `contextgraph-types`)
 
 `contextgraph-types` defines the payload shapes above; `contextgraph-host::wire::Envelope`
@@ -190,7 +223,7 @@ defines how they're framed on the wire — newline-delimited JSON (NDJSON), one
 `serde_json` value per line over stdio, or one JSON body per streamable-HTTP
 request/response. See [Implementing a provider](./implementing-a-provider.md)
 for the full envelope vocabulary (`handshake` / `handshake_ack` / `query` /
-`frames` / `shutdown` / `error`) and the version-compatibility rule. See
+`frames` / `verify` / `verified` / `shutdown` / `error`) and the version-compatibility rule. See
 [`examples/`](../examples/) for diffable wire transcripts of a complete session,
 or the [machine-readable JSON Schema](../schema/contextgraph-envelope.schema.json) to
 validate messages in any language.
@@ -276,8 +309,10 @@ page; they are consolidated here because this section is the authoritative list.
 | U1 | A host **MUST** be able to produce a usage report for any query it executed, whose consumed total equals the summed `token_cost` of the served frames it reports. | `contextgraph-host::FanOut::usage_report`; `usage-report` conformance check |
 | C5 | A provider **MUST** declare its egress scopes (`egress_scopes`) truthfully and consistently with `data_flow.egress`; an off-machine scope alongside `egress: false` is a conformance failure. | `consent-scope` conformance check |
 | C6 | A host **MUST** reject a frame whose provider declares an egress scope with no live matching [consent receipt](./context-reuse.md#3-consent-scopes-and-receipts), with a typed error, before transmitting the query. | `ConsentStore` scope gate |
-| V1 | A provider advertising the `verify` capability **MUST** answer a `context/verify` request honestly: a current identity ⇒ `valid`; a digest it no longer serves ⇒ `stale`/`gone`/`unknown`, never `valid`. | `verify` conformance check |
-| V2 | A host **MUST** treat a `stale`/`gone` verdict as evicting the frame from the composed context, and **MUST** fall back to re-query for providers without `verify`. | `contextgraph-host` verify support |
+| V1 | A provider advertising `verify` **MUST** answer honestly by comparing digests: `valid` when the presented digest matches what it currently serves, `stale` when it differs on a frame it still serves. It **MUST NOT** answer `valid` for content bytes it is not serving. | `verify-honesty` conformance check |
+| V2 | A host **MUST** keep reusing a held frame only on an explicit `valid`; `stale`, `gone`, `unknown`, and a missing verdict all evict it. | `contextgraph-host::Host::verify_frames` default-deny partition |
+| V3 | A host **MUST NOT** send `context/verify` to a provider that does not advertise `capabilities.verify`, and **MUST** fall back to re-querying those frames. | `Host::verify_frames` capability gate; `ContextProvider::verify` default |
+| V4 | Neither a verify request nor its response **MAY** carry frame bodies; a `stale` verdict carries at most a replacement **digest**. | `VerifyRequest`/`VerifyResponse` shapes; `verify_wire` no-bodies test |
 
 ## Version strings
 

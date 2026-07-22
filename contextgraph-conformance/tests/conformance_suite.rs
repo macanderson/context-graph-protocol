@@ -43,6 +43,7 @@ async fn a_well_behaved_provider_is_fully_conformant() {
         CHECK_HANDSHAKE,
         CHECK_CONSENT_SCOPE,
         CHECK_FRAME_VALIDITY,
+        CHECK_VERIFY_HONESTY,
         CHECK_BUDGET_HONESTY,
         CHECK_SHUTDOWN,
         CHECK_MALFORMED,
@@ -110,4 +111,28 @@ async fn an_incompatible_protocol_version_fails_the_handshake() {
         status_of(&report, CHECK_FRAME_VALIDITY),
         CheckStatus::Skipped
     );
+}
+
+#[tokio::test]
+async fn rubber_stamping_every_verify_as_valid_fails_verify_honesty() {
+    // The dangerous lie: a provider that answers `valid` without comparing
+    // digests lets a host go on citing evidence that changed underneath it.
+    let report = run_conformance(target(&["--misbehave", "rubber-stamp-verify"])).await;
+    assert!(!report.passed());
+    assert_eq!(status_of(&report, CHECK_VERIFY_HONESTY), CheckStatus::Fail);
+    // Nothing else is disturbed — the frames it serves are still well-formed
+    // and honestly costed, so only the verify check catches this.
+    for name in [CHECK_HANDSHAKE, CHECK_FRAME_VALIDITY, CHECK_BUDGET_HONESTY] {
+        assert_eq!(status_of(&report, name), CheckStatus::Pass, "{name}");
+    }
+}
+
+#[tokio::test]
+async fn advertising_verify_while_vouching_for_nothing_fails_verify_honesty() {
+    // The other direction: a provider that claims the capability but answers
+    // `unknown` to everything cannot revalidate its own just-served frames.
+    let report = run_conformance(target(&["--misbehave", "hollow-verify"])).await;
+    assert!(!report.passed());
+    assert_eq!(status_of(&report, CHECK_VERIFY_HONESTY), CheckStatus::Fail);
+    assert_eq!(status_of(&report, CHECK_HANDSHAKE), CheckStatus::Pass);
 }

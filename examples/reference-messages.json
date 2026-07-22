@@ -9,14 +9,28 @@
     "provider": {
       "name": "repo-graph",
       "version": "0.2.0",
-      "data_flow": { "reads": true, "writes": false, "egress": false }
+      "data_flow": {
+        "reads": true,
+        "writes": false,
+        "egress": false
+      }
     },
     "capabilities": {
-      "query": { "kinds": ["doc", "symbol"], "filters": ["path", "lang"] },
+      "query": {
+        "kinds": [
+          "doc",
+          "symbol"
+        ],
+        "filters": [
+          "path",
+          "lang"
+        ]
+      },
       "upsert": false,
       "graph": true,
       "embeddings_fingerprint": null,
-      "subscribe": false
+      "subscribe": false,
+      "verify": true
     }
   },
   {
@@ -33,7 +47,12 @@
       }
     },
     "capabilities": {
-      "query": { "kinds": ["doc"], "filters": [] },
+      "query": {
+        "kinds": [
+          "doc"
+        ],
+        "filters": []
+      },
       "upsert": false,
       "graph": false,
       "embeddings_fingerprint": null,
@@ -45,8 +64,13 @@
     "query": {
       "goal": "how do I configure the retry policy?",
       "query_text": "retry policy configuration",
-      "kinds": ["doc", "symbol"],
-      "anchors": ["src/config.rs"],
+      "kinds": [
+        "doc",
+        "symbol"
+      ],
+      "anchors": [
+        "src/config.rs"
+      ],
       "max_frames": 5,
       "max_tokens": 1024
     }
@@ -60,6 +84,7 @@
           "kind": "doc",
           "title": "Retry policy",
           "content": "Retry behavior is set in Config::retry. max_attempts bounds the tries; backoff_ms is the initial delay, doubled each attempt.",
+          "content_digest": "sha256:9f2c3e7a1b",
           "uri": "file:///repo/docs/retry.md",
           "score": 0.92,
           "token_cost": 41,
@@ -81,6 +106,7 @@
           "kind": "symbol",
           "title": "Config::retry",
           "content": "pub struct RetryPolicy { pub max_attempts: u32, pub backoff_ms: u64 }",
+          "content_digest": "sha256:1a2b3c4d5e",
           "uri": "file:///repo/src/config.rs",
           "score": 0.81,
           "token_cost": 23,
@@ -99,6 +125,47 @@
         }
       ],
       "truncated": false
+    }
+  },
+  {
+    "type": "verify",
+    "request": {
+      "frames": [
+        {
+          "provider_id": "repo-graph",
+          "frame_id": "repo-graph:retry-doc",
+          "content_digest": "sha256:9f2c3e7a1b"
+        },
+        {
+          "provider_id": "repo-graph",
+          "frame_id": "repo-graph:retry-sym",
+          "content_digest": "sha256:1a2b3c4d5e"
+        }
+      ]
+    }
+  },
+  {
+    "type": "verified",
+    "response": {
+      "verdicts": [
+        {
+          "frame": {
+            "provider_id": "repo-graph",
+            "frame_id": "repo-graph:retry-doc",
+            "content_digest": "sha256:9f2c3e7a1b"
+          },
+          "status": "valid"
+        },
+        {
+          "frame": {
+            "provider_id": "repo-graph",
+            "frame_id": "repo-graph:retry-sym",
+            "content_digest": "sha256:1a2b3c4d5e"
+          },
+          "status": "stale",
+          "replacement_digest": "sha256:7d8e9f0a1b"
+        }
+      ]
     }
   },
   {

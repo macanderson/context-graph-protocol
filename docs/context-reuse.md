@@ -263,105 +263,153 @@ auditable from the wire all the way up to the invoice line.
 
 ---
 
-## 3. Consent scopes and receipts
+## 4. Context verification
 
 ### The problem
 
-Consent-gating is one of the seven guarantees: retrieval that transmits workspace content off-machine must be agreed to. `DataFlow.egress` already gates it — but a boolean answers the question only *in the moment it is asked*. When an auditor asks, months later, "**what** left the machine, **to whom**, and **who** agreed?", a `true` in a since-exited process is no answer. And without a shared vocabulary of egress classes, "consent" means something different to every provider.
+§1 makes reusing context **cheap**: an unchanged frame set renders
+byte-identically and rides the provider's prompt cache. But cheap reuse is only
+safe if the frames are still **true**. A retrieved snippet is a claim about a
+source, and sources move — a file is edited, a doc is rewritten, a record is
+deleted. Reuse the frame anyway and the agent cites evidence that no longer
+exists.
 
-This section makes consent an **artifact** rather than an event, in two parts: a closed **scope vocabulary** that classes *where* content goes, and durable **consent receipts** that record each grant.
+Today's only live mechanism for this is push invalidation ([#6](https://github.com/macanderson/context-graph-protocol/issues/6)'s
+`subscribe`), which needs a long-lived channel and a provider able to watch its
+sources. Plenty of providers can't: a stateless HTTP endpoint, a batch-rebuilt
+index, a serverless function. And plenty of hosts don't want a subscription's
+lifecycle just to answer a much simpler question at a turn boundary: *are the
+frames I already hold still valid?*
 
-### The egress-scope vocabulary
+Without a way to ask, a host is left choosing between two bad options every
+turn — re-query everything (paying tokens and latency, and destroying the very
+prefix stability §1 bought) or reuse silently and risk citing stale evidence.
 
-A provider declares — alongside the boolean `egress` — the [egress scopes](./protocol-surface.md#handshake--capability) its served content falls under, bound to Rust as
-[`EgressScope`](https://docs.rs/contextgraph-types/latest/contextgraph_types/scope/enum.EgressScope.html)
-in the new [`DataFlow.egress_scopes`](./protocol-surface.md#handshake--capability) field. Four **normative base classes** form the closed core:
+### The exchange
 
-| Scope | Wire string | Off-machine? | Meaning |
-| ----- | ----------- | ------------ | ------- |
-| `LocalOnly` | `local-only` | no | Nothing leaves the machine. |
-| `OrgTenant` | `org-tenant` | yes | Leaves the machine, stays in the org's own infrastructure. |
-| `ThirdPartyIndex` | `third-party-index` | yes | Content sent to an external index / embedding service. |
-| `ThirdPartyModel` | `third-party-model` | yes | Content sent to an external model API. |
-
-The vocabulary is **extensible** by namespaced custom scopes — `EgressScope::Custom("vendor:scope-name")` — which **MUST** contain a `:` separator with non-empty sides, so a custom scope can never collide with or be mistaken for a base class. Everything other than `local-only` is treated as off-machine, including an unrecognized custom scope: the conservative default is that an unknown destination *leaves*, so a host never under-gates.
-
-**A scope is declared at the provider (data-flow) level, and it governs every frame that provider serves.** There is no per-frame scope: the serving provider's declaration *is* the egress class of each frame it returns. This keeps the consent gate — which fires once, before a query is transmitted — the single place egress is decided, rather than scattering a scope across every frame.
-
-The declaration must be **truthful**: an off-machine scope alongside `egress: false` is a contradiction (a provider claiming local posture while naming a destination that leaves), and a host holds a provider to this at the handshake
-([`DataFlow::scopes_consistent`](https://docs.rs/contextgraph-types/latest/contextgraph_types/struct.DataFlow.html#method.scopes_consistent),
-requirement C5).
-
-### Consent receipts
-
-When a host grants consent, it records a
-[`ConsentReceipt`](https://docs.rs/contextgraph-types/latest/contextgraph_types/consent/struct.ConsentReceipt.html):
+`context/verify` is the cheap third option. The host sends the
+[frame identities](#frame-identity) it holds; the provider answers one verdict
+each.
 
 ```rust
-pub struct ConsentReceipt {
-    pub provider_id: String,        // the provider this authorizes
-    pub scope: EgressScope,         // the exact egress class consented to
-    pub provider_name: String,      // provider identity, pinned at grant time
-    pub provider_version: String,
-    pub grantor: Grantor,           // Human(id) | Policy(id) — who agreed
-    pub granted_at: String,         // RFC 3339
-    pub expires_at: Option<String>, // RFC 3339, if consent lapses
+pub struct VerifyRequest {
+    pub frames: Vec<FrameId>,       // identities only — never bodies
+}
+
+pub struct FrameVerdict {
+    pub frame: FrameId,             // the identity being answered, echoed in full
+    // flattened: {"status": "...", "replacement_digest": "..."}
+    pub verdict: Verdict,
+}
+
+pub enum Verdict {
+    Valid,                                          // unchanged — keep reusing it
+    Stale { replacement_digest: Option<String> },   // changed — drop it
+    Gone,                                           // no longer exists — drop it
+    Unknown,                                        // can't say — don't reuse it
 }
 ```
 
-A receipt turns "is this allowed?" (a boolean, now) into "what left, to whom, who agreed, and when?" (a durable record). It pins the provider's identity **at grant time**, so a later rename can't retroactively rewrite what was agreed. Receipts live in an **append-only** ledger
-([`ConsentStore::record_receipt`](https://docs.rs/contextgraph-host/latest/contextgraph_host/consent/struct.ConsentStore.html#method.record_receipt)):
-a new grant never edits or erases an old one, so the history of consent *is* the audit trail, and it is serde-able for durable persistence across host runs.
+**No frame body travels in either direction.** That is the entire economic
+point: verification costs **bytes, not tokens**, so a host can afford to run it
+every turn over frames it would otherwise have re-fetched in full. Even a
+`stale` verdict carries at most the provider's *current digest* — enough for a
+host to tell what it would be re-fetching, never the replacement content
+itself.
 
-Like the [usage report](#2-usage-reports), a receipt is a **host-side artifact, not a wire message** — it rides no envelope variant, and a provider implements nothing to make one possible. It nonetheless lives in `contextgraph-types` rather than the host crate, for the same reason the usage report does: it is a *protocol-defined shape*. Any host in any language that claims the consent guarantee must produce this shape, and an auditor reading a persisted ledger must be able to parse it without depending on one particular host implementation. The ledger and gate that *consume* receipts are host machinery and stay in `contextgraph-host`.
+The **digest is the ground truth**. A provider compares the digest the host
+presents against the digest its source has now: equal ⇒ `valid`, different ⇒
+`stale`, source gone ⇒ `gone`, can't tell ⇒ `unknown`. Because the digest is
+provider-declared and opaque (§1), the provider is the only party that *can*
+answer — which is why the conformance case below exists to hold it honest.
 
-### Host behavior: reject unconsented egress
+Each verdict **echoes the full identity it answers** rather than relying on
+array position, so a provider that reorders, omits, or duplicates entries can
+never shift a `valid` onto the wrong frame.
 
-A host's pre-query consent gate
-([`ConsentStore::evaluate`](https://docs.rs/contextgraph-host/latest/contextgraph_host/consent/struct.ConsentStore.html#method.evaluate))
-is scope-aware:
+### Host behavior
 
-- A provider declaring **off-machine egress scopes** is permitted only when *every* such scope has a recorded receipt. A scope with no matching receipt **MUST** cause the query to be refused with a **typed error** —
-  [`HostError::ConsentScopeRequired`](https://docs.rs/contextgraph-host/latest/contextgraph_host/error/enum.HostError.html)
-  naming exactly the scopes that would leave unconsented — and the payload **MUST NOT** be transmitted (requirement C6). A budget-style boolean `ConsentRecord` does **not** satisfy a scope gate; only a receipt for that scope does.
-- A provider declaring only the boolean `egress` flag (no scopes) keeps the pre-scope legacy gate — a `ConsentRecord` unlocks it. This is what keeps the change additive: an existing provider that never declares scopes behaves exactly as before.
+Verification is **default-deny**. A host **MUST** keep reusing a held frame
+only on an explicit `valid`; every other outcome drops it (requirement V2). In
+particular an identity that comes back with **no verdict at all** is treated as
+`unknown` — silence is not validity.
 
-The runtime gate is **presence-based** (does a receipt for the scope exist?) and carries no clock, so it never depends on wall-time to make a decision. **Expiry** is a first-class receipt property
-([`ConsentReceipt::is_live`](https://docs.rs/contextgraph-types/latest/contextgraph_types/consent/struct.ConsentReceipt.html#method.is_live)):
-a host that enforces expiry consults
-[`ConsentStore::live_receipt`](https://docs.rs/contextgraph-host/latest/contextgraph_host/consent/struct.ConsentStore.html#method.live_receipt)
-against its own `now`, and treats an expired receipt as absent — re-shutting the gate — while the receipt itself is never pruned from the audit ledger.
+The reference host implements this in
+[`Host::verify_frames`](https://docs.rs/contextgraph-host/latest/contextgraph_host/host/struct.Host.html#method.verify_frames),
+which groups held identities by provider, asks each capable provider once, and
+returns a **total partition** of the input into `retained` and `dropped` — no
+held frame is ever silently lost. Each drop carries a
+[`DropReason`](https://docs.rs/contextgraph-host/latest/contextgraph_host/host/enum.DropReason.html),
+and `warrants_requery()` tells the host which dropped frames are worth fetching
+again — false only for `gone`, which is not there to re-fetch.
 
-### Worked audit scenario: "what left, where, who agreed, when?"
+**Capability gating and fallback.** A host sends `context/verify` only to a
+provider whose handshake advertised `capabilities.verify`. Against a provider
+that doesn't, the host **MUST** fall back to re-querying rather than reusing
+unchecked (requirement V3) — the same fallback a frame with no
+`content_digest` gets (§1, D4). Since `verify` defaults to `false`, an existing
+provider that implements nothing keeps working unchanged, and the reference
+`ContextProvider::verify` default answers `unknown` for everything, so a
+provider can never *accidentally* bless a stale frame.
 
-Six months after the fact, an auditor asks whether a customer's repository snippets were ever sent to an external model. The host answers from its persisted consent ledger — no live process required:
+A verify failure is isolated exactly like a query fan-out leg: a provider that
+errors or times out has *its own* frames dropped for re-query, and never
+affects another provider's.
 
-```rust
-for receipt in store.receipts_for("acme-cloud-model") {
-    println!(
-        "{scope} — granted by {grantor:?} at {at}{expiry}",
-        scope = receipt.scope,                 // third-party-model
-        grantor = receipt.grantor,             // Human("ops@oxagen.sh")
-        at = receipt.granted_at,               // 2026-01-14T09:02:00Z
-        expiry = receipt.expires_at            // Some("2026-07-14T00:00:00Z")
-            .map(|e| format!(", expiring {e}"))
-            .unwrap_or_default(),
-    );
-}
-```
+**When to verify** is host policy, not protocol. A host **SHOULD** re-verify
+held frames at turn boundaries once they are older than the freshness window it
+is willing to tolerate. This is deliberately informative: `verify_frames` holds
+no state, caches no frames, and tracks no turns — the protocol's job is to
+answer the question when asked, not to decide when to ask it.
 
-Every question is answered by a field:
+The window is framed as *host-tolerated* rather than provider-declared on
+purpose. A provider knows how often its sources *tend* to change, but only the
+host knows how much staleness this particular task can absorb, and making the
+window a wire field would push a scheduling decision into the protocol and give
+the host state to keep. A provider that wants to share what it knows can
+advertise a suggested freshness hint as a **future additive capability field**;
+that would inform the host's policy without ever overriding it, and it needs no
+change to the exchange specified here.
 
-- **What left?** The `scope` (`third-party-model`) — the class of destination — combined with the [usage report](#2-usage-reports)'s `served_frames`, which name the exact frames that provider served.
-- **To whom?** The pinned `provider_name` / `provider_version` at grant time.
-- **Who agreed?** The `grantor` — a named human or a named policy, not an anonymous "yes".
-- **When?** `granted_at`, and `expires_at` if the grant was time-boxed. A query after `expires_at` would have been refused by the gate, so the window of authorized egress is itself on the record.
+Note the ordering payoff: because only *evicted* frames change the composed
+context, a turn in which everything verifies `valid` leaves §1's canonical
+rendering byte-identical, so the prompt prefix — and its cache — survives. Only
+a real change breaks the prefix, which is exactly when it *should* break.
 
-Because the ledger is append-only, a *revocation* or a lapsed expiry adds to the record rather than erasing it — the audit shows not just the current state but the full history of what was permitted and when.
+### Verify vs subscribe (for the 1.0 freeze)
 
-### Conformance (§3)
+[#6](https://github.com/macanderson/context-graph-protocol/issues/6)'s
+`subscribe` and this section's `verify` answer the same question — *is it still
+true?* — from opposite directions, and the freeze can keep both, either, or
+one:
+
+| | `subscribe` (push, #6) | `verify` (pull, §4) |
+| - | ---------------------- | ------------------- |
+| Who initiates | Provider, when a source changes | Host, when it wants to reuse |
+| Transport need | A long-lived channel | Any request/response round trip |
+| Provider must | Watch its sources | Compare a digest on demand |
+| Latency to detect | Immediate | At the host's next check |
+| Cost shape | Idle connection + change events | One small round trip per check |
+| Fits | Stateful local indexers, file watchers | Stateless HTTP, batch indexes, serverless |
+
+They are **complementary, not alternatives**, and the capability flags are
+independent: a provider may advertise either, both, or neither. Neither
+subsumes the other — push has no answer for a host that reconnects and wants to
+know whether what it cached is still good, and pull has no answer for a host
+that needs to know *within milliseconds*. A provider advertising both gives a
+host immediate invalidation plus a way to re-establish trust after any gap in
+the channel.
+
+Because both are capability-gated and default to `false`, the freeze can ship
+`verify` without `subscribe` (this section), `subscribe` without `verify`, or
+both, with no flag day either way — a host degrades to re-query whenever the
+mechanism it wants is absent.
+
+### Conformance (§4)
 
 | # | Requirement | Enforced / verified by |
 | - | ----------- | ---------------------- |
-| C5 | A provider **MUST** declare its egress scopes (`egress_scopes`) truthfully and consistently with `data_flow.egress`; an off-machine scope alongside `egress: false`, or a non-namespaced custom scope, is a conformance failure. | `DataFlow::scopes_consistent`; `consent-scope` conformance check |
-| C6 | A host **MUST** reject a query to a provider any of whose off-machine egress scopes lacks a recorded consent receipt, with a typed error, before transmitting the payload. | `ConsentStore::evaluate` scope gate; `HostError::ConsentScopeRequired`; host scope-gate test |
+| V1 | A provider advertising `verify` **MUST** answer honestly by comparing digests: `valid` for a frame whose presented digest matches what it currently serves, `stale` when it differs on a frame it still serves. It **MUST NOT** answer `valid` for content bytes it is not serving. | `verify-honesty` conformance check (asks twice about just-served frames — real digests, then mutated); `--misbehave rubber-stamp-verify` and `hollow-verify` fixture modes prove it bites both ways |
+| V2 | A host **MUST** keep reusing a held frame only on an explicit `valid`; `stale`, `gone`, `unknown`, and a missing verdict all evict it. | `Verdict::permits_reuse`; `Host::verify_frames` default-deny partition; host eviction tests |
+| V3 | A host **MUST NOT** send `context/verify` to a provider that does not advertise `capabilities.verify`, and **MUST** fall back to re-querying those frames. | `Host::verify_frames` capability gate; `ContextProvider::verify` default; host fallback test |
+| V4 | Neither a verify request nor its response **MAY** carry frame bodies; a `stale` verdict carries at most a replacement **digest**. | `VerifyRequest`/`VerifyResponse` shapes; `verify_wire` no-bodies test asserted against the serialized envelope |
