@@ -23,7 +23,7 @@ Reference documentation for the **Context Graph Protocol** crates:
   deterministic composition (stable frame identity + canonical ordering), usage
   reports, consent scopes + receipts, and pull-based `context/verify`.
 - [**Implementing a provider**](./implementing-a-provider.md) — how a third
-  party builds an Context Graph Protocol provider, in Rust (via `ContextProvider`) or any other
+  party builds a CGP provider, in Rust (via `ContextProvider`) or any other
   language (via the wire protocol directly). Start here to *build* something.
 - [**Running conformance**](./running-conformance.md) — how to prove your
   provider (or host) is Context Graph Protocol conformant, via the `contextgraph-inspect` CLI or the

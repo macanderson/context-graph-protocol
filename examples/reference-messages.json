@@ -20,16 +20,11 @@
         "kinds": [
           "doc",
           "symbol"
-        ],
-        "filters": [
-          "path",
-          "lang"
         ]
       },
-      "upsert": false,
+      "correlation": true,
       "graph": true,
       "embeddings_fingerprint": null,
-      "subscribe": false,
       "verify": true
     }
   },
@@ -52,13 +47,11 @@
       "query": {
         "kinds": [
           "doc"
-        ],
-        "filters": []
+        ]
       },
-      "upsert": false,
       "graph": false,
       "embeddings_fingerprint": null,
-      "subscribe": false
+      "correlation": true
     }
   },
   {
@@ -75,7 +68,8 @@
       ],
       "max_frames": 5,
       "max_tokens": 1024
-    }
+    },
+    "id": "q1"
   },
   {
     "type": "frames",
@@ -89,19 +83,20 @@
           "content_digest": "sha256:9f2c3e7a1b",
           "uri": "file:///repo/docs/retry.md",
           "score": 0.92,
-          "token_cost": 41,
+          "token_cost": 32,
           "provenance": [
             {
               "type": "file",
               "uri": "file:///repo/docs/retry.md",
               "range": "L1-20",
-              "digest": "sha256:9f2c3e7a",
+              "digest": "sha256:0101010101010101010101010101010101010101010101010101010101010101",
               "method": "file-read",
               "by": "repo-graph"
             }
           ],
           "citation_label": "retry.md L1-20",
-          "relations": []
+          "relations": [],
+          "recorded_at": "2026-07-20T18:00:00Z"
         },
         {
           "id": "repo-graph:retry-sym",
@@ -111,23 +106,25 @@
           "content_digest": "sha256:1a2b3c4d5e",
           "uri": "file:///repo/src/config.rs",
           "score": 0.81,
-          "token_cost": 23,
+          "token_cost": 18,
           "provenance": [
             {
               "type": "file",
               "uri": "file:///repo/src/config.rs",
               "range": "L42-44",
-              "digest": "sha256:1a2b3c4d",
+              "digest": "sha256:0808080808080808080808080808080808080808080808080808080808080808",
               "method": "tree-sitter-symbol-extraction",
               "by": "repo-graph"
             }
           ],
           "citation_label": "config.rs L42-44",
-          "relations": []
+          "relations": [],
+          "recorded_at": "2026-07-20T18:00:00Z"
         }
       ],
       "truncated": false
-    }
+    },
+    "id": "q1"
   },
   {
     "type": "verify",
@@ -172,7 +169,8 @@
   },
   {
     "type": "error",
-    "message": "unsupported frame kind: 'image'"
+    "message": "unsupported frame kind: 'image'",
+    "code": "bad_request"
   },
   {
     "type": "shutdown"
@@ -193,13 +191,10 @@
       "query": {
         "kinds": [
           "doc"
-        ],
-        "filters": []
+        ]
       },
-      "upsert": false,
       "graph": false,
       "embeddings_fingerprint": null,
-      "subscribe": false,
       "verify": true,
       "representations": [
         "full",

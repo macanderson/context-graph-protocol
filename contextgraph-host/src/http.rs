@@ -1,5 +1,5 @@
 //! Streamable-HTTP transport: a remote Context Graph Protocol provider reached by POSTing the
-//! envelope to its URL (`06-context-protocol.md` §3.2 "remote providers:
+//! envelope to its URL (`SPEC.md` §3 "remote providers:
 //! streamable HTTP"). The reference host uses request/response JSON — the
 //! [`Envelope`] as the POST body, one [`Envelope`] back as the response body
 //! — which any streamable-HTTP server satisfies; chunked frame streaming is
@@ -19,7 +19,9 @@ use contextgraph_types::{
 
 use crate::error::HostError;
 use crate::provider::ContextProvider;
-use crate::wire::{Envelope, envelope_kind, versions_compatible};
+use crate::wire::{
+    Envelope, envelope_kind, next_correlation_id, verify_correlation, versions_compatible,
+};
 
 /// Total per-request budget for an HTTP exchange (handshake or query).
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
@@ -148,18 +150,23 @@ impl ContextProvider for HttpProvider {
     }
 
     async fn query(&self, query: &ContextQuery) -> Result<ContextQueryResult, HostError> {
+        let sent_id = self.capabilities.correlation.then(next_correlation_id);
         let reply = post_envelope(
             &self.client,
             &self.url,
             &Envelope::Query {
+                id: sent_id.clone(),
                 query: query.clone(),
             },
             &self.id,
         )
         .await?;
         match reply {
-            Envelope::Frames { result } => Ok(result),
-            Envelope::Error { message } => Err(HostError::Provider {
+            Envelope::Frames { id: echoed, result } => {
+                verify_correlation(&self.id, sent_id.as_deref(), echoed.as_deref())?;
+                Ok(result)
+            }
+            Envelope::Error { message, .. } => Err(HostError::Provider {
                 id: self.id.clone(),
                 message,
             }),
@@ -183,7 +190,7 @@ impl ContextProvider for HttpProvider {
         .await?;
         match reply {
             Envelope::Verified { response } => Ok(response),
-            Envelope::Error { message } => Err(HostError::Provider {
+            Envelope::Error { message, .. } => Err(HostError::Provider {
                 id: self.id.clone(),
                 message,
             }),
@@ -226,7 +233,6 @@ mod tests {
             capabilities: Capabilities {
                 query: QueryCapability {
                     kinds: vec!["doc".into()],
-                    filters: vec![],
                 },
                 ..Capabilities::default()
             },
@@ -236,6 +242,7 @@ mod tests {
 
     fn frames_body() -> serde_json::Value {
         serde_json::to_value(Envelope::Frames {
+            id: None,
             result: ContextQueryResult {
                 frames: vec![ContextFrame {
                     id: "frm_h".into(),
@@ -295,6 +302,8 @@ mod tests {
                     Ok(Envelope::Handshake { .. }) => ack_body(PROTOCOL_VERSION),
                     Ok(Envelope::Query { .. }) => frames_body(),
                     _ => serde_json::to_value(Envelope::Error {
+                        id: None,
+                        code: None,
                         message: "unexpected request".into(),
                     })
                     .unwrap(),
@@ -369,7 +378,6 @@ mod tests {
             capabilities: Capabilities {
                 query: QueryCapability {
                     kinds: vec!["doc".into()],
-                    filters: vec![],
                 },
                 ..Capabilities::default()
             },

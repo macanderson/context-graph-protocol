@@ -1,5 +1,5 @@
 //! `contextgraph-inspect` — an interactive Context Graph Protocol prober, analogous to MCP's inspector
-//! (`06-context-protocol.md` §3.6). Point it at a provider; it completes the
+//! (`SPEC.md` §11). Point it at a provider; it completes the
 //! handshake, prints the negotiated capabilities, optionally fires a test
 //! query, and runs the conformance suite — all in human-readable colored
 //! output.
@@ -18,7 +18,7 @@ use contextgraph_types::{Capabilities, ContextQuery, ProviderInfo};
 #[derive(Parser)]
 #[command(
     name = "contextgraph-inspect",
-    about = "Probe and conformance-test an Context Graph Protocol provider (06-context-protocol.md §3.6)."
+    about = "Probe and conformance-test a CGP provider (SPEC.md §11)."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -170,18 +170,16 @@ fn print_capabilities(info: &ProviderInfo, caps: &Capabilities) {
     if info.data_flow.egress {
         println!(
             "  {}",
-            "⚠ egress: this provider can send data off-machine — consent required (§3.5)".yellow()
+            "⚠ egress: this provider can send data off-machine — consent required (SPEC.md §4)"
+                .yellow()
         );
     }
 
     println!(
-        "  {} kinds={:?} filters={:?} upsert={} graph={} subscribe={}",
+        "  {} kinds={:?} graph={}",
         "capabilities".bold(),
         caps.query.kinds,
-        caps.query.filters,
-        caps.upsert,
-        caps.graph,
-        caps.subscribe
+        caps.graph
     );
     if let Some(fingerprint) = &caps.embeddings_fingerprint {
         println!("  {} {fingerprint}", "embedder".bold());
@@ -207,7 +205,7 @@ async fn fire_query(host: &Host, id: &str, goal: &str) {
                 format!("── {} frame(s) for “{goal}” ──", result.frames.len()).dimmed()
             );
             for frame in &result.frames {
-                // Cite by human label, never the raw id (§3.4).
+                // Cite by human label, never the raw id (SPEC.md §6).
                 let label = frame
                     .citation_label
                     .as_deref()

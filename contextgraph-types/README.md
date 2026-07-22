@@ -4,7 +4,7 @@ The wire types for the **Context Graph Protocol**: context frames,
 queries, capabilities, and provenance.
 
 `contextgraph-types` is the industry-facing artifact of the Context Graph Protocol crates: **MIT
-licensed, zero dependencies beyond `serde`.** You can implement an Context Graph Protocol
+licensed, zero dependencies beyond `serde`.** You can implement a CGP
 provider or host in Rust against this crate alone, with no dependency on
 [Stella](https://github.com/macanderson/stella) or any of its other crates.
 
@@ -65,7 +65,7 @@ protocol; there is no separate IDL.
 ## Docs
 
 - [Protocol surface][protocol-surface] — the full wire shape, field by field.
-- [Implementing a provider][implementing] — how to build an Context Graph Protocol provider
+- [Implementing a provider][implementing] — how to build a CGP provider
   against `contextgraph-types` (with or without `contextgraph-host`).
 - [Running conformance][conformance] — proving your provider is conformant.
 - [Stability][stability] — the crate-semver vs. protocol-version relationship.

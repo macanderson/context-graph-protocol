@@ -1,9 +1,9 @@
 //! `HostError` — the one typed error the host runtime raises
-//! (`02-architecture.md` §1.5 "fail loud"). Everything a fan-out or a single
+//! (`SPEC.md` §10 "fail loud"). Everything a fan-out or a single
 //! provider exchange can go wrong with is a named variant here; nothing in
 //! the hot path panics. `contextgraph-host` owns its own error type rather than
 //! borrowing `stella`'s so the crate stays industry-facing and dependency-
-//! light (`02-architecture.md` §2 — depends only on `contextgraph-types` + transport
+//! light (`SPEC.md` §1 — depends only on `contextgraph-types` + transport
 //! crates).
 
 use contextgraph_types::{DataFlow, EgressScope};
@@ -12,7 +12,7 @@ use contextgraph_types::{DataFlow, EgressScope};
 #[derive(Debug, thiserror::Error)]
 pub enum HostError {
     /// The provider speaks an incompatible protocol family
-    /// (`06-context-protocol.md` §3). Reported the instant the handshake ack
+    /// (`SPEC.md`). Reported the instant the handshake ack
     /// arrives — never a hang (task deliverable 1).
     #[error(
         "protocol version mismatch: host speaks {host}, provider {provider} speaks {provider_version}"
@@ -24,7 +24,7 @@ pub enum HostError {
     },
 
     /// A line/body could not be encoded to or decoded from the wire envelope
-    /// (`06-context-protocol.md` §3.1). A malformed provider message is a
+    /// (`SPEC.md` §2). A malformed provider message is a
     /// clean error, never a host crash (task deliverable 5).
     #[error("wire encode/decode error: {0}")]
     Wire(String),
@@ -48,8 +48,8 @@ pub enum HostError {
     Provider { id: String, message: String },
 
     /// The provider declares `egress` and has no recorded consent, so the
-    /// host refuses to transmit a query to it (`06-context-protocol.md`
-    /// §3.5 — a host MUST NOT auto-enable egress providers). The query
+    /// host refuses to transmit a query to it (`SPEC.md`
+    /// SPEC.md §4 — a host MUST NOT auto-enable egress providers). The query
     /// payload never left the host.
     #[error(
         "provider {id} declares egress and requires one-time consent naming what leaves before it can be queried"
@@ -76,6 +76,20 @@ pub enum HostError {
     /// specific envelope (e.g. a `frames` reply to a `query`).
     #[error("expected a `{expected}` envelope from provider {id}, got `{got}`")]
     UnexpectedEnvelope {
+        id: String,
+        expected: String,
+        got: String,
+    },
+
+    /// A provider that declared `correlation` answered without echoing the
+    /// request's `id`, or echoed the wrong one (`SPEC.md` §H4).
+    ///
+    /// Fatal to the exchange rather than a warning: once replies cannot be
+    /// matched to requests, a pipelining host could hand one caller's frames to
+    /// another, and silently mixing evidence between tasks is worse than
+    /// failing the query.
+    #[error("provider {id} broke request correlation: expected id `{expected}`, got `{got}`")]
+    CorrelationMismatch {
         id: String,
         expected: String,
         got: String,

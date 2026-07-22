@@ -1,5 +1,5 @@
 //! `contextgraph-conformance` — the public Context Graph Protocol conformance suite
-//! (`06-context-protocol.md` §3.6).
+//! (`SPEC.md` §11).
 //!
 //! "Context Graph Protocol conformant" means *green on this suite for your declared capability
 //! set* — a checkable claim, which is what makes third-party adoption safe.
@@ -10,23 +10,23 @@
 //! The checks (all against the frozen `contextgraph-types` contracts):
 //!
 //! - **handshake** — the provider completes the handshake and reports a
-//!   non-empty identity + capabilities (§3.2).
+//!   non-empty identity + capabilities (SPEC.md §3).
 //! - **consent-scope** — the provider's declared egress scopes are well-formed
 //!   and consistent with its `data_flow.egress` (`docs/context-reuse.md` §3):
 //!   no off-machine scope alongside `egress: false`, and custom scopes
 //!   namespaced.
 //! - **frame-validity** — queried frames pass `contextgraph-types` validation: score
-//!   in `[0, 1]`, a non-empty title, a non-empty `citation_label` (§3.4 —
+//!   in `[0, 1]`, a non-empty title, a non-empty `citation_label` (SPEC.md §6 —
 //!   "NEVER a bare uuid").
 //! - **verify-honesty** — a provider advertising `verify` answers `valid` for
 //!   frames it just served and `stale` when their digests are mutated
 //!   (`docs/context-reuse.md` §4). Skipped when `verify` is not advertised —
 //!   that is the declared fallback, not a failure.
 //! - **budget-honesty** — returned frames' summed `token_cost` never exceeds
-//!   the query budget (§3.3 — "never lies about cost").
-//! - **shutdown-clean** — the provider tears down without error (§3.2).
+//!   the query budget (SPEC.md §5 — "never lies about cost").
+//! - **shutdown-clean** — the provider tears down without error (SPEC.md §3).
 //! - **malformed-input-tolerance** — a garbage line is ignored-or-errored,
-//!   never crashing the host (§3.5, task deliverable). Wire-level, so it
+//!   never crashing the host (SPEC.md §10, task deliverable). Wire-level, so it
 //!   applies to stdio providers.
 //!
 //! The suite is deliberately adversarial: pointed at a provider that lies
@@ -226,26 +226,12 @@ async fn run_query_and_shutdown_checks(
             checks.push(CheckResult::from_bool(CHECK_FRAME_VALIDITY, ok, evidence));
             checks.push(check_verify_honesty(&host, id, caps, &result).await);
 
-            if result.respects_budget(query.max_tokens) {
-                checks.push(CheckResult::pass(
-                    CHECK_BUDGET_HONESTY,
-                    format!(
-                        "{} frame(s) sum to {} token(s), within the {}-token budget",
-                        result.frames.len(),
-                        result.total_token_cost(),
-                        query.max_tokens
-                    ),
-                ));
-            } else {
-                checks.push(CheckResult::fail(
-                    CHECK_BUDGET_HONESTY,
-                    format!(
-                        "frames claim {} token(s), over the {}-token budget — token_cost is dishonest",
-                        result.total_token_cost(),
-                        query.max_tokens
-                    ),
-                ));
-            }
+            let (budget_ok, budget_evidence) = check_budget(&result, &query);
+            checks.push(CheckResult::from_bool(
+                CHECK_BUDGET_HONESTY,
+                budget_ok,
+                budget_evidence,
+            ));
         }
         Err(error) => {
             let evidence = format!("query failed: {error}");
@@ -397,7 +383,7 @@ async fn check_verify_honesty(
 /// Wire-level probe: complete the handshake on a fresh connection, inject a
 /// malformed line, then send a valid query. A conforming provider ignores or
 /// cleanly errors on the garbage and stays alive to answer the query; a
-/// provider that dies on one bad line fails (§3.5).
+/// provider that dies on one bad line fails (SPEC.md §10).
 async fn malformed_stdio_probe(program: &str, args: &[String]) -> CheckResult {
     let mut conn = match RawStdioConnection::spawn(program, args).await {
         Ok(conn) => conn,
@@ -422,6 +408,7 @@ async fn malformed_stdio_probe(program: &str, args: &[String]) -> CheckResult {
     }
     if let Err(error) = conn
         .send(&contextgraph_host::Envelope::Query {
+            id: None,
             query: sample_query(),
         })
         .await
@@ -436,7 +423,7 @@ async fn malformed_stdio_probe(program: &str, args: &[String]) -> CheckResult {
             CHECK_MALFORMED,
             "provider ignored a malformed line and still answered a valid query",
         ),
-        Ok(contextgraph_host::Envelope::Error { message }) => CheckResult::pass(
+        Ok(contextgraph_host::Envelope::Error { message, .. }) => CheckResult::pass(
             CHECK_MALFORMED,
             format!("provider errored cleanly on malformed input and stayed alive: {message}"),
         ),
@@ -459,7 +446,7 @@ async fn malformed_stdio_probe(program: &str, args: &[String]) -> CheckResult {
 }
 
 /// The query the suite probes every provider with — no `kinds` filter, so any
-/// provider is asked for its best frames (§3.3).
+/// provider is asked for its best frames (SPEC.md §5).
 pub fn sample_query() -> ContextQuery {
     ContextQuery {
         goal: "conformance probe: return your most relevant frames".into(),
@@ -475,7 +462,7 @@ pub fn sample_query() -> ContextQuery {
 }
 
 /// Validate a query result's frames against the `ContextFrame` contract
-/// (§3.4). Returns `(passed, evidence)`. Zero frames is permitted — a
+/// (SPEC.md §6). Returns `(passed, evidence)`. Zero frames is permitted — a
 /// provider may simply have nothing relevant.
 pub fn check_frames(result: &ContextQueryResult) -> (bool, String) {
     if result.frames.is_empty() {
@@ -496,8 +483,33 @@ pub fn check_frames(result: &ContextQueryResult) -> (bool, String) {
         match &frame.citation_label {
             Some(label) if !label.trim().is_empty() => {}
             _ => problems.push(format!(
-                "frame[{i}] is missing a citation_label (§3.4 — never a bare id)"
+                "frame[{i}] is missing a citation_label (§F3 — never a bare id)"
             )),
+        }
+        // §F4: temporal fields must be in the protocol's timestamp profile.
+        // Naming the offending field is what makes this actionable — before
+        // this check, `"valid_from": "last tuesday"` was fully conformant and
+        // the bi-temporal guarantee was unfalsifiable.
+        for field in frame.invalid_temporal_fields() {
+            problems.push(format!(
+                "frame[{i}] field `{field}` is not an RFC 3339 UTC timestamp (§F4)"
+            ));
+        }
+        // §F5: file provenance must carry a well-formed digest, since that is
+        // the only provenance a host can independently re-read and verify.
+        for index in frame.provenance_with_unusable_digests() {
+            problems.push(format!(
+                "frame[{i}] provenance[{index}] addresses a file but its digest is missing or not `sha256:<64 lowercase hex>` (§F5)"
+            ));
+        }
+        // §G1: a graph edge must be citable by a human label.
+        for (edge_index, edge) in frame.relations.iter().enumerate() {
+            if !edge.has_display_name() {
+                problems.push(format!(
+                    "frame[{i}] relation[{edge_index}] `{}` has no display_name (§G1 — an edge is surfaced by label, never a raw id)",
+                    edge.rel
+                ));
+            }
         }
     }
 
@@ -505,8 +517,61 @@ pub fn check_frames(result: &ContextQueryResult) -> (bool, String) {
         (
             true,
             format!(
-                "{} frame(s) — all scores in [0,1], titles + citation labels present",
+                "{} frame(s) — scores in [0,1], titles, citation labels, RFC 3339 timestamps, well-formed digests, labelled relations",
                 result.frames.len()
+            ),
+        )
+    } else {
+        (false, problems.join("; "))
+    }
+}
+
+/// Validate a query result against the budget contract (`SPEC.md` §B1, §B3,
+/// §B4). Returns `(passed, evidence)`.
+///
+/// Three distinct promises, deliberately checked separately so a failure says
+/// which one broke:
+///
+/// - **§B1** the declared costs sum within `max_tokens`;
+/// - **§B3** each declared cost equals the canonical count for its content —
+///   this is what turned the check from arithmetic into truth;
+/// - **§B4** the frame count respects `max_frames`.
+pub fn check_budget(result: &ContextQueryResult, query: &ContextQuery) -> (bool, String) {
+    let mut problems = Vec::new();
+
+    let declared = result.total_token_cost();
+    if declared > query.max_tokens as u64 {
+        problems.push(format!(
+            "declared cost {declared} exceeds the query budget of {} (§B1)",
+            query.max_tokens
+        ));
+    }
+
+    let dishonest = result.frames_with_dishonest_cost();
+    if !dishonest.is_empty() {
+        let canonical = result.canonical_token_cost();
+        problems.push(format!(
+            "{} frame(s) misdeclare token_cost — {} (§B3); declared total {declared}, canonical total {canonical}",
+            dishonest.len(),
+            dishonest.join(", ")
+        ));
+    }
+
+    if !result.respects_frame_limit(query.max_frames) {
+        problems.push(format!(
+            "returned {} frames against max_frames={} (§B4)",
+            result.frames.len(),
+            query.max_frames
+        ));
+    }
+
+    if problems.is_empty() {
+        (
+            true,
+            format!(
+                "{} frame(s), {declared} tokens within the {} budget; every declared cost matches its canonical count",
+                result.frames.len(),
+                query.max_tokens
             ),
         )
     } else {
@@ -552,14 +617,13 @@ fn check_consent_scopes(info: &ProviderInfo) -> CheckResult {
 
 fn describe_handshake(info: &ProviderInfo, caps: &Capabilities) -> String {
     format!(
-        "provider '{}' v{} — data-flow reads={} writes={} egress={}; query kinds={:?}, upsert={}, graph={}",
+        "provider '{}' v{} — data-flow reads={} writes={} egress={}; query kinds={:?}, graph={}",
         info.name,
         info.version,
         info.data_flow.reads,
         info.data_flow.writes,
         info.data_flow.egress,
         caps.query.kinds,
-        caps.upsert,
         caps.graph,
     )
 }
