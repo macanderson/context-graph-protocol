@@ -118,6 +118,7 @@ mod tests {
             max_frames: 5,
             max_tokens: 1000,
             as_of: None,
+            representation_preferences: vec![],
         }
     }
 

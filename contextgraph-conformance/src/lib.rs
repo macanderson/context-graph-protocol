@@ -35,9 +35,11 @@
 //! fixture has `--misbehave` flags that trip each one, proving the suite
 //! catches a broken provider (task deliverable).
 
-use contextgraph_host::{ConsentRecord, ContextProvider, Host, HostError, RawStdioConnection};
+use contextgraph_host::{
+    ConsentRecord, ContextProvider, DropReason, Host, HostError, RawStdioConnection,
+};
 use contextgraph_types::{
-    Capabilities, ConsentReceipt, ContextQuery, ContextQueryResult, Grantor, ProviderInfo,
+    Capabilities, ConsentReceipt, ContextQuery, ContextQueryResult, FrameId, Grantor, ProviderInfo,
 };
 
 mod report;
@@ -468,6 +470,7 @@ pub fn sample_query() -> ContextQuery {
         max_frames: 8,
         max_tokens: 4096,
         as_of: None,
+        representation_preferences: vec![],
     }
 }
 

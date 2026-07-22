@@ -25,6 +25,7 @@ fn query(goal: &str) -> ContextQuery {
         max_frames: 8,
         max_tokens: 4096,
         as_of: None,
+        representation_preferences: vec![],
     }
 }
 
@@ -133,22 +134,17 @@ impl ContextProvider for HealthyProvider {
     }
     async fn query(&self, _query: &ContextQuery) -> Result<ContextQueryResult, HostError> {
         Ok(ContextQueryResult {
-            frames: vec![ContextFrame {
-                id: "frm_healthy".into(),
-                kind: FrameKind::Doc,
-                title: "in-process frame".into(),
-                content: "still here".into(),
-                content_digest: None,
-                uri: None,
-                score: 0.5,
-                token_cost: 8,
-                valid_from: None,
-                valid_to: None,
-                recorded_at: None,
-                provenance: vec![],
-                citation_label: Some("in-process frame".into()),
-                embedding: None,
-                relations: vec![],
+            frames: vec![{
+                let mut frame = ContextFrame::full(
+                    "frm_healthy",
+                    FrameKind::Doc,
+                    "in-process frame",
+                    "still here",
+                    0.5,
+                    8,
+                );
+                frame.citation_label = Some("in-process frame".into());
+                frame
             }],
             truncated: false,
             dropped_estimate: None,

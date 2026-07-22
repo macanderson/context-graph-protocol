@@ -198,6 +198,7 @@ async fn fire_query(host: &Host, id: &str, goal: &str) {
         max_frames: 8,
         max_tokens: 4096,
         as_of: None,
+        representation_preferences: vec![],
     };
     match host.query_provider(id, &query).await {
         Ok(result) => {

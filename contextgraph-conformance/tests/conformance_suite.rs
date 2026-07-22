@@ -5,7 +5,8 @@
 
 use contextgraph_conformance::{
     CHECK_BUDGET_HONESTY, CHECK_CONSENT_SCOPE, CHECK_FRAME_VALIDITY, CHECK_HANDSHAKE,
-    CHECK_MALFORMED, CHECK_SHUTDOWN, CheckStatus, ProviderTarget, run_conformance,
+    CHECK_MALFORMED, CHECK_SHUTDOWN, CHECK_VERIFY_HONESTY, CheckStatus, ProviderTarget,
+    run_conformance,
 };
 
 /// Path to the fixture binary, built automatically for integration tests.
@@ -37,8 +38,8 @@ async fn a_well_behaved_provider_is_fully_conformant() {
         "expected conformant; failures: {:?}",
         report.failures().collect::<Vec<_>>()
     );
-    // All six checks ran and passed (none skipped for a stdio provider).
-    assert_eq!(report.checks.len(), 6);
+    // All seven checks ran and passed (none skipped for a stdio provider).
+    assert_eq!(report.checks.len(), 7);
     for name in [
         CHECK_HANDSHAKE,
         CHECK_CONSENT_SCOPE,

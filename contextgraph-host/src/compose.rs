@@ -81,7 +81,10 @@ fn render_frame(provider_id: &str, frame: &ContextFrame) -> String {
         provider = provider_id,
         id = frame.id,
         kind = frame_kind_name(frame.kind),
-        content = frame.content,
+        // A `reference` frame carries no inline content — it must be resolved
+        // (`context/resolve`, a later phase) before composition; here it renders
+        // as empty rather than fabricating bytes.
+        content = frame.content.as_deref().unwrap_or_default(),
     )
 }
 
@@ -95,11 +98,20 @@ mod tests {
             id: id.into(),
             kind: FrameKind::Doc,
             title: id.into(),
-            content: content.into(),
+            content: Some(content.into()),
             content_digest: digest.map(Into::into),
             uri: None,
+            representation: Default::default(),
+            content_fidelity: None,
+            canonical_content_hash: None,
+            content_ref: None,
+            transform: None,
+            minimum_content_fidelity: None,
+            inline_content_requirement: None,
             score: 0.5,
             token_cost: 10,
+            canonical_token_cost: None,
+            tokenizer_ref: None,
             valid_from: None,
             valid_to: None,
             recorded_at: None,

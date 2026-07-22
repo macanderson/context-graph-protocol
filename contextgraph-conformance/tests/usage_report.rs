@@ -25,6 +25,7 @@ fn query() -> ContextQuery {
         max_frames: 8,
         max_tokens: 4096,
         as_of: None,
+        representation_preferences: vec![],
     }
 }
 

@@ -119,14 +119,26 @@ pub enum FrameKind {
     Snippet, Symbol, Fact, Doc, Memory, Episode, Graph,
 }
 
+pub enum Representation { Full, Compact, Reference }   // absent ⇒ Full (legacy)
+
 pub struct ContextFrame {
     pub id: String,                      // provider-scoped, stable for dedup across queries
     pub kind: FrameKind,
     pub title: String,                   // human label — never a bare uuid
-    pub content: String,                 // untrusted data — host must delimit as quoted material
+    pub content: Option<String>,         // untrusted data; ABSENT for a reference frame
+    pub content_digest: Option<String>,  // inline-content hash (the spec's content_hash); feeds FrameId
     pub uri: Option<String>,
+    pub representation: Representation,   // full | compact | reference (omitted on the wire when full)
+    pub content_fidelity: Option<ContentFidelity>,        // exact | normalized | summarized | omitted
+    pub canonical_content_hash: Option<String>,           // hash of the COMPLETE source content
+    pub content_ref: Option<ContentRef>,                  // opaque resolver handle (compact/reference)
+    pub transform: Option<Transform>,                     // how a compact frame rendered its source
+    pub minimum_content_fidelity: Option<ContentFidelity>,
+    pub inline_content_requirement: Option<InlineContentRequirement>,
     pub score: f32,                      // provider-normalized relevance, [0, 1]
-    pub token_cost: u32,                 // honest, conformance-audited token cost
+    pub token_cost: u32,                 // honest, conformance-audited inline token cost
+    pub canonical_token_cost: Option<u32>,                // cost of the full source (if declared)
+    pub tokenizer_ref: Option<String>,                    // e.g. "openai:o200k_base"
     pub valid_from: Option<String>,
     pub valid_to: Option<String>,
     pub recorded_at: Option<String>,
@@ -134,6 +146,12 @@ pub struct ContextFrame {
     pub citation_label: Option<String>,
     pub embedding: Option<FrameEmbedding>,
     pub relations: Vec<Relation>,
+}
+
+pub struct ContentRef {                  // content_ref.uri is distinct from ContextFrame.uri
+    pub provider_id: String,             // the exact provider that returned this frame
+    pub uri: String,                     // opaque resolver handle for context/resolve
+    pub expires_at: Option<String>,
 }
 
 pub struct Provenance {
@@ -167,6 +185,42 @@ suite checks both:
   to cite a frame by a human label — an empty or missing citation label is a
   conformance failure, not a cosmetic gap. (Whole-platform convention: raw
   ids are never the primary on-screen identifier.)
+
+### Frame representations
+
+A frame states **how** it carries its content through `representation`. This is
+additive: a legacy frame with no `representation` field is a `full` frame, and a
+`full` frame omits the field on the wire, so pre-representation providers and
+stored frames are unchanged.
+
+| Representation | Inline `content` | `content_ref` + `canonical_content_hash` | `content_digest` (inline hash) | `transform` |
+| --- | --- | --- | --- | --- |
+| `full`      | **required** | optional | optional | absent |
+| `compact`   | **required** (a transformed rendering) | **required** | **required** | **required** |
+| `reference` | **absent**   | **required** | absent | absent |
+
+- A `reference` frame carries no inline content at all — only a `content_ref`
+  (an opaque resolver handle) and a `canonical_content_hash` so a host can
+  rehydrate honestly and verifiably. It is **never** encoded as `content: ""`;
+  the field is omitted entirely.
+- `ContextFrame.uri` identifies the source resource; `content_ref.uri` is a
+  distinct opaque resolver handle, and `content_ref.provider_id` names the exact
+  provider a fan-out host routes `context/resolve` back to.
+- `content_digest` is the hash of the **inline** content bytes (the spec's
+  `content_hash`, under its established name; it feeds `FrameId`);
+  `canonical_content_hash` is the hash of the **complete source** content.
+
+`ContextFrame::representation_invariants()` enforces the table above in code, and
+the JSON Schema enforces it on the wire; providers should self-check, and a host
+rejects a frame that lies about its shape.
+
+**Negotiation.** A host states an ordered `ContextQuery.representation_preferences`
+(absent ⇒ `[full]`); the provider returns the first representation it supports
+(`ContextQuery::select_representation`) or answers `unsupported_representation`.
+A provider advertises `Capabilities.representations` and `Capabilities.resolve`;
+because `compact`/`reference` hand the host a `content_ref` to rehydrate,
+advertising either **requires** `resolve` support
+(`Capabilities::representations_consistent`).
 
 ## Reusing context across turns
 

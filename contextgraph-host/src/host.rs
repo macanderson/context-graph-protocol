@@ -15,8 +15,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use contextgraph_types::{
-    ContextFrame, ContextQuery, ContextQueryResult, DataFlow, FrameId, ProviderUsage, ServedFrame,
-    UsageReport, Verdict, VerifyRequest,
+    ConsentReceipt, ContextFrame, ContextQuery, ContextQueryResult, DataFlow, EgressScope, FrameId,
+    ProviderUsage, ServedFrame, UsageReport, Verdict, VerifyRequest,
 };
 
 use crate::consent::{ConsentDecision, ConsentRecord, ConsentStore};
@@ -775,11 +775,20 @@ mod tests {
             id: id.into(),
             kind: FrameKind::Doc,
             title: id.into(),
-            content: "c".into(),
+            content: Some("c".into()),
             content_digest: None,
             uri: None,
+            representation: Default::default(),
+            content_fidelity: None,
+            canonical_content_hash: None,
+            content_ref: None,
+            transform: None,
+            minimum_content_fidelity: None,
+            inline_content_requirement: None,
             score: 0.5,
             token_cost: cost,
+            canonical_token_cost: None,
+            tokenizer_ref: None,
             valid_from: None,
             valid_to: None,
             recorded_at: None,
@@ -800,6 +809,7 @@ mod tests {
             max_frames: 10,
             max_tokens: 1000,
             as_of: None,
+            representation_preferences: vec![],
         }
     }
 
@@ -1184,6 +1194,7 @@ mod tests {
                 reads: true,
                 writes: false,
                 egress: false,
+                egress_scopes: vec![],
             },
         })
     }

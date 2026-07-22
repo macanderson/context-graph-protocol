@@ -43,7 +43,9 @@
         "reads": true,
         "writes": false,
         "egress": true,
-        "egress_scopes": ["third-party-model"]
+        "egress_scopes": [
+          "third-party-model"
+        ]
       }
     },
     "capabilities": {
@@ -174,5 +176,106 @@
   },
   {
     "type": "shutdown"
+  },
+  {
+    "type": "handshake_ack",
+    "protocol_version": "contextgraph/1.0-draft",
+    "provider": {
+      "name": "cloud-docs",
+      "version": "1.3.0",
+      "data_flow": {
+        "reads": true,
+        "writes": false,
+        "egress": false
+      }
+    },
+    "capabilities": {
+      "query": {
+        "kinds": [
+          "doc"
+        ],
+        "filters": []
+      },
+      "upsert": false,
+      "graph": false,
+      "embeddings_fingerprint": null,
+      "subscribe": false,
+      "verify": true,
+      "representations": [
+        "full",
+        "compact",
+        "reference"
+      ],
+      "resolve": true
+    }
+  },
+  {
+    "type": "query",
+    "query": {
+      "goal": "summarize the deployment runbook",
+      "query_text": "deployment runbook",
+      "kinds": [
+        "doc"
+      ],
+      "anchors": [],
+      "max_frames": 3,
+      "max_tokens": 512,
+      "representation_preferences": [
+        "compact",
+        "full"
+      ]
+    }
+  },
+  {
+    "type": "frames",
+    "result": {
+      "frames": [
+        {
+          "id": "cloud-docs:runbook-compact",
+          "kind": "doc",
+          "title": "Deployment runbook (summary)",
+          "content": "Roll back with `deploy revert <sha>`; page oncall if the error rate exceeds 2%.",
+          "content_digest": "sha256:11aa22bb33cc44dd",
+          "uri": "file:///repo/docs/runbook.md",
+          "representation": "compact",
+          "content_fidelity": "summarized",
+          "canonical_content_hash": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "content_ref": {
+            "provider_id": "cloud-docs",
+            "uri": "context://cloud-docs/records/doc_runbook_v1"
+          },
+          "transform": {
+            "method": "extractive_summary",
+            "implementation": "provider_default",
+            "version": "1"
+          },
+          "score": 0.9,
+          "token_cost": 24,
+          "canonical_token_cost": 512,
+          "tokenizer_ref": "openai:o200k_base",
+          "provenance": [],
+          "citation_label": "runbook.md (summary)",
+          "relations": []
+        },
+        {
+          "id": "cloud-docs:runbook-ref",
+          "kind": "doc",
+          "title": "Deployment runbook",
+          "uri": "file:///repo/docs/runbook.md",
+          "representation": "reference",
+          "canonical_content_hash": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "content_ref": {
+            "provider_id": "cloud-docs",
+            "uri": "context://cloud-docs/records/doc_runbook_v1"
+          },
+          "score": 0.9,
+          "token_cost": 0,
+          "provenance": [],
+          "citation_label": "runbook.md",
+          "relations": []
+        }
+      ],
+      "truncated": false
+    }
   }
 ]

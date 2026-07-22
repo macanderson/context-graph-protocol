@@ -254,6 +254,15 @@
         "verify": {
           "type": "boolean",
           "$comment": "Whether the provider answers context/verify (docs/context-reuse.md §4). Optional and defaults to false, so a pre-§4 provider is treated as unsupported and the host falls back to re-querying. Independent of `subscribe` — push and pull freshness are complementary."
+        },
+        "representations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Representation" },
+          "$comment": "Frame representations this provider can return. Absent/empty ⇒ full only (the legacy default). Advertising compact or reference requires resolve: true."
+        },
+        "resolve": {
+          "type": "boolean",
+          "$comment": "Whether the provider answers context/resolve for a frame's content_ref. Compact/reference support implies resolve support."
         }
       },
       "required": ["query", "upsert", "graph", "subscribe"],
@@ -280,7 +289,12 @@
         },
         "max_frames": { "$ref": "#/$defs/u32" },
         "max_tokens": { "$ref": "#/$defs/u32" },
-        "as_of": { "type": ["string", "null"] }
+        "as_of": { "type": ["string", "null"] },
+        "representation_preferences": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Representation" },
+          "$comment": "Ordered preference; the provider returns the first representation it supports. Absent/empty ⇒ [full]."
+        }
       },
       "required": ["goal", "kinds", "anchors", "max_frames", "max_tokens"],
       "additionalProperties": false
@@ -306,6 +320,47 @@
       "enum": ["snippet", "symbol", "fact", "doc", "memory", "episode", "graph"]
     },
 
+    "Representation": {
+      "type": "string",
+      "enum": ["full", "compact", "reference"],
+      "$comment": "How a frame carries content. Absent on the wire ⇒ full. full inlines content; compact inlines a transformed rendering plus a resolver handle; reference carries no inline content, only a content_ref and canonical hash."
+    },
+
+    "ContentFidelity": {
+      "type": "string",
+      "enum": ["exact", "normalized", "summarized", "omitted"],
+      "$comment": "Fidelity of carried content relative to the source. Absent ⇒ exact for a legacy full frame."
+    },
+
+    "InlineContentRequirement": {
+      "type": "string",
+      "enum": ["required", "resolvable_reference_allowed"]
+    },
+
+    "ContentRef": {
+      "type": "object",
+      "description": "An opaque resolver handle for a compact/reference frame's content. content_ref.uri is distinct from ContextFrame.uri (the source resource); provider_id names the exact provider that returned the frame so a fan-out host routes context/resolve back to it.",
+      "properties": {
+        "provider_id": { "type": "string", "minLength": 1 },
+        "uri": { "type": "string", "minLength": 1 },
+        "expires_at": { "type": ["string", "null"] }
+      },
+      "required": ["provider_id", "uri"],
+      "additionalProperties": false
+    },
+
+    "Transform": {
+      "type": "object",
+      "description": "The transformation a compact frame applied to its source, so a consumer knows what it is reading.",
+      "properties": {
+        "method": { "type": "string", "minLength": 1 },
+        "implementation": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 }
+      },
+      "required": ["method", "implementation", "version"],
+      "additionalProperties": false
+    },
+
     "ContextFrame": {
       "type": "object",
       "description": "The unit of exchange. A frame is not a string — it is a structured record of relevance, cost, provenance, and validity. content is untrusted data: a conforming host delimits it as quoted material and never executes it.",
@@ -320,12 +375,31 @@
           "$comment": "Provider-declared, opaque digest of the frame's content bytes (e.g. sha256:<hex>) — the third component of the frame's stable FrameId identity. Optional: a frame without one is not verifiable and a host re-queries it (docs/context-reuse.md §1, §4)."
         },
         "uri": { "type": ["string", "null"] },
+        "representation": {
+          "$ref": "#/$defs/Representation",
+          "$comment": "How the frame carries content. Absent ⇒ full (legacy); full frames omit this field on the wire."
+        },
+        "content_fidelity": { "$ref": "#/$defs/ContentFidelity" },
+        "canonical_content_hash": {
+          "type": "string",
+          "minLength": 1,
+          "$comment": "SHA-256 over the complete source content bytes — distinct from content_digest (the inline-content hash). Required for compact/reference frames."
+        },
+        "content_ref": { "$ref": "#/$defs/ContentRef" },
+        "transform": { "$ref": "#/$defs/Transform" },
+        "minimum_content_fidelity": { "$ref": "#/$defs/ContentFidelity" },
+        "inline_content_requirement": { "$ref": "#/$defs/InlineContentRequirement" },
         "score": {
           "type": "number",
           "minimum": 0,
           "maximum": 1
         },
         "token_cost": { "$ref": "#/$defs/u32" },
+        "canonical_token_cost": {
+          "$ref": "#/$defs/u32",
+          "$comment": "Token cost of the complete canonical source content. If token_cost or canonical_token_cost is present, tokenizer_ref should name the tokenizer."
+        },
+        "tokenizer_ref": { "type": "string", "minLength": 1 },
         "valid_from": { "type": ["string", "null"] },
         "valid_to": { "type": ["string", "null"] },
         "recorded_at": { "type": ["string", "null"] },
@@ -344,7 +418,47 @@
           "items": { "$ref": "#/$defs/Relation" }
         }
       },
-      "required": ["id", "kind", "title", "content", "score", "token_cost", "provenance", "relations"],
+      "required": ["id", "kind", "title", "score", "token_cost", "provenance", "relations"],
+      "$comment": "content is required for full/compact frames but omitted for reference frames, so it is not globally required; the allOf below enforces the per-representation invariants.",
+      "allOf": [
+        {
+          "$comment": "reference: no inline content, content_digest, or transform; a resolver handle and canonical hash are required.",
+          "if": {
+            "properties": { "representation": { "const": "reference" } },
+            "required": ["representation"]
+          },
+          "then": {
+            "required": ["content_ref", "canonical_content_hash"],
+            "not": {
+              "anyOf": [
+                { "required": ["content"] },
+                { "required": ["content_digest"] },
+                { "required": ["transform"] }
+              ]
+            }
+          }
+        },
+        {
+          "$comment": "compact: inline content plus inline hash, canonical hash, transform identity, and resolver handle.",
+          "if": {
+            "properties": { "representation": { "const": "compact" } },
+            "required": ["representation"]
+          },
+          "then": {
+            "required": ["content", "content_digest", "canonical_content_hash", "transform", "content_ref"]
+          }
+        },
+        {
+          "$comment": "full (including legacy frames with no representation field): inline content is required.",
+          "if": {
+            "not": {
+              "properties": { "representation": { "enum": ["compact", "reference"] } },
+              "required": ["representation"]
+            }
+          },
+          "then": { "required": ["content"] }
+        }
+      ],
       "additionalProperties": false
     },
 
