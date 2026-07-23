@@ -32,6 +32,10 @@
 //! - [`Host`] — registers all three provider kinds behind one handle and
 //!   [`Host::query_all`] fans a query out concurrently, enforcing timeouts,
 //!   consent, and budget honesty (SPEC.md §4 and §7).
+//! - [`verify`] — the *bytes* half of F5: re-reads the local source a `file`
+//!   provenance addresses and checks its declared digest against the actual
+//!   bytes (SPEC.md §6.2). A host API, not an automatic re-read of any provider
+//!   `uri`; the end-to-end harness that calls it is issue #14.
 //!
 //! # Isolation invariants (`SPEC.md` §4 and §10)
 //!
@@ -61,6 +65,7 @@ pub mod http;
 pub mod ingest;
 pub mod provider;
 pub mod stdio;
+pub mod verify;
 pub mod wire;
 
 pub use compose::compose_context;
@@ -76,6 +81,7 @@ pub use ingest::{
 };
 pub use provider::{ContextProvider, capability_matches, frame_kind_name};
 pub use stdio::{RawStdioConnection, StdioProvider};
+pub use verify::{DigestVerification, verify_file_provenance, verify_provenance_digest};
 pub use wire::{Envelope, decode_line, encode_line, envelope_kind, versions_compatible};
 
 /// The Context Graph Protocol protocol version this host speaks, re-exported from `contextgraph-types`

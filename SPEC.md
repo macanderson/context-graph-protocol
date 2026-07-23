@@ -535,9 +535,15 @@ it cannot check would be exactly the self-attestation this project rejects.
   provider-facing suite. The transport-security rules (C7/C8) in particular are
   properties of a host's HTTP client, which the provider-facing suite never
   exercises; they belong to the host-side harness (issue #14).
-- **F5 checks digest _grammar_, not whether the digest matches the bytes.**
-  End-to-end verification requires the host to re-read the source, which is
-  issue #12's remaining half.
+- **F5 grammar is provider-checked; F5 _bytes_ are a host API.** The
+  provider-facing suite checks digest *grammar* only. Whether a `file`-provenance
+  digest matches the source it addresses requires re-reading local bytes, which
+  only a host can do — `contextgraph_host::verify` (issue #12) is that verifier:
+  it reads the exact UTF-8 bytes addressed by `uri` + `range` (§6.2), hashes
+  them, and compares. It is a host API a host invokes deliberately over sources
+  it trusts, not an automatic re-read of any `uri` a provider names; wiring it
+  into an end-to-end host-side conformance gate (with path confinement) is
+  tracked by the host-side harness (issue #14).
 
 ---
 
