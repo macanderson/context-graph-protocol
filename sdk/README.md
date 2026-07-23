@@ -13,7 +13,7 @@ is one more independent implementation proving the wire is real.
 | SDK | Location | Status |
 | --- | --- | --- |
 | TypeScript | [`sdk/typescript`](./typescript) | ✅ conformant — passes all 7 checks in CI |
-| Python | [`sdk/python`](./python) | 🚧 in progress |
+| Python | [`sdk/python`](./python) | ✅ conformant — passes all 7 checks in CI |
 | Go | [`sdk/go`](./go) | 🚧 planned (needs a Go toolchain in CI to validate) |
 
 Every SDK is validated the same way:

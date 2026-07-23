@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "contextgraph-sdk"
+version = "0.1.0"
+description = "Zero-dependency Python SDK for building conformant Context Graph Protocol providers."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT OR Apache-2.0" }
+keywords = ["context-graph-protocol", "cgp", "context", "provider", "sdk"]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/macanderson/context-graph-protocol"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["contextgraph_sdk*"]
+
+[tool.setuptools.package-data]
+contextgraph_sdk = ["py.typed"]
