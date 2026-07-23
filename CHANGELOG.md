@@ -12,6 +12,26 @@ which. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1
 ## [Unreleased]
 
 ### Added
+- **`SPEC.md` normative completeness pass** — folds every shipped wire surface
+  into the single normative home ahead of the freeze (#49, #50, #48, #13). Adds
+  §9 **Verification** (`verify`/`verified`, V1–V4), §6.3 **Frame identity**
+  (D1–D4), §6.4 **Representations** (`full`/`compact`/`reference`, P1–P5) with an
+  explicit **1.0 scope boundary for `context/resolve`** — the operation is
+  deferred to a `1.x` additive minor (sketch: [docs/sketches/resolve.md](./docs/sketches/resolve.md)),
+  so a remote provider should not emit un-rehydratable `reference` frames (#50).
+  Adds §4.1 **egress scopes and consent receipts** (C5–C6) and §4.2 **transport
+  security** (C7 TLS-for-non-loopback, C8 credentials-never-logged, #13). Adds
+  §13 **Extensibility** (U1 ignore-unknown-members, U2 closed `FrameKind` /
+  open vocabularies, U3 reserved `:` namespaces, U4 no-repurpose/deprecation) —
+  the rules that make the additive-only freeze real, distinguishing the
+  authoring-strict JSON Schema from the U1 interop contract (#48). Adds the
+  `unsupported_representation` and `incompatible_version` error codes (#9). No
+  wire-shape change: all of this documents surfaces already carried by the
+  schema and reference types.
+- **Restored `docs/context-reuse.md` §3** (Consent scopes and receipts), whose
+  normative text was dropped by the PR #38 merge — recovered from `d229ed9` and
+  reconnected to the C5/C6 requirements the schema and `consent-scope` check
+  already cite.
 - **Host execution trace + replay oracles** (`contextgraph-trace`, sketch stage,
   unpublished) — the host-side dual of the provider conformance suite. An
   append-only NDJSON journal a harness (or a Harbor-adapter-style shim
