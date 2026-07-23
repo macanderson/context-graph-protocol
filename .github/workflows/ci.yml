@@ -82,6 +82,25 @@ jobs:
       - name: Suite is red against every --misbehave mode
         run: ./.github/scripts/conformance-red.sh
 
+  sdk-typescript:
+    name: sdk (typescript) is a conformant implementation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --bins
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build the TypeScript SDK
+        working-directory: sdk/typescript
+        run: |
+          npm install
+          npm run build
+      - name: TS example provider passes the conformance suite
+        run: ./.github/scripts/conformance-external.sh -- node sdk/typescript/dist/examples/example-docs.js
+
   schema:
     name: schema validates the examples
     runs-on: ubuntu-latest
