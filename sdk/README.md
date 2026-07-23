@@ -14,7 +14,7 @@ is one more independent implementation proving the wire is real.
 | --- | --- | --- |
 | TypeScript | [`sdk/typescript`](./typescript) | ✅ conformant — passes all 7 checks in CI |
 | Python | [`sdk/python`](./python) | ✅ conformant — passes all 7 checks in CI |
-| Go | [`sdk/go`](./go) | 🚧 planned (needs a Go toolchain in CI to validate) |
+| Go | [`sdk/go`](./go) | ✅ conformant — passes all 7 checks in CI |
 
 Every SDK is validated the same way:
 

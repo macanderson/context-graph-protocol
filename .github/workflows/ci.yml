@@ -115,6 +115,25 @@ jobs:
       - name: Python example provider passes the conformance suite
         run: ./.github/scripts/conformance-external.sh -- python3 sdk/python/examples/example_docs.py
 
+  sdk-go:
+    name: sdk (go) is a conformant implementation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --bins
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: Vet and build the Go SDK
+        working-directory: sdk/go
+        run: |
+          go vet ./...
+          go build -o "$GITHUB_WORKSPACE/cg-go-example" ./examples/example-docs
+      - name: Go example provider passes the conformance suite
+        run: ./.github/scripts/conformance-external.sh -- ./cg-go-example
+
   schema:
     name: schema validates the examples
     runs-on: ubuntu-latest
