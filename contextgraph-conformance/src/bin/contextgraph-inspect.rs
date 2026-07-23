@@ -11,7 +11,9 @@
 
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use contextgraph_conformance::{CheckStatus, ConformanceReport, ProviderTarget, run_conformance};
+use contextgraph_conformance::{
+    CheckStatus, ConformanceReport, ProviderTarget, run_conformance, run_host_conformance,
+};
 use contextgraph_host::{ConsentRecord, Host};
 use contextgraph_types::{Capabilities, ContextQuery, ProviderInfo};
 
@@ -45,6 +47,14 @@ enum Command {
         url: String,
         #[arg(long)]
         query: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run the host-side conformance suite against the reference host
+    /// (`SPEC.md` §11.1, issue #14). Takes no provider — the harness drives the
+    /// reference `Host` against adversarial in-process providers itself.
+    Host {
+        /// Emit the conformance report as JSON instead of colored text.
         #[arg(long)]
         json: bool,
     },
@@ -85,6 +95,17 @@ async fn main() -> std::process::ExitCode {
             (Descriptor::Stdio { program, args }, query, json)
         }
         Command::Http { url, query, json } => (Descriptor::Http { url }, query, json),
+        // The host suite needs no provider target: it drives the reference host
+        // against its own adversarial in-process providers and reports directly.
+        Command::Host { json } => {
+            let report = run_host_conformance().await;
+            print_report(&report, json);
+            return if report.passed() {
+                std::process::ExitCode::SUCCESS
+            } else {
+                std::process::ExitCode::FAILURE
+            };
+        }
     };
 
     // ── Phase 1: interactive handshake + optional query ──────────────────

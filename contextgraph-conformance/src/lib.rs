@@ -44,6 +44,12 @@
 //! mid-query, the matching check fails loudly. The bundled `contextgraph-example-docs`
 //! fixture has `--misbehave` flags that trip each one, proving the suite
 //! catches a broken provider (task deliverable).
+//!
+//! The **host** side of the protocol has binding rules too, which the
+//! provider-facing checks above cannot exercise. Those live in
+//! [`host_conformance`], the dual suite: [`run_host_conformance`] drives the
+//! reference [`Host`] against adversarial in-process providers and asserts it
+//! upholds them (`SPEC.md` §11.1; issue #14).
 
 use contextgraph_host::{
     ConsentRecord, ContextProvider, DropReason, Host, HostError, RawStdioConnection,
@@ -54,8 +60,13 @@ use contextgraph_types::{
     ProviderInfo,
 };
 
+pub mod host_conformance;
 mod report;
 
+pub use host_conformance::{
+    HCHECK_BUDGET_DROP, HCHECK_CONSENT_GATE, HCHECK_CONTENT_QUOTING, HCHECK_FRAME_LIMIT,
+    HCHECK_PROVENANCE_BYTES, HCHECK_SCOPE_RECEIPT, run_host_conformance,
+};
 pub use report::{CheckResult, CheckStatus, ConformanceReport};
 
 /// The stable check names, so reports and callers agree on identifiers.
