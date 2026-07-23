@@ -1,0 +1,21 @@
+[package]
+name = "contextgraph-trace"
+description = "Host execution trace (journal) wire types and replay oracles for the Context Graph Protocol — sketch stage, see docs/sketches/host-trace.md."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+# Deliberately NOT published: this crate implements docs/sketches/host-trace.md,
+# which is a sketch, not part of the contextgraph/1.0 surface. It inherits the
+# workspace default (publish = false); publication is an open question recorded
+# in the sketch.
+
+[dependencies]
+# Floor requirement — see the note in contextgraph-host/Cargo.toml: caret reqs
+# break the release version stamp at the first minor bump.
+contextgraph-types = { path = "../contextgraph-types", version = ">=0.1.0" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

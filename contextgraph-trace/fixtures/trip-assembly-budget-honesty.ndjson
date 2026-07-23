@@ -1,0 +1,5 @@
+{"seq":1,"at":"2026-07-23T11:20:00Z","session":"sess_trip_budget","event":"session_start","agent":"example-agent","harness":"stella/0.9"}
+{"seq":2,"at":"2026-07-23T11:20:01Z","session":"sess_trip_budget","turn":1,"event":"turn_start"}
+{"seq":3,"at":"2026-07-23T11:20:02Z","session":"sess_trip_budget","turn":1,"event":"prompt_assembled","budget_tokens":100,"declared_total_tokens":120,"frames":[{"frame":{"provider_id":"docs","frame_id":"frm_1","content_digest":"sha256:9f2c9f2c"},"token_cost":120,"citation_label":"workspace.ts L120-160"}]}
+{"seq":4,"at":"2026-07-23T11:20:03Z","session":"sess_trip_budget","turn":1,"event":"turn_end"}
+{"seq":5,"at":"2026-07-23T11:20:04Z","session":"sess_trip_budget","event":"session_end","outcome":"completed"}

@@ -1,0 +1,9 @@
+{"seq":1,"at":"2026-07-23T11:10:00Z","session":"sess_trip_loop","event":"session_start","agent":"example-agent","harness":"stella/0.9"}
+{"seq":2,"at":"2026-07-23T11:10:01Z","session":"sess_trip_loop","turn":1,"event":"turn_start"}
+{"seq":3,"at":"2026-07-23T11:10:02Z","session":"sess_trip_loop","turn":1,"event":"model_response","tool_calls":["call_1"]}
+{"seq":4,"at":"2026-07-23T11:10:03Z","session":"sess_trip_loop","turn":1,"event":"tool_call","call_id":"call_1","tool":"read_file"}
+{"seq":5,"at":"2026-07-23T11:10:04Z","session":"sess_trip_loop","turn":1,"event":"tool_result","call_id":"call_1","status":"ok"}
+{"seq":6,"at":"2026-07-23T11:10:05Z","session":"sess_trip_loop","turn":1,"event":"tool_call","call_id":"call_9","tool":"write_file"}
+{"seq":7,"at":"2026-07-23T11:10:06Z","session":"sess_trip_loop","turn":1,"event":"tool_result","call_id":"call_9","status":"ok"}
+{"seq":8,"at":"2026-07-23T11:10:07Z","session":"sess_trip_loop","turn":1,"event":"turn_end"}
+{"seq":9,"at":"2026-07-23T11:10:08Z","session":"sess_trip_loop","event":"session_end","outcome":"completed"}

@@ -1,0 +1,6 @@
+{"seq":1,"at":"2026-07-23T11:30:00Z","session":"sess_trip_stale","event":"session_start","agent":"example-agent","harness":"stella/0.9"}
+{"seq":2,"at":"2026-07-23T11:30:01Z","session":"sess_trip_stale","event":"verify_observed","frame":{"provider_id":"docs","frame_id":"frm_1","content_digest":"sha256:9f2c9f2c"},"verdict":{"status":"stale","replacement_digest":"sha256:b4d1b4d1"}}
+{"seq":3,"at":"2026-07-23T11:30:02Z","session":"sess_trip_stale","turn":1,"event":"turn_start"}
+{"seq":4,"at":"2026-07-23T11:30:03Z","session":"sess_trip_stale","turn":1,"event":"prompt_assembled","budget_tokens":4096,"declared_total_tokens":120,"frames":[{"frame":{"provider_id":"docs","frame_id":"frm_1","content_digest":"sha256:9f2c9f2c"},"token_cost":120,"citation_label":"workspace.ts L120-160"}]}
+{"seq":5,"at":"2026-07-23T11:30:04Z","session":"sess_trip_stale","turn":1,"event":"turn_end"}
+{"seq":6,"at":"2026-07-23T11:30:05Z","session":"sess_trip_stale","event":"session_end","outcome":"completed"}

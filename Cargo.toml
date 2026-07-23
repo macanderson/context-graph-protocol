@@ -4,6 +4,7 @@ members = [
   "contextgraph-types",
   "contextgraph-host",
   "contextgraph-conformance",
+  "contextgraph-trace",
 ]
 
 [workspace.package]

@@ -1,0 +1,15 @@
+{"seq":1,"at":"2026-07-23T10:00:00Z","session":"sess_resume","event":"session_start","agent":"example-agent","harness":"stella/0.9","trace_format":"contextgraph-trace/0.1-sketch"}
+{"seq":2,"at":"2026-07-23T10:00:01Z","session":"sess_resume","turn":1,"event":"turn_start"}
+{"seq":3,"at":"2026-07-23T10:00:02Z","session":"sess_resume","turn":1,"event":"prompt_assembled","budget_tokens":4096,"declared_total_tokens":120,"frames":[{"frame":{"provider_id":"docs","frame_id":"frm_1","content_digest":"sha256:9f2c9f2c"},"token_cost":120,"citation_label":"workspace.ts L120-160"}]}
+{"seq":4,"at":"2026-07-23T10:00:03Z","session":"sess_resume","turn":1,"event":"model_response","tool_calls":["call_1"]}
+{"seq":5,"at":"2026-07-23T10:00:04Z","session":"sess_resume","turn":1,"event":"tool_call","call_id":"call_1","tool":"write_file"}
+{"seq":6,"at":"2026-07-23T10:00:05Z","session":"sess_resume","turn":1,"event":"side_effect","effect_id":"write:src/lib.rs#1","kind":"file_write","call_id":"call_1"}
+{"seq":7,"at":"2026-07-23T10:05:00Z","session":"sess_resume","event":"resume","last_seq_seen":6}
+{"seq":8,"at":"2026-07-23T10:05:01Z","session":"sess_resume","turn":2,"event":"turn_start"}
+{"seq":9,"at":"2026-07-23T10:05:02Z","session":"sess_resume","turn":2,"event":"prompt_assembled","budget_tokens":4096,"declared_total_tokens":120,"frames":[{"frame":{"provider_id":"docs","frame_id":"frm_1","content_digest":"sha256:9f2c9f2c"},"token_cost":120,"citation_label":"workspace.ts L120-160"}]}
+{"seq":10,"at":"2026-07-23T10:05:03Z","session":"sess_resume","turn":2,"event":"model_response","tool_calls":["call_2"]}
+{"seq":11,"at":"2026-07-23T10:05:04Z","session":"sess_resume","turn":2,"event":"tool_call","call_id":"call_2","tool":"write_file"}
+{"seq":12,"at":"2026-07-23T10:05:05Z","session":"sess_resume","turn":2,"event":"side_effect","effect_id":"write:src/lib.rs#2","kind":"file_write","call_id":"call_2"}
+{"seq":13,"at":"2026-07-23T10:05:06Z","session":"sess_resume","turn":2,"event":"tool_result","call_id":"call_2","status":"ok"}
+{"seq":14,"at":"2026-07-23T10:05:07Z","session":"sess_resume","turn":2,"event":"turn_end"}
+{"seq":15,"at":"2026-07-23T10:05:08Z","session":"sess_resume","event":"session_end","outcome":"completed"}

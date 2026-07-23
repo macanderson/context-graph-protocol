@@ -12,6 +12,20 @@ which. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1
 ## [Unreleased]
 
 ### Added
+- **Host execution trace + replay oracles** (`contextgraph-trace`, sketch stage,
+  unpublished) — the host-side dual of the provider conformance suite. An
+  append-only NDJSON journal a harness (or a Harbor-adapter-style shim
+  observing one) emits while it works — turns, prompt assemblies, tool-call
+  pairing, `context/verify` observations, side effects, crashes and resumes —
+  plus eight pure replay oracles that hold the recording to the loop
+  invariants: `sequence-integrity`, `turn-loop-pairing`,
+  `assembly-budget-honesty`, `staleness-at-use`, `citation-at-use`,
+  `deterministic-composition`, `effect-exactly-once`, `resume-integrity`. The
+  journal reuses the protocol's identity spine (`FrameId`, wire `Verdict`) and
+  carries no frame bodies; the crate depends on `contextgraph-types` + serde
+  only. Ships golden journals plus one adversarial fixture per check that
+  trips exactly that check. No wire shape or `SPEC.md` change — see
+  [docs/sketches/host-trace.md](./docs/sketches/host-trace.md).
 - **Prompt ingestion as a local provider** (`contextgraph_host::ingest`) — the
   ingestion-side dual of `compose_context`. Turns a user's paste into an ordinary
   `ContextProvider`: intent passes through verbatim as `query.goal`, directory

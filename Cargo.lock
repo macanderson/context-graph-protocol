@@ -258,6 +258,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "contextgraph-trace"
+version = "0.1.0"
+dependencies = [
+ "contextgraph-types",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "contextgraph-types"
 version = "0.1.0"
 dependencies = [

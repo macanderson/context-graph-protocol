@@ -1,0 +1,16 @@
+{"seq":1,"at":"2026-07-23T09:00:00Z","session":"sess_golden","event":"session_start","agent":"example-agent","harness":"stella/0.9","model":"claude-opus-4-8","trace_format":"contextgraph-trace/0.1-sketch"}
+{"seq":2,"at":"2026-07-23T09:00:01Z","session":"sess_golden","turn":1,"event":"turn_start"}
+{"seq":3,"at":"2026-07-23T09:00:02Z","session":"sess_golden","turn":1,"event":"prompt_assembled","budget_tokens":4096,"declared_total_tokens":120,"composition_digest":"sha256:2b7e2b7e","frames":[{"frame":{"provider_id":"docs","frame_id":"frm_1","content_digest":"sha256:9f2c9f2c"},"token_cost":120,"citation_label":"workspace.ts L120-160"},{"frame":{"provider_id":"docs","frame_id":"frm_2"},"representation":"reference","token_cost":0,"citation_label":"Deployment runbook"}]}
+{"seq":4,"at":"2026-07-23T09:00:03Z","session":"sess_golden","turn":1,"event":"model_response","tool_calls":["call_1"]}
+{"seq":5,"at":"2026-07-23T09:00:04Z","session":"sess_golden","turn":1,"event":"tool_call","call_id":"call_1","tool":"read_file"}
+{"seq":6,"at":"2026-07-23T09:00:05Z","session":"sess_golden","turn":1,"event":"tool_result","call_id":"call_1","status":"ok"}
+{"seq":7,"at":"2026-07-23T09:00:06Z","session":"sess_golden","turn":1,"event":"turn_end"}
+{"seq":8,"at":"2026-07-23T09:00:07Z","session":"sess_golden","event":"verify_observed","frame":{"provider_id":"docs","frame_id":"frm_1","content_digest":"sha256:9f2c9f2c"},"verdict":{"status":"valid"}}
+{"seq":9,"at":"2026-07-23T09:00:08Z","session":"sess_golden","turn":2,"event":"turn_start"}
+{"seq":10,"at":"2026-07-23T09:00:09Z","session":"sess_golden","turn":2,"event":"prompt_assembled","budget_tokens":4096,"declared_total_tokens":120,"composition_digest":"sha256:2b7e2b7e","frames":[{"frame":{"provider_id":"docs","frame_id":"frm_1","content_digest":"sha256:9f2c9f2c"},"token_cost":120,"citation_label":"workspace.ts L120-160"},{"frame":{"provider_id":"docs","frame_id":"frm_2"},"representation":"reference","token_cost":0,"citation_label":"Deployment runbook"}]}
+{"seq":11,"at":"2026-07-23T09:00:10Z","session":"sess_golden","turn":2,"event":"model_response","tool_calls":["call_2"]}
+{"seq":12,"at":"2026-07-23T09:00:11Z","session":"sess_golden","turn":2,"event":"tool_call","call_id":"call_2","tool":"write_file"}
+{"seq":13,"at":"2026-07-23T09:00:12Z","session":"sess_golden","turn":2,"event":"side_effect","effect_id":"write:src/main.rs#1","kind":"file_write","call_id":"call_2"}
+{"seq":14,"at":"2026-07-23T09:00:13Z","session":"sess_golden","turn":2,"event":"tool_result","call_id":"call_2","status":"ok"}
+{"seq":15,"at":"2026-07-23T09:00:14Z","session":"sess_golden","turn":2,"event":"turn_end"}
+{"seq":16,"at":"2026-07-23T09:00:15Z","session":"sess_golden","event":"session_end","outcome":"completed"}

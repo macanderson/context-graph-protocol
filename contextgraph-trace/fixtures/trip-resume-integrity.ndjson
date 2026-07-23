@@ -1,0 +1,9 @@
+{"seq":1,"at":"2026-07-23T12:10:00Z","session":"sess_trip_resume","event":"session_start","agent":"example-agent","harness":"stella/0.9"}
+{"seq":2,"at":"2026-07-23T12:10:01Z","session":"sess_trip_resume","turn":1,"event":"turn_start"}
+{"seq":3,"at":"2026-07-23T12:10:02Z","session":"sess_trip_resume","turn":1,"event":"turn_end"}
+{"seq":4,"at":"2026-07-23T12:10:03Z","session":"sess_trip_resume","turn":2,"event":"turn_start"}
+{"seq":5,"at":"2026-07-23T12:10:04Z","session":"sess_trip_resume","turn":2,"event":"turn_end"}
+{"seq":6,"at":"2026-07-23T12:15:00Z","session":"sess_trip_resume","event":"resume","last_seq_seen":3}
+{"seq":7,"at":"2026-07-23T12:15:01Z","session":"sess_trip_resume","turn":3,"event":"turn_start"}
+{"seq":8,"at":"2026-07-23T12:15:02Z","session":"sess_trip_resume","turn":3,"event":"turn_end"}
+{"seq":9,"at":"2026-07-23T12:15:03Z","session":"sess_trip_resume","event":"session_end","outcome":"completed"}

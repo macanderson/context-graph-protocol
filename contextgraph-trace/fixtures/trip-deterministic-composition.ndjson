@@ -1,0 +1,8 @@
+{"seq":1,"at":"2026-07-23T11:50:00Z","session":"sess_trip_comp","event":"session_start","agent":"example-agent","harness":"stella/0.9"}
+{"seq":2,"at":"2026-07-23T11:50:01Z","session":"sess_trip_comp","turn":1,"event":"turn_start"}
+{"seq":3,"at":"2026-07-23T11:50:02Z","session":"sess_trip_comp","turn":1,"event":"prompt_assembled","budget_tokens":4096,"declared_total_tokens":120,"composition_digest":"sha256:11111111","frames":[{"frame":{"provider_id":"docs","frame_id":"frm_1","content_digest":"sha256:9f2c9f2c"},"token_cost":120,"citation_label":"workspace.ts L120-160"}]}
+{"seq":4,"at":"2026-07-23T11:50:03Z","session":"sess_trip_comp","turn":1,"event":"turn_end"}
+{"seq":5,"at":"2026-07-23T11:50:04Z","session":"sess_trip_comp","turn":2,"event":"turn_start"}
+{"seq":6,"at":"2026-07-23T11:50:05Z","session":"sess_trip_comp","turn":2,"event":"prompt_assembled","budget_tokens":4096,"declared_total_tokens":120,"composition_digest":"sha256:22222222","frames":[{"frame":{"provider_id":"docs","frame_id":"frm_1","content_digest":"sha256:9f2c9f2c"},"token_cost":120,"citation_label":"workspace.ts L120-160"}]}
+{"seq":7,"at":"2026-07-23T11:50:06Z","session":"sess_trip_comp","turn":2,"event":"turn_end"}
+{"seq":8,"at":"2026-07-23T11:50:07Z","session":"sess_trip_comp","event":"session_end","outcome":"completed"}
