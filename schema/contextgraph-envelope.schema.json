@@ -628,8 +628,8 @@
           }
         }
       },
-      "required": ["id", "kind", "title", "score", "token_cost", "provenance", "relations"],
-      "$comment": "content is required for full/compact frames but omitted for reference frames, so it is not globally required; the allOf below enforces the per-representation invariants.",
+      "required": ["id", "kind", "title", "score", "token_cost"],
+      "$comment": "Required is exactly what the reference serializer (contextgraph-types ContextFrame) always emits: id, kind, title, score, token_cost. content is governed per-representation by the allOf below. provenance and relations are skip_serializing_if=Vec::is_empty in the reference type and are required by no frame-validity check (SPEC.md F1-F5), so a conformant frame may omit them when empty — listing them as globally required contradicted the canonical serializer (ADR 0006 surfaced this: it is the first Rust-serialized frame producer validated against this schema).",
       "allOf": [
         {
           "$comment": "reference: no inline content, content_digest, or transform; a resolver handle and canonical hash are required.",

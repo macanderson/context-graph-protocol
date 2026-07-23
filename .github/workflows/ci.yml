@@ -82,6 +82,58 @@ jobs:
       - name: Suite is red against every --misbehave mode
         run: ./.github/scripts/conformance-red.sh
 
+  sdk-typescript:
+    name: sdk (typescript) is a conformant implementation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --bins
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build the TypeScript SDK
+        working-directory: sdk/typescript
+        run: |
+          npm install
+          npm run build
+      - name: TS example provider passes the conformance suite
+        run: ./.github/scripts/conformance-external.sh -- node sdk/typescript/dist/examples/example-docs.js
+
+  sdk-python:
+    name: sdk (python) is a conformant implementation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --bins
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Python example provider passes the conformance suite
+        run: ./.github/scripts/conformance-external.sh -- python3 sdk/python/examples/example_docs.py
+
+  sdk-go:
+    name: sdk (go) is a conformant implementation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --bins
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: Vet and build the Go SDK
+        working-directory: sdk/go
+        run: |
+          go vet ./...
+          go build -o "$GITHUB_WORKSPACE/cg-go-example" ./examples/example-docs
+      - name: Go example provider passes the conformance suite
+        run: ./.github/scripts/conformance-external.sh -- ./cg-go-example
+
   schema:
     name: schema validates the examples
     runs-on: ubuntu-latest

@@ -1,0 +1,3 @@
+# built example binaries (`go build` without -o names them after the package dir)
+/examples/example-docs/example-docs
+/cg-go-example
