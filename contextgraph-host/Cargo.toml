@@ -29,6 +29,10 @@ tokio.workspace = true
 async-trait.workspace = true
 futures-util.workspace = true
 reqwest.workspace = true
+# Real content-addressing for the prompt-ingest provider (ADR 0006). The
+# zero-dep-beyond-serde ethos is a `contextgraph-types` value; the host runtime
+# already pulls SHA-256 transitively via rustls and is the right home for it.
+sha2.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 # Unix process-group creation (setsid) + kill(-pgid): a stdio provider's

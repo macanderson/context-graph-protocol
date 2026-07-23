@@ -25,6 +25,10 @@
 //! - [`HttpProvider`] — remote streamable-HTTP transport (SPEC.md §3).
 //! - [`ConsentStore`] — the gate that keeps an egress provider un-queried
 //!   until the user consents, naming what leaves (SPEC.md §4).
+//! - [`ingest`] — the ingestion-side dual of [`compose`]: turns a user's paste
+//!   into a local, egress-free provider serving content-addressed frames, so the
+//!   prompt's biggest un-disciplined input is budgeted and cited like any other
+//!   ([ADR 0006](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0006-prompt-ingestion-as-a-local-provider.md)).
 //! - [`Host`] — registers all three provider kinds behind one handle and
 //!   [`Host::query_all`] fans a query out concurrently, enforcing timeouts,
 //!   consent, and budget honesty (SPEC.md §4 and §7).
@@ -54,6 +58,7 @@ pub mod consent;
 pub mod error;
 pub mod host;
 pub mod http;
+pub mod ingest;
 pub mod provider;
 pub mod stdio;
 pub mod wire;
@@ -65,6 +70,10 @@ pub use host::{
     DropReason, DroppedFrame, FanOut, Host, ProviderOutcome, ProviderResult, VerifyOutcome,
 };
 pub use http::HttpProvider;
+pub use ingest::{
+    IngestBundle, IngestConfig, IngestProvider, PasteIngest, SegmentKind, SegmentOutcome,
+    SegmentReport, ingest_paste,
+};
 pub use provider::{ContextProvider, capability_matches, frame_kind_name};
 pub use stdio::{RawStdioConnection, StdioProvider};
 pub use wire::{Envelope, decode_line, encode_line, envelope_kind, versions_compatible};
