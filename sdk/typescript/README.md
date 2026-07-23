@@ -1,4 +1,4 @@
-# @contextgraph/sdk — TypeScript
+# @contextgraphprotocol/typescript-sdk — TypeScript
 
 A zero-dependency TypeScript SDK for building **conformant** Context Graph
 Protocol providers. Implement one interface, hand it to the runtime, and you
@@ -13,13 +13,13 @@ the same conformance suite that judges the Rust reference provider.
 ## Install
 
 ```sh
-npm install @contextgraph/sdk
+npm install @contextgraphprotocol/typescript-sdk
 ```
 
 ## Write a provider
 
 ```ts
-import { runStdioProvider, budgetTokens, type Provider } from "@contextgraph/sdk";
+import { runStdioProvider, budgetTokens, type Provider } from "@contextgraphprotocol/typescript-sdk";
 
 const provider: Provider = {
   info: () => ({
