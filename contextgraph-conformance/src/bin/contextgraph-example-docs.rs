@@ -178,11 +178,11 @@ fn main() {
                 // `bad_request` rather than pretending. `accept-bad-embedding`
                 // scores it anyway, which the `embedding-fingerprint` probe
                 // catches.
-                if args.misbehave != Some(Misbehave::AcceptBadEmbedding) {
-                    if let Some(error) = embedding_dimension_error(&query, echoed.clone()) {
-                        write_envelope(&mut stdout, &error);
-                        continue;
-                    }
+                if args.misbehave != Some(Misbehave::AcceptBadEmbedding)
+                    && let Some(error) = embedding_dimension_error(&query, echoed.clone())
+                {
+                    write_envelope(&mut stdout, &error);
+                    continue;
                 }
                 let mut frames = canned_frames(args.misbehave);
                 // §F4/§6.1: honor an `as_of` pin — content not yet true at the
@@ -191,10 +191,10 @@ fn main() {
                 // strings *is* a chronological one. `ignore-as-of` skips this,
                 // returning a not-yet-valid frame the `as-of-temporal` probe
                 // catches.
-                if args.misbehave != Some(Misbehave::IgnoreAsOf) {
-                    if let Some(as_of) = query.as_of.as_deref() {
-                        frames.retain(|f| !f.valid_from.as_deref().is_some_and(|vf| vf > as_of));
-                    }
+                if args.misbehave != Some(Misbehave::IgnoreAsOf)
+                    && let Some(as_of) = query.as_of.as_deref()
+                {
+                    frames.retain(|f| !f.valid_from.as_deref().is_some_and(|vf| vf > as_of));
                 }
                 write_envelope(
                     &mut stdout,
