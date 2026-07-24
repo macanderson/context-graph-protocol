@@ -1,5 +1,5 @@
 {
-  "name": "@contextgraph/sdk",
+  "name": "@contextgraphprotocol/typescript-sdk",
   "version": "0.1.0",
   "description": "Zero-dependency TypeScript SDK for building conformant Context Graph Protocol providers.",
   "license": "MIT OR Apache-2.0",
@@ -12,12 +12,21 @@
       "import": "./dist/src/index.js"
     }
   },
-  "files": ["dist/src", "README.md"],
+  "files": [
+    "dist/src",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "npm run build"
   },
-  "keywords": ["context-graph-protocol", "cgp", "context", "provider", "sdk"],
+  "keywords": [
+    "context-graph-protocol",
+    "cgp",
+    "context",
+    "provider",
+    "sdk"
+  ],
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.9.0"

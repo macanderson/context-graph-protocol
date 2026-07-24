@@ -1,9 +1,9 @@
 /**
- * `@contextgraph/sdk` — a zero-dependency TypeScript SDK for building
+ * `@contextgraphprotocol/typescript-sdk` — a zero-dependency TypeScript SDK for building
  * conformant Context Graph Protocol providers.
  *
  * ```ts
- * import { runStdioProvider, budgetTokens, type Provider } from "@contextgraph/sdk";
+ * import { runStdioProvider, budgetTokens, type Provider } from "@contextgraphprotocol/typescript-sdk";
  *
  * const provider: Provider = {
  *   info: () => ({ name: "my-provider", version: "0.1.0",
