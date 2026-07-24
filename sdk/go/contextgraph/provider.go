@@ -3,6 +3,7 @@ package contextgraph
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 )
@@ -15,9 +16,27 @@ type Provider interface {
 	Info() ProviderInfo
 	// Capabilities reports what this provider can do, negotiated at handshake.
 	Capabilities() Capabilities
-	// Query answers a retrieval request with budgeted, provenance-carrying frames.
-	Query(query ContextQuery) ContextQueryResult
+	// Query answers a retrieval request with budgeted, provenance-carrying
+	// frames. Returning a non-nil error replies with an error envelope instead
+	// of frames — a ProviderError carries a machine-readable code (see §E1's
+	// embedding-fingerprint rejection); any other error is reported codeless.
+	Query(query ContextQuery) (ContextQueryResult, error)
 }
+
+// ProviderError is a protocol-level error a provider's Query returns to reply
+// with an error envelope carrying a machine-readable Code instead of frames.
+//
+// This is how a provider refuses a request it cannot honestly serve — e.g.
+// rejecting a query embedding whose length contradicts its declared
+// EmbeddingsFingerprint dimension with `bad_request` (SPEC.md §E1). A plain
+// error returned from Query is reported without a code.
+type ProviderError struct {
+	Code    string
+	Message string
+}
+
+// Error implements the error interface.
+func (e ProviderError) Error() string { return e.Message }
 
 // Verifier is the optional context/verify surface. Implement it alongside
 // Provider to revalidate frames a host already holds (identities only — never
@@ -52,9 +71,10 @@ type verifiedReply struct {
 }
 
 type errorReply struct {
-	Type    string `json:"type"`
-	Code    string `json:"code,omitempty"`
-	Message string `json:"message"`
+	Type    string  `json:"type"`
+	Code    string  `json:"code,omitempty"`
+	Message string  `json:"message"`
+	ID      *string `json:"id,omitempty"`
 }
 
 func writeEnvelope(w *bufio.Writer, envelope any) {
@@ -109,9 +129,20 @@ func handleLine(provider Provider, line string, w *bufio.Writer) {
 		if envelope.Query == nil {
 			return
 		}
-		reply := framesReply{Type: "frames", Result: provider.Query(*envelope.Query)}
+		result, err := provider.Query(*envelope.Query)
+		if err != nil {
+			// The provider refused a request it can't honestly serve (§E1):
+			// reply with a coded error envelope, not frames.
+			reply := errorReply{Type: "error", Message: err.Error(), ID: envelope.ID}
+			var pe ProviderError
+			if errors.As(err, &pe) {
+				reply.Code = pe.Code
+			}
+			writeEnvelope(w, reply)
+			return
+		}
 		// Echo the correlation id so the host can match reply to request (H4).
-		reply.ID = envelope.ID
+		reply := framesReply{Type: "frames", Result: result, ID: envelope.ID}
 		writeEnvelope(w, reply)
 	case "verify":
 		if envelope.Request == nil {

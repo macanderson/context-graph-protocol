@@ -15,7 +15,18 @@ from typing import Any
 # Allow running the example directly from the repo without installing the SDK.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from contextgraph_sdk import budget_tokens, run_stdio_provider  # noqa: E402
+from contextgraph_sdk import (  # noqa: E402
+    ProviderError,
+    budget_tokens,
+    run_stdio_provider,
+)
+
+# The embedding space this fixture declares it indexes (SPEC.md §E1). Its
+# dimension -- the 2nd `/`-separated segment (384) -- is the length a query
+# embedding must match; a contradicting length is a vector from a different
+# space, rejected `bad_request` rather than scored into meaningless similarity.
+EMBEDDING_FINGERPRINT = "bge-small-en-v1.5/384/l2"
+EMBEDDING_DIMENSIONS = int(EMBEDDING_FINGERPRINT.split("/")[1])
 
 # Stable, syntactically valid sha256:<64 hex> digests (SPEC.md F5). Not real
 # hashes of anything -- this fixture serves string literals, not on-disk bytes --
@@ -87,10 +98,25 @@ class ExampleDocsProvider:
             "query": {"kinds": ["doc", "snippet"]},
             "correlation": True,
             "graph": False,
+            # Declaring the embedding space it indexes lets the provider reject a
+            # vector from a different one (§E1). A provider that declares no
+            # fingerprint has nothing to contradict and is not E1-probed.
+            "embeddings_fingerprint": EMBEDDING_FINGERPRINT,
             "verify": True,
         }
 
     def query(self, query: dict[str, Any]) -> dict[str, Any]:
+        # §E1: a query embedding whose length contradicts this provider's
+        # declared fingerprint dimension names a different vector space; scoring
+        # it would yield plausible-looking, meaningless similarity. An honest
+        # provider rejects it `bad_request` rather than pretending.
+        embedding = query.get("embedding")
+        if embedding is not None and len(embedding) != EMBEDDING_DIMENSIONS:
+            raise ProviderError(
+                f"query embedding has {len(embedding)} dimensions; this provider "
+                f"indexes {EMBEDDING_DIMENSIONS} ({EMBEDDING_FINGERPRINT}) (§E1)",
+                code="bad_request",
+            )
         return {
             "frames": [
                 _doc_frame(

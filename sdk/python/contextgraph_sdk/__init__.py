@@ -17,7 +17,7 @@ Context Graph Protocol providers.
 """
 
 from .budget import BYTES_PER_BUDGET_TOKEN, budget_tokens
-from .provider import Provider, run_stdio_provider
+from .provider import Provider, ProviderError, run_stdio_provider
 from .types import PROTOCOL_VERSION
 
 __all__ = [
@@ -25,5 +25,6 @@ __all__ = [
     "BYTES_PER_BUDGET_TOKEN",
     "budget_tokens",
     "Provider",
+    "ProviderError",
     "run_stdio_provider",
 ]

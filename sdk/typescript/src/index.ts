@@ -16,4 +16,4 @@
  */
 export * from "./types.js";
 export { budgetTokens, BYTES_PER_BUDGET_TOKEN } from "./budget.js";
-export { runStdioProvider, type Provider } from "./provider.js";
+export { runStdioProvider, ProviderError, type Provider } from "./provider.js";

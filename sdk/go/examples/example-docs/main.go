@@ -8,9 +8,19 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 
 	cg "github.com/macanderson/context-graph-protocol/sdk/go/contextgraph"
+)
+
+// The embedding space this fixture declares it indexes (SPEC.md §E1). Its
+// dimension -- the 2nd `/`-separated segment (384) -- is the length a query
+// embedding must match; a contradicting length is a vector from a different
+// space, rejected `bad_request` rather than scored into meaningless similarity.
+const (
+	embeddingFingerprint = "bge-small-en-v1.5/384/l2"
+	embeddingDimensions  = 384
 )
 
 // Stable, syntactically valid sha256:<64 hex> digests (SPEC.md F5). Not real
@@ -75,15 +85,33 @@ func (exampleDocsProvider) Info() cg.ProviderInfo {
 }
 
 func (exampleDocsProvider) Capabilities() cg.Capabilities {
+	// Declaring the embedding space it indexes lets the provider reject a vector
+	// from a different one (§E1). A provider that declares no fingerprint has
+	// nothing to contradict and is not E1-probed.
+	fingerprint := embeddingFingerprint
 	return cg.Capabilities{
-		Query:       cg.QueryCapability{Kinds: []string{"doc", "snippet"}},
-		Correlation: true,
-		Graph:       false,
-		Verify:      true,
+		Query:                 cg.QueryCapability{Kinds: []string{"doc", "snippet"}},
+		Correlation:           true,
+		Graph:                 false,
+		EmbeddingsFingerprint: &fingerprint,
+		Verify:                true,
 	}
 }
 
-func (exampleDocsProvider) Query(_ cg.ContextQuery) cg.ContextQueryResult {
+func (exampleDocsProvider) Query(query cg.ContextQuery) (cg.ContextQueryResult, error) {
+	// §E1: a query embedding whose length contradicts this provider's declared
+	// fingerprint dimension names a different vector space; scoring it would
+	// yield plausible-looking, meaningless similarity. An honest provider
+	// rejects it `bad_request` rather than pretending.
+	if n := len(query.Embedding); n > 0 && n != embeddingDimensions {
+		return cg.ContextQueryResult{}, cg.ProviderError{
+			Code: "bad_request",
+			Message: fmt.Sprintf(
+				"query embedding has %d dimensions; this provider indexes %d (%s) (§E1)",
+				n, embeddingDimensions, embeddingFingerprint,
+			),
+		}
+	}
 	return cg.ContextQueryResult{
 		Frames: []cg.ContextFrame{
 			docFrame(
@@ -106,7 +134,7 @@ func (exampleDocsProvider) Query(_ cg.ContextQuery) cg.ContextQueryResult {
 			),
 		},
 		Truncated: false,
-	}
+	}, nil
 }
 
 // Verify implements cg.Verifier: compare each presented digest against what is

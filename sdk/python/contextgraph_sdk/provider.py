@@ -40,6 +40,23 @@ class Provider(Protocol):
     # def verify(self, request: dict[str, Any]) -> dict[str, Any]: ...  # optional
 
 
+class ProviderError(Exception):
+    """A protocol-level error a provider raises from ``query`` to reply with an
+    ``error`` envelope carrying a machine-readable ``code`` instead of frames.
+
+    This is how a provider refuses a request it cannot honestly serve — e.g.
+    rejecting a query embedding whose length contradicts its declared
+    ``embeddings_fingerprint`` dimension with ``bad_request`` (``SPEC.md`` §E1).
+    The runtime catches it, echoes the request's correlation ``id``, and writes
+    ``{"type": "error", "code": code, "message": message}``.
+    """
+
+    def __init__(self, message: str, code: str | None = None) -> None:
+        super().__init__(message)
+        self.message = message
+        self.code = code
+
+
 def _write(envelope: dict[str, Any]) -> None:
     sys.stdout.write(json.dumps(envelope, separators=(",", ":")) + "\n")
     sys.stdout.flush()
@@ -81,11 +98,20 @@ def run_stdio_provider(provider: Provider) -> None:
                 }
             )
         elif kind == "query":
-            result = provider.query(envelope["query"])
-            reply: dict[str, Any] = {"type": "frames", "result": result}
             # Echo the correlation id so the host can match reply to request (H4).
-            if envelope.get("id") is not None:
-                reply["id"] = envelope["id"]
+            echoed = envelope.get("id")
+            try:
+                result = provider.query(envelope["query"])
+            except ProviderError as error:
+                # The provider refused a request it can't honestly serve (§E1):
+                # reply with a coded error envelope, not frames.
+                reply: dict[str, Any] = {"type": "error", "message": error.message}
+                if error.code is not None:
+                    reply["code"] = error.code
+            else:
+                reply = {"type": "frames", "result": result}
+            if echoed is not None:
+                reply["id"] = echoed
             _write(reply)
         elif kind == "verify":
             verify = getattr(provider, "verify", None)
