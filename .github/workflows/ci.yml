@@ -150,10 +150,10 @@ jobs:
   site:
     name: docs site builds
     runs-on: ubuntu-latest
-    # Advisory: the site is a marketing surface, not a normative artifact, and
-    # a broken lockfile there must not block a spec change. Flip to a hard gate
-    # once the site build has been stable for a release cycle.
-    continue-on-error: true
+    # Hard gate: the docs site build must pass. It was advisory-only
+    # (continue-on-error) during early churn so a broken lockfile there could
+    # not block a spec change; now that the build is stable it is promoted to a
+    # required check, so a broken marketing surface can no longer ship silently.
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
