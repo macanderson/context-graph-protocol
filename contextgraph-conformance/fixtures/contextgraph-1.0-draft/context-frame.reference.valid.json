@@ -1,0 +1,15 @@
+{
+  "id": "frame:policy:retry:reference",
+  "kind": "doc",
+  "title": "Retry policy — café (reference)",
+  "representation": "reference",
+  "content_fidelity": "omitted",
+  "canonical_content_hash": "sha256:a73a263984fc648c7bd595bfd8ae7a3990c741eea910b40606f6ea5c5ace67ba",
+  "content_ref": {
+    "provider_id": "provider_example",
+    "uri": "context://provider_example/records/retry_policy_v1"
+  },
+  "score": 0.9,
+  "token_cost": 0,
+  "citation_label": "retry policy.md L10-24"
+}

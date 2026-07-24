@@ -4,10 +4,11 @@
 //! The host does the four jobs providers never do: routes a query to
 //! capability-matching providers (`SPEC.md` §5), gates consent so nothing
 //! reaches an unconsented egress provider (`SPEC.md` §4, C1–C2), enforces
-//! per-provider timeouts, and audits budget honesty — a provider that returns
-//! frames summing above the query budget lied about `token_cost`, so its frames
-//! are dropped with a loud named report rather than silently trusted
-//! (`SPEC.md` §7, B2).
+//! per-provider timeouts, and audits budget honesty on two axes — a provider
+//! whose frames sum above the query budget lied about `token_cost` (`SPEC.md`
+//! §7, B2), and one that returns more frames than `max_frames` overspent a
+//! budget the token count never captures (`SPEC.md` §7, B4). Either way its
+//! frames are dropped with a loud named report rather than silently trusted.
 //! Per-provider isolation is total: one provider erroring, timing out, being
 //! dropped for a budget lie, or crashing mid-query never poisons the others
 //! (task deliverable 5).
@@ -358,8 +359,8 @@ impl Host {
                 }
             };
 
-        // Budget honesty: frames that sum above the query budget are a lie
-        // about `token_cost`. Drop them, report loudly (SPEC.md §5).
+        // Budget honesty, axis 1 (§7, B2): frames that sum above the query
+        // budget are a lie about `token_cost`. Drop them, report loudly.
         if !result.respects_budget(query.max_tokens) {
             return ProviderOutcome {
                 provider_id: id,
@@ -367,6 +368,20 @@ impl Host {
                     claimed_tokens: result.total_token_cost(),
                     max_tokens: query.max_tokens,
                     dropped_frames: result.frames.len(),
+                },
+            };
+        }
+
+        // Budget honesty, axis 2 (§7, B4): more frames than `max_frames` is an
+        // overspend the token budget never captures — each frame carries a
+        // title, a citation label, and rendering chrome. Symmetric to B2: drop
+        // the whole leg, report it loudly, never silently truncate.
+        if !result.respects_frame_limit(query.max_frames) {
+            return ProviderOutcome {
+                provider_id: id,
+                result: ProviderResult::FrameFlood {
+                    returned_frames: result.frames.len(),
+                    max_frames: query.max_frames,
                 },
             };
         }
@@ -489,6 +504,18 @@ impl FanOut {
                         token_cost: 0,
                         served_frames: vec![],
                     },
+                    // A frame flood (§B4): same shape as a budget lie — the
+                    // whole leg was dropped, so every returned frame is rejected
+                    // and nothing was served.
+                    ProviderResult::FrameFlood {
+                        returned_frames, ..
+                    } => ProviderUsage {
+                        provider_id,
+                        frames_served: 0,
+                        frames_rejected: *returned_frames as u32,
+                        token_cost: 0,
+                        served_frames: vec![],
+                    },
                     // Consent-gated or failed: no frames offered, none served,
                     // none rejected — the leg simply contributed nothing.
                     ProviderResult::ConsentRequired(_)
@@ -524,11 +551,20 @@ impl FanOut {
     }
 
     /// Providers whose frames were dropped for exceeding the query budget —
-    /// the loud report the host must surface, never swallow (SPEC.md §5).
+    /// the loud report the host must surface, never swallow (SPEC.md §7, B2).
     pub fn budget_liars(&self) -> impl Iterator<Item = &ProviderOutcome> {
         self.outcomes
             .iter()
             .filter(|outcome| matches!(outcome.result, ProviderResult::BudgetLie { .. }))
+    }
+
+    /// Providers whose frames were dropped for exceeding `max_frames` — the
+    /// frame-count twin of [`budget_liars`](Self::budget_liars), surfaced
+    /// loudly rather than silently truncated (SPEC.md §7, B4).
+    pub fn frame_floods(&self) -> impl Iterator<Item = &ProviderOutcome> {
+        self.outcomes
+            .iter()
+            .filter(|outcome| matches!(outcome.result, ProviderResult::FrameFlood { .. }))
     }
 }
 
@@ -546,11 +582,18 @@ pub enum ProviderResult {
     /// Frames the host accepted: passed consent, timeout, and budget honesty.
     Frames(ContextQueryResult),
     /// The provider's frames summed above the query budget — a `token_cost`
-    /// lie. Dropped and reported (SPEC.md §5).
+    /// lie. Dropped and reported (SPEC.md §7, B2).
     BudgetLie {
         claimed_tokens: u64,
         max_tokens: u32,
         dropped_frames: usize,
+    },
+    /// The provider returned more frames than `max_frames` — a frame-count
+    /// overspend. Dropped whole and reported, symmetric to a [`BudgetLie`]
+    /// (SPEC.md §7, B4).
+    FrameFlood {
+        returned_frames: usize,
+        max_frames: u32,
     },
     /// Skipped: an egress provider (declaring no scopes) without recorded
     /// boolean consent. The query payload was **not** transmitted (§3.5).
@@ -958,6 +1001,72 @@ mod tests {
             }
             _ => unreachable!(),
         }
+    }
+
+    #[tokio::test]
+    async fn a_provider_returning_more_than_max_frames_has_them_dropped_loudly() {
+        // §B4, the frame-count twin of the budget lie: 12 individually-cheap
+        // frames respect the token budget but blow `max_frames = 10`. Before
+        // this audit they sailed straight through, because only the token sum
+        // was checked.
+        let query = query();
+        let flood: Vec<ContextFrame> = (0..12).map(|i| frame(&format!("f{i}"), 1)).collect();
+        // The token budget alone would have accepted every one of them — the
+        // frame cap is the only thing that catches this.
+        let as_result = ContextQueryResult {
+            frames: flood.clone(),
+            truncated: false,
+            dropped_estimate: None,
+        };
+        assert!(as_result.respects_budget(query.max_tokens));
+        assert!(!as_result.respects_frame_limit(query.max_frames));
+
+        let mut host = Host::new();
+        host.register(Box::new(FakeProvider::new(
+            "flood",
+            false,
+            Behavior::Frames(flood),
+        )));
+        host.register(Box::new(FakeProvider::new(
+            "honest",
+            false,
+            Behavior::Frames(vec![frame("ok", 200)]),
+        )));
+
+        let fanout = host.query_all(&query).await;
+        // The flooder's frames never reach the accepted set; the honest peer's do.
+        assert_eq!(fanout.accepted_frames().count(), 1);
+        assert_eq!(fanout.total_accepted_tokens(), 200);
+
+        // The overspend is reported loudly, not silently truncated.
+        let floods: Vec<_> = fanout.frame_floods().collect();
+        assert_eq!(floods.len(), 1);
+        assert_eq!(floods[0].provider_id, "flood");
+        match floods[0].result {
+            ProviderResult::FrameFlood {
+                returned_frames,
+                max_frames,
+            } => {
+                assert_eq!(returned_frames, 12);
+                assert_eq!(max_frames, 10);
+            }
+            _ => unreachable!(),
+        }
+        // A flood is not a budget lie — the two audits are distinct.
+        assert_eq!(fanout.budget_liars().count(), 0);
+
+        // The usage report accounts every flooded frame as rejected, none served.
+        let report = fanout.usage_report(&query, "2026-07-21T00:00:00Z");
+        let flooder = report
+            .providers
+            .iter()
+            .find(|p| p.provider_id == "flood")
+            .expect("the flooder is still accounted for");
+        assert_eq!(flooder.frames_served, 0);
+        assert_eq!(flooder.frames_rejected, 12);
+        assert_eq!(flooder.token_cost, 0);
+        assert!(flooder.served_frames.is_empty());
+        assert!(report.is_consistent());
     }
 
     #[tokio::test]

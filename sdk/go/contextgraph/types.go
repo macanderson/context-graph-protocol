@@ -68,14 +68,15 @@ type ContextFrame struct {
 
 // ContextQuery is a request to a provider for frames relevant to a goal.
 type ContextQuery struct {
-	Goal                      string   `json:"goal"`
-	QueryText                 string   `json:"query_text,omitempty"`
-	Kinds                     []string `json:"kinds,omitempty"`
-	Anchors                   []string `json:"anchors,omitempty"`
-	MaxFrames                 uint32   `json:"max_frames"`
-	MaxTokens                 uint32   `json:"max_tokens"`
-	AsOf                      string   `json:"as_of,omitempty"`
-	RepresentationPreferences []string `json:"representation_preferences,omitempty"`
+	Goal                      string    `json:"goal"`
+	QueryText                 string    `json:"query_text,omitempty"`
+	Embedding                 []float64 `json:"embedding,omitempty"`
+	Kinds                     []string  `json:"kinds,omitempty"`
+	Anchors                   []string  `json:"anchors,omitempty"`
+	MaxFrames                 uint32    `json:"max_frames"`
+	MaxTokens                 uint32    `json:"max_tokens"`
+	AsOf                      string    `json:"as_of,omitempty"`
+	RepresentationPreferences []string  `json:"representation_preferences,omitempty"`
 }
 
 // ContextQueryResult is the response to a query.

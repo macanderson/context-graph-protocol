@@ -3,7 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use contextgraph_conformance::check_frames;
-use contextgraph_types::{ContextFrame, ContextQuery, ContextQueryResult, PROTOCOL_VERSION};
+use contextgraph_types::{
+    ContextFrame, ContextQuery, ContextQueryResult, PROTOCOL_VERSION, Representation,
+};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -11,8 +13,10 @@ use sha2::{Digest, Sha256};
 const PROFILE: &str = "contextgraph-1.0-draft";
 const PROFILE_VERSION: &str = "1.1.0";
 const GENERATION_COMMAND: &str = "cargo test -p contextgraph-conformance --test golden_fixtures";
-const FIXTURE_FILES: [&str; 5] = [
+const FIXTURE_FILES: [&str; 7] = [
+    "context-frame.compact.valid.json",
     "context-frame.missing-citation.invalid.json",
+    "context-frame.reference.valid.json",
     "context-frame.valid.json",
     "context-query.valid.json",
     "normalization-vectors.json",
@@ -393,6 +397,74 @@ fn frame_digest_cases_pin_default_materialization_jcs_and_array_order() {
     };
     let (passed, evidence) = check_frames(&result);
     assert!(passed, "valid golden frames were rejected: {evidence}");
+}
+
+#[test]
+fn representation_vectors_are_honest_and_structurally_valid() {
+    // The compact/reference goldens added for issue #52. They pin the §6.4
+    // representation surface (P1–P5) and the §B3 canonical cost that the
+    // pre-representation `context-frame.valid.json` predated — the exact gap
+    // downstreams were papering over with local, unattested vectors.
+    //
+    // These are parsed as real `ContextFrame`s rather than through
+    // `strict_frame`: a `compact` frame carries `content_digest`, which the
+    // frozen `contextgraph-1.0-draft` field allow-list deliberately omits (it
+    // predates the representation work). Their conformance is proven below by
+    // `representation_invariants`, §B3 honesty, and `check_frames`.
+    let compact: ContextFrame = read_fixture("context-frame.compact.valid.json");
+    assert_eq!(compact.representation, Representation::Compact);
+    compact
+        .representation_invariants()
+        .expect("compact vector must satisfy its representation invariants (§6.4 P1–P3)");
+    assert!(
+        compact.declares_honest_token_cost(),
+        "compact token_cost must equal the canonical count of its inline content (§B3)"
+    );
+    // The inline hash must be the real SHA-256 of the inline bytes it carries —
+    // a golden that lied here would teach downstreams to lie too.
+    let inline = compact
+        .content
+        .as_deref()
+        .expect("a compact frame carries inline content");
+    assert_eq!(
+        compact.content_digest.as_deref().unwrap(),
+        sha256_digest(inline.as_bytes()),
+        "compact content_digest must be SHA-256 of its inline content bytes"
+    );
+    assert_lowercase_sha256(compact.canonical_content_hash.as_deref().unwrap());
+
+    let reference: ContextFrame = read_fixture("context-frame.reference.valid.json");
+    assert_eq!(reference.representation, Representation::Reference);
+    reference
+        .representation_invariants()
+        .expect("reference vector must satisfy its representation invariants (§6.4 P1–P5)");
+    assert!(
+        reference.content.is_none(),
+        "a reference frame must not inline content (§P4)"
+    );
+    assert_eq!(
+        reference.token_cost, 0,
+        "a reference inlines nothing, so its inline cost is 0 (§P4)"
+    );
+    assert!(
+        reference.declares_honest_token_cost(),
+        "reference inline cost 0 is the canonical count of no content (§B3, §P4)"
+    );
+    assert_lowercase_sha256(reference.canonical_content_hash.as_deref().unwrap());
+
+    // Both must also clear the full frame conformance the suite enforces:
+    // score in [0,1], a title, a citation label, an honest representation,
+    // and §F4 timestamps.
+    let result = ContextQueryResult {
+        frames: vec![compact, reference],
+        truncated: false,
+        dropped_estimate: None,
+    };
+    let (passed, evidence) = check_frames(&result);
+    assert!(
+        passed,
+        "representation golden vectors were rejected by frame conformance: {evidence}"
+    );
 }
 
 #[test]

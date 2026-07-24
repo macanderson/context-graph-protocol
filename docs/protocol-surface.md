@@ -21,9 +21,9 @@ freezes.
 > and **MAY** in this document, the overview, and the build guide are to be
 > interpreted as described in [BCP 14 / RFC 2119](https://www.rfc-editor.org/rfc/rfc2119)
 > when they appear in **bold**. Lowercase "must" / "should" are used in the
-> ordinary sense. The consolidated, authoritative list of conformance
-> requirements is the [§ Conformance requirements](#conformance-requirements)
-> section at the end of this page.
+> ordinary sense. A consolidated index of conformance requirements is the
+> [§ Conformance requirements](#conformance-requirements) section at the end of
+> this page; it mirrors [`SPEC.md`](../SPEC.md), which is normative on conflict.
 
 
 ## The three modules
@@ -43,7 +43,9 @@ sends it a query.
 ```rust
 pub struct DataFlow {
     pub reads: bool,   // can see workspace content via query payloads
-    pub writes: bool,  // persists context/upsert writes
+    pub writes: bool,  // consent-surface declaration: durably persists data derived
+                       // from what it receives. NOT a callable write method — none
+                       // exists in 1.0 (ADR 0004); see the CEP profile for the write path.
     pub egress: bool,  // sends anything off the local machine
     pub egress_scopes: Vec<EgressScope>, // WHERE content goes; empty = boolean-only posture (context-reuse §3)
 }
@@ -56,11 +58,12 @@ pub struct ProviderInfo {
 
 pub struct Capabilities {
     pub query: QueryCapability,
-    pub upsert: bool,
+    pub correlation: bool,    // echoes a request `id` on its reply (SPEC.md §H4)
     pub graph: bool,
     pub embeddings_fingerprint: Option<String>,
-    pub subscribe: bool,  // push invalidation (issue #6)
-    pub verify: bool,     // answers context/verify (context-reuse §4); defaults false
+    pub verify: bool,         // answers context/verify (context-reuse §4); defaults false
+    pub representations: Vec<Representation>, // full/compact/reference offered; empty = full only
+    pub resolve: bool,        // forward-declaration for compact/reference (SPEC.md §6.4.1); no 1.0 wire op
 }
 
 // The closed egress-scope vocabulary (context-reuse §3), serialized as a flat
@@ -71,9 +74,14 @@ pub enum EgressScope {
 
 pub struct QueryCapability {
     pub kinds: Vec<String>,   // e.g. ["doc", "snippet"] — see FrameKind below
-    pub filters: Vec<String>,
 }
 ```
+
+> `upsert`, `subscribe`, and `filters` were removed pre-freeze (ADR 0004): none
+> had a wire method, a host API, or a conformance check. A provider still emitting
+> them handshakes fine — they are ignored unknown fields (SPEC.md §13 U1). The
+> write path and push invalidation return post-freeze as additive extensions
+> (issues #5, #6; the [CEP profile](./profiles/context-exchange-provider.md)).
 
 `DataFlow.egress` is the security-critical field. **A conforming host MUST
 NOT auto-enable a provider that declares `egress: true`** — it must gate that
@@ -97,6 +105,7 @@ pub struct ContextQuery {
     pub max_frames: u32,
     pub max_tokens: u32,
     pub as_of: Option<String>,           // pin retrieval to a point in time (bi-temporal facts)
+    pub representation_preferences: Vec<Representation>, // preferred carry order; empty = full (SPEC.md §6.4)
 }
 
 pub struct ContextQueryResult {
@@ -313,10 +322,13 @@ the schema — it doubles as a usage reference for wiring your own validator.
 
 ## Conformance requirements
 
-This section is the consolidated, authoritative list of what a conforming
-provider and host **MUST** do. The `contextgraph-conformance` suite checks the
-provider-side requirements; a host built on `contextgraph-host` enforces the
-host-side requirements. Bold keywords follow [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
+This section is a **consolidated index** of what a conforming provider and host
+**MUST** do. It **mirrors** the normative requirements in
+[`SPEC.md`](../SPEC.md), which is the single normative home; on any conflict,
+SPEC.md and its stable requirement anchors (H1, B3, …) win. The
+`contextgraph-conformance` suite checks the provider-side requirements; a host
+built on `contextgraph-host` enforces the host-side requirements. Bold keywords
+follow [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 
 ### Handshake and versioning
 
@@ -361,7 +373,8 @@ host-side requirements. Bold keywords follow [RFC 2119](https://www.rfc-editor.o
 ### Context reuse
 
 The full text for these lives in the companion [Context reuse](./context-reuse.md)
-page; they are consolidated here because this section is the authoritative list.
+page and in [`SPEC.md`](../SPEC.md) §§4, 6.3, 9; they are indexed here for
+convenience.
 
 | # | Requirement | Enforced / verified by |
 | - | ----------- | ---------------------- |

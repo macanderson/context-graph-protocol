@@ -9,7 +9,7 @@
  * ```
  */
 import { budgetTokens } from "../src/budget.js";
-import { runStdioProvider, type Provider } from "../src/provider.js";
+import { ProviderError, runStdioProvider, type Provider } from "../src/provider.js";
 import type {
   Capabilities,
   ContextFrame,
@@ -25,6 +25,13 @@ import type {
 // serves and its verify verdicts can never drift apart.
 const GETTING_STARTED_DIGEST = `sha256:${"11".repeat(32)}`;
 const CONFIGURATION_DIGEST = `sha256:${"22".repeat(32)}`;
+
+// The embedding space this fixture declares it indexes (SPEC.md §E1). Its
+// dimension — the 2nd `/`-separated segment (384) — is the length a query
+// embedding must match; a contradicting length is a vector from a different
+// space, rejected `bad_request` rather than scored into meaningless similarity.
+const EMBEDDING_FINGERPRINT = "bge-small-en-v1.5/384/l2";
+const EMBEDDING_DIMENSIONS = Number(EMBEDDING_FINGERPRINT.split("/")[1]);
 
 function currentDigest(frameId: string): string | undefined {
   switch (frameId) {
@@ -93,12 +100,27 @@ const provider: Provider = {
       query: { kinds: ["doc", "snippet"] },
       correlation: true,
       graph: false,
+      // Declaring the embedding space it indexes lets the provider reject a
+      // vector from a different one (§E1). A provider that declares no
+      // fingerprint has nothing to contradict and is not E1-probed.
+      embeddings_fingerprint: EMBEDDING_FINGERPRINT,
       // It can compare a presented digest against what it currently serves.
       verify: true,
     };
   },
 
-  query() {
+  query(query) {
+    // §E1: a query embedding whose length contradicts this provider's declared
+    // fingerprint dimension names a different vector space; scoring it would
+    // yield plausible-looking, meaningless similarity. An honest provider
+    // rejects it `bad_request` rather than pretending.
+    const embedding = query.embedding;
+    if (embedding !== undefined && embedding.length !== EMBEDDING_DIMENSIONS) {
+      throw new ProviderError(
+        `query embedding has ${embedding.length} dimensions; this provider indexes ${EMBEDDING_DIMENSIONS} (${EMBEDDING_FINGERPRINT}) (§E1)`,
+        "bad_request",
+      );
+    }
     return {
       frames: [
         docFrame(

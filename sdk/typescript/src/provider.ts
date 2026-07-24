@@ -37,6 +37,26 @@ export interface Provider {
   verify?(request: VerifyRequest): VerifyResponse | Promise<VerifyResponse>;
 }
 
+/**
+ * A protocol-level error a provider throws from `query` to reply with an
+ * `error` envelope carrying a machine-readable `code` instead of frames.
+ *
+ * This is how a provider refuses a request it cannot honestly serve — e.g.
+ * rejecting a query embedding whose length contradicts its declared
+ * `embeddings_fingerprint` dimension with `bad_request` (`SPEC.md` §E1). The
+ * runtime catches it, echoes the request's correlation `id`, and writes an
+ * `error` envelope. A thrown value that is not a `ProviderError` still
+ * propagates as a crash — only a deliberate, coded refusal is caught.
+ */
+export class ProviderError extends Error {
+  readonly code?: string;
+  constructor(message: string, code?: string) {
+    super(message);
+    this.name = "ProviderError";
+    this.code = code;
+  }
+}
+
 function writeEnvelope(envelope: Envelope): void {
   process.stdout.write(`${JSON.stringify(envelope)}\n`);
 }
@@ -95,9 +115,21 @@ async function handleLine(provider: Provider, line: string): Promise<void> {
       break;
 
     case "query": {
-      const result = await provider.query(envelope.query);
+      let reply: Envelope;
+      try {
+        const result = await provider.query(envelope.query);
+        reply = { type: "frames", result };
+      } catch (error) {
+        // A thrown ProviderError is a deliberate, coded refusal of a request the
+        // provider can't honestly serve (§E1) — reply with an error envelope,
+        // not frames. Anything else is a real crash; let it propagate.
+        if (!(error instanceof ProviderError)) throw error;
+        reply =
+          error.code !== undefined
+            ? { type: "error", message: error.message, code: error.code }
+            : { type: "error", message: error.message };
+      }
       // Echo the correlation id so the host can match reply to request (H4).
-      const reply: Envelope = { type: "frames", result };
       if (envelope.id !== undefined) reply.id = envelope.id;
       writeEnvelope(reply);
       break;

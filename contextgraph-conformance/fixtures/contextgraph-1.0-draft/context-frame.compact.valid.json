@@ -1,0 +1,22 @@
+{
+  "id": "frame:policy:retry:compact",
+  "kind": "doc",
+  "title": "Retry policy — café (distilled)",
+  "content": "Retry policy: exponential backoff, max 3 attempts, 30s total cap, surface the upstream error on final failure.",
+  "content_digest": "sha256:478d25150943e187e27d7546952970ee510dc2901e178757e9f6940790faf2b1",
+  "representation": "compact",
+  "content_fidelity": "summarized",
+  "canonical_content_hash": "sha256:a73a263984fc648c7bd595bfd8ae7a3990c741eea910b40606f6ea5c5ace67ba",
+  "content_ref": {
+    "provider_id": "provider_example",
+    "uri": "context://provider_example/records/retry_policy_v1"
+  },
+  "transform": {
+    "method": "extractive_summary",
+    "implementation": "provider_default",
+    "version": "1"
+  },
+  "score": 0.9,
+  "token_cost": 28,
+  "citation_label": "retry policy.md L10-24"
+}

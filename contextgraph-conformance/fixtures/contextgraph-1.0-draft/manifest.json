@@ -3,8 +3,10 @@
   "fixture_profile_version": "1.1.0",
   "generation_command": "cargo test -p contextgraph-conformance --test golden_fixtures",
   "files": {
+    "context-frame.compact.valid.json": "sha256:6a1e36eff5d4b6e334dc7e782562dfe52fb54eb67a66d01ecffe499d311892cd",
     "context-frame.missing-citation.invalid.json": "sha256:f2c9369017e26b4b9a62441ee6eb947d3813d0c9e16dfd4bcdd178ec85434ef0",
-    "context-frame.valid.json": "sha256:96ac76616eb40caf5f8fb976c7fb6db6fd2b6c68251b550e2ba8910934c1a8f4",
+    "context-frame.reference.valid.json": "sha256:1eaa3619fb30e28d411df2bb1810b14bcf000f6b63cbd182a752eb29449f749c",
+    "context-frame.valid.json": "sha256:0f796e9177a17a26f08258def5133268088a51c6da5d4850c21b1a0f252f1e44",
     "context-query.valid.json": "sha256:affb3c2df4e9623073836e06fb9f02f54a1ac0cf5d40051b9173818679718f45",
     "normalization-vectors.json": "sha256:0cb074c68e06a11081313118bf046dd45e432b412992429b287db3dc46f628db",
     "strict-validation.invalid.json": "sha256:cc651deec23c1296227fd751c41f0c19570c86384a50c178a6c80efa380fa8ed"

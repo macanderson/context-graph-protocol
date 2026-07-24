@@ -23,27 +23,50 @@
 //!   (`docs/context-reuse.md` §4). Skipped when `verify` is not advertised —
 //!   that is the declared fallback, not a failure.
 //! - **budget-honesty** — returned frames' summed `token_cost` never exceeds
-//!   the query budget (SPEC.md §5 — "never lies about cost").
+//!   the query budget, every declared cost is the canonical count, and the
+//!   frame count respects `max_frames` (SPEC.md §7 — "never lies about cost").
+//! - **as-of-temporal** — a query pinned with `as_of` gets back no frame whose
+//!   `valid_from` is after the pin, i.e. no content that was not yet true at
+//!   the pinned instant (SPEC.md §6.1). SHOULD-strength and one-sided: a
+//!   provider that returns fewer frames, or none, never fails it.
 //! - **shutdown-clean** — the provider tears down without error (SPEC.md §3).
 //! - **malformed-input-tolerance** — a garbage line is ignored-or-errored,
 //!   never crashing the host (SPEC.md §10, task deliverable). Wire-level, so it
 //!   applies to stdio providers.
+//! - **embedding-fingerprint** — a provider declaring an
+//!   `embeddings_fingerprint` rejects a query embedding whose length
+//!   contradicts its declared dimension with `bad_request` (SPEC.md §E1). A
+//!   SHOULD, gated on the provider declaring a fingerprint; wire-level, so like
+//!   the malformed probe it applies to stdio providers.
 //!
 //! The suite is deliberately adversarial: pointed at a provider that lies
 //! about costs, emits an out-of-range score, omits a citation label, or dies
 //! mid-query, the matching check fails loudly. The bundled `contextgraph-example-docs`
 //! fixture has `--misbehave` flags that trip each one, proving the suite
 //! catches a broken provider (task deliverable).
+//!
+//! The **host** side of the protocol has binding rules too, which the
+//! provider-facing checks above cannot exercise. Those live in
+//! [`host_conformance`], the dual suite: [`run_host_conformance`] drives the
+//! reference [`Host`] against adversarial in-process providers and asserts it
+//! upholds them (`SPEC.md` §11.1; issue #14).
 
 use contextgraph_host::{
     ConsentRecord, ContextProvider, DropReason, Host, HostError, RawStdioConnection,
 };
+use contextgraph_types::capability::fingerprint_dimensions;
 use contextgraph_types::{
-    Capabilities, ConsentReceipt, ContextQuery, ContextQueryResult, FrameId, Grantor, ProviderInfo,
+    Capabilities, ConsentReceipt, ContextQuery, ContextQueryResult, ErrorCode, FrameId, Grantor,
+    ProviderInfo,
 };
 
+pub mod host_conformance;
 mod report;
 
+pub use host_conformance::{
+    HCHECK_BUDGET_DROP, HCHECK_CONSENT_GATE, HCHECK_CONTENT_QUOTING, HCHECK_FRAME_LIMIT,
+    HCHECK_PROVENANCE_BYTES, HCHECK_SCOPE_RECEIPT, run_host_conformance,
+};
 pub use report::{CheckResult, CheckStatus, ConformanceReport};
 
 /// The stable check names, so reports and callers agree on identifiers.
@@ -52,8 +75,10 @@ pub const CHECK_CONSENT_SCOPE: &str = "consent-scope";
 pub const CHECK_FRAME_VALIDITY: &str = "frame-validity";
 pub const CHECK_VERIFY_HONESTY: &str = "verify-honesty";
 pub const CHECK_BUDGET_HONESTY: &str = "budget-honesty";
+pub const CHECK_AS_OF: &str = "as-of-temporal";
 pub const CHECK_SHUTDOWN: &str = "shutdown-clean";
 pub const CHECK_MALFORMED: &str = "malformed-input-tolerance";
+pub const CHECK_EMBEDDING_FINGERPRINT: &str = "embedding-fingerprint";
 
 /// How to reach the provider under test. `contextgraph-inspect` builds one of these
 /// from its CLI arguments; tests build them directly.
@@ -127,6 +152,7 @@ pub async fn run_conformance(target: ProviderTarget) -> ConformanceReport {
                 CHECK_VERIFY_HONESTY,
                 CHECK_CONSENT_SCOPE,
                 CHECK_BUDGET_HONESTY,
+                CHECK_AS_OF,
                 CHECK_SHUTDOWN,
             ] {
                 checks.push(CheckResult::skip(name, "handshake failed"));
@@ -135,11 +161,20 @@ pub async fn run_conformance(target: ProviderTarget) -> ConformanceReport {
     }
 
     match stdio_probe {
-        Some((program, args)) => checks.push(malformed_stdio_probe(&program, &args).await),
-        None => checks.push(CheckResult::skip(
-            CHECK_MALFORMED,
-            "wire-level malformed-input probe applies to stdio providers only",
-        )),
+        Some((program, args)) => {
+            checks.push(malformed_stdio_probe(&program, &args).await);
+            checks.push(embedding_fingerprint_stdio_probe(&program, &args).await);
+        }
+        None => {
+            checks.push(CheckResult::skip(
+                CHECK_MALFORMED,
+                "wire-level malformed-input probe applies to stdio providers only",
+            ));
+            checks.push(CheckResult::skip(
+                CHECK_EMBEDDING_FINGERPRINT,
+                "wire-level §E1 bad_request probe applies to stdio providers only",
+            ));
+        }
     }
 
     ConformanceReport {
@@ -240,6 +275,10 @@ async fn run_query_and_shutdown_checks(
             checks.push(CheckResult::fail(CHECK_BUDGET_HONESTY, evidence));
         }
     }
+
+    // The temporal probe fires its own `as_of`-pinned query, so it stands on
+    // its own regardless of how the unpinned query above fared.
+    checks.push(check_as_of(&host, id).await);
 
     let results = host.shutdown().await;
     match results.iter().find(|(pid, _)| pid == id) {
@@ -445,6 +484,179 @@ async fn malformed_stdio_probe(program: &str, args: &[String]) -> CheckResult {
     }
 }
 
+/// Wire-level probe for §E1: a provider that declares an
+/// `embeddings_fingerprint` **SHOULD** reject a query embedding whose length
+/// contradicts that fingerprint's dimension with `bad_request`, rather than
+/// scoring a vector from a different space into plausible-looking, meaningless
+/// similarity.
+///
+/// Driven on the raw wire like [`malformed_stdio_probe`], because the honest
+/// reply is an `error` envelope carrying a *code* — and the host's query path
+/// collapses that to a bare message, losing the `bad_request` §E1 names. Reading
+/// the code directly is what makes this checkable, and is why the probe is
+/// stdio-only (skipped for in-process/HTTP targets — a documented limitation).
+///
+/// Gated on the provider declaring a fingerprint: one that declares none has no
+/// dimension to contradict and is skipped, exactly as a provider that does not
+/// advertise `verify` skips `verify-honesty`.
+async fn embedding_fingerprint_stdio_probe(program: &str, args: &[String]) -> CheckResult {
+    let mut conn = match RawStdioConnection::spawn(program, args).await {
+        Ok(conn) => conn,
+        Err(error) => {
+            return CheckResult::fail(
+                CHECK_EMBEDDING_FINGERPRINT,
+                format!("could not spawn provider: {error}"),
+            );
+        }
+    };
+    let caps = match conn.handshake().await {
+        Ok((_, caps)) => caps,
+        Err(error) => {
+            return CheckResult::skip(
+                CHECK_EMBEDDING_FINGERPRINT,
+                format!("handshake failed before the §E1 probe could run: {error}"),
+            );
+        }
+    };
+    let Some(fingerprint) = caps.embeddings_fingerprint.clone() else {
+        return CheckResult::skip(
+            CHECK_EMBEDDING_FINGERPRINT,
+            "provider declares no embeddings_fingerprint, so §E1 has no dimension to contradict",
+        );
+    };
+    let Some(dimension) = fingerprint_dimensions(&fingerprint) else {
+        return CheckResult::skip(
+            CHECK_EMBEDDING_FINGERPRINT,
+            format!(
+                "fingerprint `{fingerprint}` declares no parseable dimension, so §E1 cannot be probed"
+            ),
+        );
+    };
+
+    // A length guaranteed to differ from the declared dimension — the
+    // wrong-space vector §E1 says to reject.
+    let wrong_len = if dimension == 1 { 2 } else { 1 };
+    let mut query = sample_query();
+    query.embedding = Some(vec![0.0; wrong_len]);
+    if let Err(error) = conn
+        .send(&contextgraph_host::Envelope::Query { id: None, query })
+        .await
+    {
+        return CheckResult::fail(
+            CHECK_EMBEDDING_FINGERPRINT,
+            format!("provider closed its input before the §E1 probe query: {error}"),
+        );
+    }
+    match conn.recv().await {
+        // The recommended reply: it named the request wrong with the code §E1
+        // specifies.
+        Ok(contextgraph_host::Envelope::Error {
+            code: Some(ErrorCode::BadRequest),
+            ..
+        }) => CheckResult::pass(
+            CHECK_EMBEDDING_FINGERPRINT,
+            format!(
+                "provider declares {fingerprint} ({dimension}-dim) and rejected a {wrong_len}-dim embedding with `bad_request` (§E1)"
+            ),
+        ),
+        // Refused, but not with the code §E1 recommends. Refusing at all is the
+        // load-bearing half of a SHOULD, so this passes with a note.
+        Ok(contextgraph_host::Envelope::Error { code, message, .. }) => CheckResult::pass(
+            CHECK_EMBEDDING_FINGERPRINT,
+            format!(
+                "provider rejected a {wrong_len}-dim embedding against {fingerprint} with `{}` rather than the `bad_request` §E1 recommends: {message}",
+                code.unwrap_or(ErrorCode::Internal)
+            ),
+        ),
+        // The violation: it *scored* a vector from a different space.
+        Ok(contextgraph_host::Envelope::Frames { .. }) => CheckResult::fail(
+            CHECK_EMBEDDING_FINGERPRINT,
+            format!(
+                "provider declares {fingerprint} ({dimension}-dim) but scored a {wrong_len}-dim embedding into frames instead of rejecting it — meaningless similarity from a different vector space (§E1)"
+            ),
+        ),
+        Ok(other) => CheckResult::fail(
+            CHECK_EMBEDDING_FINGERPRINT,
+            format!(
+                "provider answered the §E1 probe with an unexpected `{}` envelope",
+                contextgraph_host::envelope_kind(&other)
+            ),
+        ),
+        Err(HostError::ProviderCrashed { .. }) => CheckResult::fail(
+            CHECK_EMBEDDING_FINGERPRINT,
+            "provider crashed on a dimension-mismatched embedding — §E1 asks it to reply `bad_request`, not die",
+        ),
+        Err(error) => CheckResult::fail(
+            CHECK_EMBEDDING_FINGERPRINT,
+            format!("provider mishandled the §E1 probe: {error}"),
+        ),
+    }
+}
+
+/// The instant the `as_of` probe pins retrieval to (`SPEC.md` §6.1). Chosen to
+/// fall *between* the reference fixture's two frame validity windows, so an
+/// honest provider's pinned answer is observably narrower than its unpinned one.
+const AS_OF_PIN: &str = "2026-07-01T00:00:00Z";
+
+/// Probe `as_of` temporal pinning (`SPEC.md` §6.1, §F4). `as_of` pins retrieval
+/// to an instant; a frame whose `valid_from` is strictly after the pin is
+/// content that was not yet true then — exactly what the pin exists to keep out
+/// of the answer.
+///
+/// SHOULD-strength and deliberately one-sided: it never penalizes a provider for
+/// returning *fewer* frames (or none) under a pin, because implementing
+/// time-travel retrieval is optional. It fails only on a frame the provider
+/// *did* return whose `valid_from` provably postdates the pin — a temporal lie
+/// no matter how sophisticated the provider's time handling. Comparison is
+/// lexicographic on the UTC strings, which is chronological because the
+/// timestamp profile admits one spelling per instant (§6.1). A provider serving
+/// no timestamped content trivially passes.
+async fn check_as_of(host: &Host, id: &str) -> CheckResult {
+    match host.query_provider(id, &as_of_query()).await {
+        Ok(result) => {
+            let not_yet_valid: Vec<String> = result
+                .frames
+                .iter()
+                .filter_map(|frame| {
+                    frame
+                        .valid_from
+                        .as_deref()
+                        .filter(|valid_from| *valid_from > AS_OF_PIN)
+                        .map(|valid_from| format!("{} (valid_from={valid_from})", frame.id))
+                })
+                .collect();
+            if not_yet_valid.is_empty() {
+                CheckResult::pass(
+                    CHECK_AS_OF,
+                    format!(
+                        "as_of={AS_OF_PIN}: none of the {} returned frame(s) is dated after the pin",
+                        result.frames.len()
+                    ),
+                )
+            } else {
+                CheckResult::fail(
+                    CHECK_AS_OF,
+                    format!(
+                        "provider returned {} frame(s) whose valid_from is after as_of={AS_OF_PIN} — content that was not yet true at the pinned instant (§6.1): {}",
+                        not_yet_valid.len(),
+                        not_yet_valid.join(", ")
+                    ),
+                )
+            }
+        }
+        Err(error) => CheckResult::fail(CHECK_AS_OF, format!("as_of query failed: {error}")),
+    }
+}
+
+/// The [`sample_query`] pinned to [`AS_OF_PIN`] — the query the temporal probe
+/// fires. Everything else is held equal so only the pin varies.
+fn as_of_query() -> ContextQuery {
+    ContextQuery {
+        as_of: Some(AS_OF_PIN.into()),
+        ..sample_query()
+    }
+}
+
 /// The query the suite probes every provider with — no `kinds` filter, so any
 /// provider is asked for its best frames (SPEC.md §5).
 pub fn sample_query() -> ContextQuery {
@@ -486,6 +698,13 @@ pub fn check_frames(result: &ContextQueryResult) -> (bool, String) {
                 "frame[{i}] is missing a citation_label (§F3 — never a bare id)"
             )),
         }
+        // §P1–P3: a frame must not lie about how it carries its content — a
+        // `reference` carrying inline content, a `compact` missing its
+        // canonical hash. `representation_invariants` names the exact breach.
+        // The predicate shipped in PR #42 with no caller; this is the caller.
+        if let Err(violation) = frame.representation_invariants() {
+            problems.push(format!("frame[{i}] {violation} (§P1–P3)"));
+        }
         // §F4: temporal fields must be in the protocol's timestamp profile.
         // Naming the offending field is what makes this actionable — before
         // this check, `"valid_from": "last tuesday"` was fully conformant and
@@ -517,7 +736,7 @@ pub fn check_frames(result: &ContextQueryResult) -> (bool, String) {
         (
             true,
             format!(
-                "{} frame(s) — scores in [0,1], titles, citation labels, RFC 3339 timestamps, well-formed digests, labelled relations",
+                "{} frame(s) — scores in [0,1], titles, citation labels, honest representations, RFC 3339 timestamps, well-formed digests, labelled relations",
                 result.frames.len()
             ),
         )

@@ -81,6 +81,8 @@ jobs:
         run: ./.github/scripts/conformance-green.sh
       - name: Suite is red against every --misbehave mode
         run: ./.github/scripts/conformance-red.sh
+      - name: Reference host upholds every host-binding rule (§11.1, #14)
+        run: ./.github/scripts/host-conformance.sh
 
   sdk-typescript:
     name: sdk (typescript) is a conformant implementation

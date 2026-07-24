@@ -1,10 +1,9 @@
 # Publishing the Context Graph Protocol crates to crates.io
 
 This documents the release process for the three **Context Graph Protocol**
-crates — `contextgraph-types`, `contextgraph-host`, `contextgraph-conformance` — to crates.io. It is
-distinct from [`RELEASING.md`](./RELEASING.md), which covers the `stella`
-binary's GitHub Releases / Homebrew pipeline; these crates are published
-independently, on their own cadence, and are not part of that workflow.
+crates — `contextgraph-types`, `contextgraph-host`, `contextgraph-conformance` — to crates.io. These
+crates are published independently of any downstream consumer (such as the
+`stella` binary), on their own cadence.
 
 **Nobody has run these publish commands yet.** The workspace default is
 `publish = false`; the three Context Graph Protocol crates override it explicitly (see their
@@ -46,8 +45,9 @@ This is also why local pre-publish verification is asymmetric:
 ## One-time prerequisites
 
 1. A crates.io account with a verified email, linked to a GitHub account with
-   write access to `macanderson/stella` (or another account willing to transfer
-   ownership to the `macanderson` GitHub org's crates.io team once one exists).
+   write access to `macanderson/context-graph-protocol` (or another account
+   willing to transfer ownership to the `macanderson` GitHub org's crates.io
+   team once one exists).
 2. `cargo login <token>` locally, using a crates.io API token scoped to
    `publish-new` + `publish-update` (crates.io Account Settings → API
    Tokens). Do not commit this token; it's not an env var this repo reads.
@@ -116,12 +116,12 @@ on crates.io before the next goes up.
   && cargo add contextgraph-types contextgraph-conformance` should resolve from the real
   registry with no path override, and `cargo test` (after writing a trivial
   conformance-suite invocation) should pass — proving "an external crate can
-  depend on `contextgraph-types` and pass `contextgraph-conformance` without vendoring stella"
-  (the issue's acceptance bar) against the *published* crates, not just the
-  workspace.
-- Tag the release in this repo for traceability, e.g. `contextgraph-v0.1.0` (distinct
-  from the `stella` binary's `v<version>` tags in `RELEASING.md`, so the two
-  release trains don't collide in the tag namespace).
+  depend on `contextgraph-types` and pass `contextgraph-conformance` without
+  vendoring any downstream code" (the issue's acceptance bar) against the
+  *published* crates, not just the workspace.
+- Tag the release in this repo for traceability, e.g. `contextgraph-v0.1.0`. Use
+  the `contextgraph-` tag prefix so the crate release train never collides with a
+  downstream consumer's own version tags in the tag namespace.
 
 ## This is a one-way door
 

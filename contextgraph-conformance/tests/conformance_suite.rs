@@ -4,9 +4,9 @@
 //! proving the suite catches a broken provider (task deliverable).
 
 use contextgraph_conformance::{
-    CHECK_BUDGET_HONESTY, CHECK_CONSENT_SCOPE, CHECK_FRAME_VALIDITY, CHECK_HANDSHAKE,
-    CHECK_MALFORMED, CHECK_SHUTDOWN, CHECK_VERIFY_HONESTY, CheckStatus, ProviderTarget,
-    run_conformance,
+    CHECK_AS_OF, CHECK_BUDGET_HONESTY, CHECK_CONSENT_SCOPE, CHECK_EMBEDDING_FINGERPRINT,
+    CHECK_FRAME_VALIDITY, CHECK_HANDSHAKE, CHECK_MALFORMED, CHECK_SHUTDOWN, CHECK_VERIFY_HONESTY,
+    CheckStatus, ProviderTarget, run_conformance,
 };
 
 /// Path to the fixture binary, built automatically for integration tests.
@@ -38,16 +38,18 @@ async fn a_well_behaved_provider_is_fully_conformant() {
         "expected conformant; failures: {:?}",
         report.failures().collect::<Vec<_>>()
     );
-    // All seven checks ran and passed (none skipped for a stdio provider).
-    assert_eq!(report.checks.len(), 7);
+    // All nine checks ran and passed (none skipped for a stdio provider).
+    assert_eq!(report.checks.len(), 9);
     for name in [
         CHECK_HANDSHAKE,
         CHECK_CONSENT_SCOPE,
         CHECK_FRAME_VALIDITY,
         CHECK_VERIFY_HONESTY,
         CHECK_BUDGET_HONESTY,
+        CHECK_AS_OF,
         CHECK_SHUTDOWN,
         CHECK_MALFORMED,
+        CHECK_EMBEDDING_FINGERPRINT,
     ] {
         assert_eq!(status_of(&report, name), CheckStatus::Pass, "{name}");
     }
@@ -136,4 +138,51 @@ async fn advertising_verify_while_vouching_for_nothing_fails_verify_honesty() {
     assert!(!report.passed());
     assert_eq!(status_of(&report, CHECK_VERIFY_HONESTY), CheckStatus::Fail);
     assert_eq!(status_of(&report, CHECK_HANDSHAKE), CheckStatus::Pass);
+}
+
+#[tokio::test]
+async fn a_frame_that_lies_about_its_representation_fails_frame_validity() {
+    // A `reference` frame carrying inline content violates its declared shape
+    // (§P1–P3). The predicate `representation_invariants` shipped in PR #42
+    // with no caller; this is the witness proving the caller now exists.
+    let report = run_conformance(target(&["--misbehave", "lying-representation"])).await;
+    assert!(!report.passed());
+    assert_eq!(status_of(&report, CHECK_FRAME_VALIDITY), CheckStatus::Fail);
+    // The frame is otherwise well-formed and honestly costed, so only the
+    // representation invariant catches it.
+    for name in [CHECK_HANDSHAKE, CHECK_BUDGET_HONESTY, CHECK_AS_OF] {
+        assert_eq!(status_of(&report, name), CheckStatus::Pass, "{name}");
+    }
+}
+
+#[tokio::test]
+async fn returning_not_yet_valid_content_fails_as_of_temporal() {
+    // A frame whose `valid_from` is after the `as_of` pin is content that was
+    // not yet true at the pinned instant (§6.1). The honest fixture omits it;
+    // `ignore-as-of` returns it anyway.
+    let report = run_conformance(target(&["--misbehave", "ignore-as-of"])).await;
+    assert!(!report.passed());
+    assert_eq!(status_of(&report, CHECK_AS_OF), CheckStatus::Fail);
+    // The unpinned query is untouched, so frame-validity and budget still pass.
+    for name in [CHECK_HANDSHAKE, CHECK_FRAME_VALIDITY, CHECK_BUDGET_HONESTY] {
+        assert_eq!(status_of(&report, name), CheckStatus::Pass, "{name}");
+    }
+}
+
+#[tokio::test]
+async fn scoring_a_dimension_mismatched_embedding_fails_embedding_fingerprint() {
+    // The provider declares an `embeddings_fingerprint`, so a query embedding
+    // whose length contradicts its dimension must be rejected `bad_request`
+    // (§E1). `accept-bad-embedding` scores it anyway.
+    let report = run_conformance(target(&["--misbehave", "accept-bad-embedding"])).await;
+    assert!(!report.passed());
+    assert_eq!(
+        status_of(&report, CHECK_EMBEDDING_FINGERPRINT),
+        CheckStatus::Fail
+    );
+    // Nothing else is disturbed — the frames it serves for a normal query are
+    // still well-formed and honestly costed.
+    for name in [CHECK_HANDSHAKE, CHECK_FRAME_VALIDITY, CHECK_BUDGET_HONESTY] {
+        assert_eq!(status_of(&report, name), CheckStatus::Pass, "{name}");
+    }
 }

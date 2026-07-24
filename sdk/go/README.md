@@ -36,7 +36,7 @@ func (myProvider) Capabilities() cg.Capabilities {
 	return cg.Capabilities{Query: cg.QueryCapability{Kinds: []string{"doc"}}, Correlation: true}
 }
 
-func (myProvider) Query(_ cg.ContextQuery) cg.ContextQueryResult {
+func (myProvider) Query(_ cg.ContextQuery) (cg.ContextQueryResult, error) {
 	content := "Install the binding, then implement the required methods."
 	return cg.ContextQueryResult{
 		Frames: []cg.ContextFrame{{
@@ -50,7 +50,7 @@ func (myProvider) Query(_ cg.ContextQuery) cg.ContextQueryResult {
 			Provenance:    []cg.Provenance{{Type: "file", URI: "file:///docs/start.md", Range: "L1-10", Digest: "sha256:1111111111111111111111111111111111111111111111111111111111111111"}},
 			CitationLabel: "start.md L1-10",
 		}},
-	}
+	}, nil
 }
 
 func main() { cg.RunStdioProvider(myProvider{}) }

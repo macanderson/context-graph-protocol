@@ -24,8 +24,8 @@ contract — if it does any of the following:
 
 - adds, removes, or renames a field in the wire types (`contextgraph-types`);
 - changes a field's required-ness or its serialized name;
-- adds or tightens a [conformance requirement](./docs/protocol-surface.md#conformance-requirements);
-- changes the [version-compatibility rule](./docs/protocol-surface.md#version-strings); or
+- adds or tightens a [conformance requirement](./SPEC.md) (the normative home; [protocol-surface.md](./docs/protocol-surface.md#conformance-requirements) mirrors it);
+- changes the [version-compatibility rule](./SPEC.md) (SPEC.md §3.1); or
 - changes the envelope vocabulary or framing.
 
 A change is **non-normative** if it only touches host internals, documentation,
@@ -64,8 +64,8 @@ a removed or renamed field requires a new major family (`contextgraph/2`).
 - **No blocking normative issues.** There are no open normative issues the
   maintainer considers blocking.
 - **Complete enforcement.** The conformance suite's checks are agreed to fully
-  enforce the documented
-  [conformance requirements](./docs/protocol-surface.md#conformance-requirements).
+  enforce the documented conformance requirements in [`SPEC.md`](./SPEC.md)
+  (indexed in [protocol-surface.md](./docs/protocol-surface.md#conformance-requirements)).
 
 At the freeze, the `-draft` suffix is dropped, the crates move to `1.0.0` in
 lockstep, and the major-family compatibility rule guarantees that

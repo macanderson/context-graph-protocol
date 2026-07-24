@@ -15,12 +15,18 @@ use std::io::{BufRead, Write};
 
 use clap::{Parser, ValueEnum};
 use contextgraph_host::wire::Envelope;
-use contextgraph_types::capability::QueryCapability;
+use contextgraph_types::capability::{QueryCapability, fingerprint_dimensions};
 use contextgraph_types::{
-    Capabilities, ContextFrame, ContextQueryResult, DataFlow, EgressScope, ErrorCode, FrameKind,
-    FrameVerdict, PROTOCOL_VERSION, Provenance, ProviderInfo, Representation, Verdict,
+    Capabilities, ContextFrame, ContextQuery, ContextQueryResult, DataFlow, EgressScope, ErrorCode,
+    FrameKind, FrameVerdict, PROTOCOL_VERSION, Provenance, ProviderInfo, Representation, Verdict,
     VerifyRequest, VerifyResponse, budget_tokens,
 };
+
+/// The embedding space this fixture declares it indexes (`SPEC.md` §E1). Its
+/// dimension (384) is the number a query embedding's length must match; a
+/// contradicting length is rejected `bad_request` unless the fixture is in
+/// `accept-bad-embedding` mode.
+const EMBEDDING_FINGERPRINT: &str = "bge-small-en-v1.5/384/l2";
 
 /// Ways this fixture can deliberately violate the protocol, each tripping a
 /// different conformance check.
@@ -62,6 +68,18 @@ enum Misbehave {
     /// Answer a correlated query without echoing its `id` (trips
     /// `correlation`).
     DropCorrelationId,
+    /// Emit a frame that lies about how it carries its content — a `reference`
+    /// representation still carrying inline content, which its declared shape
+    /// forbids (trips `frame-validity` §P1–P3).
+    LyingRepresentation,
+    /// Return a frame whose `valid_from` is after the query's `as_of` pin —
+    /// content that was not yet true at the pinned instant (trips
+    /// `as-of-temporal` §F4/§6.1).
+    IgnoreAsOf,
+    /// Score a query embedding whose length contradicts the declared
+    /// `embeddings_fingerprint` dimension instead of rejecting it (trips
+    /// `embedding-fingerprint` §E1).
+    AcceptBadEmbedding,
     /// Answer `valid` to every `context/verify` entry without comparing
     /// digests — the rubber stamp that makes reuse unsafe (trips
     /// `verify-honesty`).
@@ -140,7 +158,7 @@ fn main() {
                     },
                 );
             }
-            Envelope::Query { id, .. } => {
+            Envelope::Query { id, query } => {
                 if args.misbehave == Some(Misbehave::CrashOnQuery) {
                     std::process::exit(1);
                 }
@@ -153,12 +171,37 @@ fn main() {
                 } else {
                     id
                 };
+                // §E1: a query embedding whose length contradicts this
+                // provider's declared fingerprint dimension names a different
+                // vector space; scoring it would yield plausible-looking,
+                // meaningless similarity. An honest provider rejects it
+                // `bad_request` rather than pretending. `accept-bad-embedding`
+                // scores it anyway, which the `embedding-fingerprint` probe
+                // catches.
+                if args.misbehave != Some(Misbehave::AcceptBadEmbedding)
+                    && let Some(error) = embedding_dimension_error(&query, echoed.clone())
+                {
+                    write_envelope(&mut stdout, &error);
+                    continue;
+                }
+                let mut frames = canned_frames(args.misbehave);
+                // §F4/§6.1: honor an `as_of` pin — content not yet true at the
+                // pinned instant is not returned. The timestamp profile is one
+                // spelling per instant, so a lexicographic compare on the UTC
+                // strings *is* a chronological one. `ignore-as-of` skips this,
+                // returning a not-yet-valid frame the `as-of-temporal` probe
+                // catches.
+                if args.misbehave != Some(Misbehave::IgnoreAsOf)
+                    && let Some(as_of) = query.as_of.as_deref()
+                {
+                    frames.retain(|f| !f.valid_from.as_deref().is_some_and(|vf| vf > as_of));
+                }
                 write_envelope(
                     &mut stdout,
                     &Envelope::Frames {
                         id: echoed,
                         result: ContextQueryResult {
-                            frames: canned_frames(args.misbehave),
+                            frames,
                             truncated: false,
                             dropped_estimate: None,
                         },
@@ -225,7 +268,10 @@ fn capabilities() -> Capabilities {
         },
         correlation: true,
         graph: false,
-        embeddings_fingerprint: None,
+        // Declaring the embedding space it indexes lets the provider reject a
+        // vector from a different one (§E1). A provider that declares no
+        // fingerprint has nothing to contradict and is not E1-probed.
+        embeddings_fingerprint: Some(EMBEDDING_FINGERPRINT.into()),
         // This fixture can compare a presented digest against the one it
         // currently serves, so it advertises pull-based verification. It serves
         // inline full frames only; it does not resolve references.
@@ -233,6 +279,31 @@ fn capabilities() -> Capabilities {
         representations: vec![],
         resolve: false,
     }
+}
+
+/// The `bad_request` reply for a query embedding whose length contradicts this
+/// provider's declared fingerprint dimension (`SPEC.md` §E1), or `None` when the
+/// query carries no embedding or one of the correct length.
+///
+/// A vector of the wrong dimension is not "close enough" — it is a vector from a
+/// different space, and the similarity scores it would produce are meaningless.
+/// Replying with a *code* (not just prose) is what lets a host tell "your
+/// request was wrong" from "I am broken" without sniffing message strings.
+fn embedding_dimension_error(query: &ContextQuery, id: Option<String>) -> Option<Envelope> {
+    let embedding = query.embedding.as_ref()?;
+    let expected = fingerprint_dimensions(EMBEDDING_FINGERPRINT)?;
+    if embedding.len() == expected {
+        return None;
+    }
+    Some(Envelope::Error {
+        id,
+        code: Some(ErrorCode::BadRequest),
+        message: format!(
+            "query embedding has {} dimensions; this provider indexes {} ({EMBEDDING_FINGERPRINT}) (§E1)",
+            embedding.len(),
+            expected
+        ),
+    })
 }
 
 /// A syntactically valid `sha256:` digest for a fixture whose bytes are canned
@@ -311,6 +382,7 @@ fn canned_frames(misbehave: Option<Misbehave>) -> Vec<ContextFrame> {
     }
 
     vec![
+        // Valid since the start of the year — before the `as_of` probe's pin.
         doc_frame(
             "frm_getting_started",
             "Getting Started",
@@ -318,10 +390,13 @@ fn canned_frames(misbehave: Option<Misbehave>) -> Vec<ContextFrame> {
              the four required methods.",
             "getting-started.md",
             "L1-40",
+            "2026-01-01T00:00:00Z",
             0.82,
             1,
             misbehave,
         ),
+        // Became true only in the autumn — *after* the `as_of` probe's pin, so
+        // an as_of-honoring provider omits it from a mid-year pinned query.
         doc_frame(
             "frm_configuration",
             "Configuration",
@@ -329,6 +404,7 @@ fn canned_frames(misbehave: Option<Misbehave>) -> Vec<ContextFrame> {
              gate consent before sending any query.",
             "configuration.md",
             "L1-25",
+            "2026-09-01T00:00:00Z",
             0.61,
             2,
             misbehave,
@@ -337,14 +413,22 @@ fn canned_frames(misbehave: Option<Misbehave>) -> Vec<ContextFrame> {
     .into_iter()
     .enumerate()
     .map(|(index, mut frame)| {
-        // Only the first frame carries the score/citation defects, so a single
-        // failure is attributable to a single frame in the evidence string.
+        // Only the first frame carries the score/citation/representation
+        // defects, so a single failure is attributable to a single frame in
+        // the evidence string.
         if index == 0 {
             if bad_score {
                 frame.score = 1.5;
             }
             if empty_citation {
                 frame.citation_label = Some(String::new());
+            }
+            if misbehave == Some(Misbehave::LyingRepresentation) {
+                // Claim `reference` while still carrying inline content and an
+                // inline digest — a structural lie the representation forbids
+                // (§P3). The frame is otherwise well-formed and honestly
+                // costed, so only `representation_invariants` catches it.
+                frame.representation = Representation::Reference;
             }
         }
         frame
@@ -353,6 +437,10 @@ fn canned_frames(misbehave: Option<Misbehave>) -> Vec<ContextFrame> {
 }
 
 /// A frame with the defect selected by `misbehave` applied, if any.
+///
+/// `valid_from` is the instant the frame's content became true in the world
+/// (§6.1); callers give the two canned frames *disjoint* windows so an `as_of`
+/// pin between them is observable — the `as-of-temporal` probe depends on it.
 #[allow(clippy::too_many_arguments)]
 fn doc_frame(
     id: &str,
@@ -360,6 +448,7 @@ fn doc_frame(
     content: &str,
     file: &str,
     range: &str,
+    valid_from: &str,
     score: f32,
     digest_seed: u8,
     misbehave: Option<Misbehave>,
@@ -399,7 +488,7 @@ fn doc_frame(
         tokenizer_ref: None,
         valid_from: Some(match misbehave {
             Some(Misbehave::BadTimestamp) => "last tuesday".into(),
-            _ => "2026-01-01T00:00:00Z".to_string(),
+            _ => valid_from.to_string(),
         }),
         valid_to: None,
         recorded_at: Some("2026-07-20T18:00:00Z".into()),
@@ -435,6 +524,7 @@ fn base_frame(
         "x",
         "flood.md",
         "L1",
+        "2026-01-01T00:00:00Z",
         0.5,
         3,
         misbehave.filter(|m| !matches!(m, Misbehave::FloodFrames)),
