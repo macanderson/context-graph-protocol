@@ -407,7 +407,7 @@ fn is_anchored(frame: &ContextFrame, anchors: &[String]) -> bool {
         || frame
             .relations
             .iter()
-            .any(|r| anchors.iter().any(|a| *a == r.target_uri))
+            .any(|r| anchors.contains(&r.target_uri))
 }
 
 fn canned_frames(misbehave: Option<Misbehave>) -> Vec<ContextFrame> {
