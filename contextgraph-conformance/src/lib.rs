@@ -82,6 +82,7 @@ pub const CHECK_MALFORMED: &str = "malformed-input-tolerance";
 pub const CHECK_EMBEDDING_FINGERPRINT: &str = "embedding-fingerprint";
 pub const CHECK_CORRELATION: &str = "correlation";
 pub const CHECK_KINDS_FILTER: &str = "kinds-filter";
+pub const CHECK_ANCHOR_RELEVANCE: &str = "anchor-relevance";
 
 /// How to reach the provider under test. `contextgraph-inspect` builds one of these
 /// from its CLI arguments; tests build them directly.
@@ -157,6 +158,7 @@ pub async fn run_conformance(target: ProviderTarget) -> ConformanceReport {
                 CHECK_BUDGET_HONESTY,
                 CHECK_AS_OF,
                 CHECK_KINDS_FILTER,
+                CHECK_ANCHOR_RELEVANCE,
                 CHECK_SHUTDOWN,
             ] {
                 checks.push(CheckResult::skip(name, "handshake failed"));
@@ -291,6 +293,7 @@ async fn run_query_and_shutdown_checks(
     // unfiltered query above deliberately never does.
     checks.push(check_as_of(&host, id).await);
     checks.push(check_kinds_filter(&host, id, caps).await);
+    checks.push(check_anchor_relevance(&host, id, caps).await);
 
     let results = host.shutdown().await;
     match results.iter().find(|(pid, _)| pid == id) {
@@ -844,6 +847,104 @@ fn frame_kind_from_wire(kind: &str) -> Option<FrameKind> {
         "graph" => Some(FrameKind::Graph),
         _ => None,
     }
+}
+
+/// **§G3/§G4** — a graph-declaring provider must actually do something with
+/// `anchors`.
+///
+/// The graph is what the protocol is *named* for, and it was the least
+/// exercised surface in the repo: the reference fixture declared
+/// `graph: false` and served frames with `relations: vec![]`, so G1 and G2
+/// passed vacuously (no edges to validate) and G3's boost was never witnessed
+/// at all.
+///
+/// The probe first asks an unanchored question to discover a URI the provider
+/// actually serves, then re-asks anchored on it. Discovering the anchor from
+/// the provider's own output is what keeps this fair: the suite never invents a
+/// URI and demands the provider know it.
+async fn check_anchor_relevance(host: &Host, id: &str, caps: &Capabilities) -> CheckResult {
+    if !caps.graph {
+        return CheckResult::skip(
+            CHECK_ANCHOR_RELEVANCE,
+            "provider does not declare capabilities.graph, so §G3/§G4 do not bind it",
+        );
+    }
+
+    let baseline = match host.query_provider(id, &sample_query()).await {
+        Ok(result) => result,
+        Err(error) => {
+            return CheckResult::fail(
+                CHECK_ANCHOR_RELEVANCE,
+                format!("baseline query failed: {error}"),
+            );
+        }
+    };
+
+    // Prefer a one-hop anchor (a relation target): it proves the provider
+    // traverses edges, not merely compares its own `uri`.
+    let anchor = baseline
+        .frames
+        .iter()
+        .find_map(|frame| frame.relations.first().map(|r| r.target_uri.clone()))
+        .or_else(|| baseline.frames.iter().find_map(|frame| frame.uri.clone()));
+    let Some(anchor) = anchor else {
+        return CheckResult::skip(
+            CHECK_ANCHOR_RELEVANCE,
+            "provider declares graph but served no frame carrying a uri or a relation target to anchor on",
+        );
+    };
+
+    let anchored_query = ContextQuery {
+        anchors: vec![anchor.clone()],
+        ..sample_query()
+    };
+    match host.query_provider(id, &anchored_query).await {
+        Ok(result) => {
+            let anchored: Vec<&contextgraph_types::ContextFrame> = result
+                .frames
+                .iter()
+                .filter(|frame| frame_is_anchored(frame, &anchor))
+                .collect();
+            if anchored.is_empty() {
+                return CheckResult::fail(
+                    CHECK_ANCHOR_RELEVANCE,
+                    format!(
+                        "provider declares capabilities.graph but returned no frame anchored on `{anchor}` — a URI drawn from its own previous answer (§G4)"
+                    ),
+                );
+            }
+            // G3 is a SHOULD, so ranking is reported rather than enforced: a
+            // provider that finds the anchored frame but orders it second is
+            // still conformant, and saying so is more honest than inventing a
+            // MUST the spec does not state.
+            let first_is_anchored = result
+                .frames
+                .first()
+                .is_some_and(|frame| frame_is_anchored(frame, &anchor));
+            let ranking = if first_is_anchored {
+                "and ranked it first"
+            } else {
+                "though it did not rank it first (§G3 is a SHOULD)"
+            };
+            CheckResult::pass(
+                CHECK_ANCHOR_RELEVANCE,
+                format!(
+                    "anchored on `{anchor}`: provider returned {} anchored frame(s) {ranking}",
+                    anchored.len()
+                ),
+            )
+        }
+        Err(error) => CheckResult::fail(
+            CHECK_ANCHOR_RELEVANCE,
+            format!("anchored query failed: {error}"),
+        ),
+    }
+}
+
+/// §G4's anchoring predicate: the frame's own `uri` (zero hops) or any labelled
+/// edge's `target_uri` (one hop) equals the anchor.
+fn frame_is_anchored(frame: &contextgraph_types::ContextFrame, anchor: &str) -> bool {
+    frame.uri.as_deref() == Some(anchor) || frame.relations.iter().any(|r| r.target_uri == anchor)
 }
 
 /// The [`sample_query`] pinned to [`AS_OF_PIN`] — the query the temporal probe

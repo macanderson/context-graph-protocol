@@ -440,7 +440,24 @@ content is what goes into a prompt.
 | - | ----------- | ----------- |
 | **G1** | Every `Relation` **MUST** carry a non-empty `display_name` — an edge is surfaced by human label, never a raw id. | `frame-validity` |
 | **G2** | `target_uri` **MUST** be a non-empty URI. | `frame-validity` |
-| **G3** | A provider declaring `capabilities.graph` **SHOULD** boost frames within a small number of relation hops of a query `anchor`. | advisory |
+| **G3** | A provider declaring `capabilities.graph` **SHOULD** boost frames within a small number of relation hops of a query `anchor`. | `anchor-relevance` |
+| **G4** | A frame is **anchored** by an anchor URI when its own `uri` equals that anchor (zero hops), or any of its `relations[].target_uri` does (one hop). A provider declaring `capabilities.graph` and given a non-empty `anchors` **MUST** return at least one anchored frame when it has one to serve, and **SHOULD** rank anchored frames above unanchored ones. | `anchor-relevance` |
+
+### 8.2 Why anchoring needed a definition (G4)
+
+G3 said providers should "boost frames within a small number of relation hops of
+an anchor" and stopped there — it never said what an anchor is compared
+*against*. Two conformant providers could reasonably match anchors against the
+frame `uri`, against `relations[].target_uri`, or against neither, and no test
+could distinguish a provider doing sophisticated graph traversal from one
+ignoring `anchors` entirely. The reference fixture did the latter: it declared
+`graph: false`, served frames with no relations at all, and every graph
+requirement passed vacuously.
+
+G4 gives "anchored" a decidable predicate — string equality on URIs, at zero or
+one hop — so the SHOULD in G3 becomes something a suite can actually witness.
+Deeper traversal stays provider-private: G4 is a floor on what must be *found*,
+not a ceiling on how hard a provider may look.
 
 ### 8.1 Relation vocabulary (SHOULD)
 
@@ -572,11 +589,15 @@ What remains genuinely unchecked:
   (C8) are properties of the host's HTTP client; exercising them needs a real
   non-loopback, TLS network peer the in-process harness cannot stand up. They
   remain the host-side harness's next increment.
-- **R3 delimiting is checked; breakout-resistance is not.** The harness proves
-  `content` is fenced as quoted material, but the reference `compose_context`
-  does not escape a content-embedded fence token — hardened, injection-resistant
-  delimiting (an unguessable fence, escaping) is the composition module, issue
-  #15.
+- **R3 breakout-resistance is now escaping, not an unguessable fence.** The
+  reference `compose_context` neutralizes a content-embedded `<frame`/`</frame>`
+  token and escapes fence attributes, so content cannot terminate the block that
+  quotes it or forge a sibling frame (issue #15). Escaping rather than a random
+  delimiter is deliberate: composition's contract is a byte-stable prompt prefix
+  (§1 of `docs/context-reuse.md`), and a per-turn nonce would forfeit the
+  provider prompt cache to buy a property escaping already provides. What
+  remains open is the *rest* of the composition module — global budget packing
+  and cross-provider dedup — still issue #15.
 - **F5-bytes verifies a host-trusted source, not any provider-named `uri`.** The
   verifier re-reads a path the host chooses to trust; automatically re-reading an
   arbitrary `uri` a provider supplies is a capability decision (path confinement,

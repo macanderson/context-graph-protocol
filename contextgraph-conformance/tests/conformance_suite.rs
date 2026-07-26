@@ -4,10 +4,10 @@
 //! proving the suite catches a broken provider (task deliverable).
 
 use contextgraph_conformance::{
-    CHECK_AS_OF, CHECK_BUDGET_HONESTY, CHECK_CONSENT_SCOPE, CHECK_CORRELATION,
-    CHECK_EMBEDDING_FINGERPRINT, CHECK_FRAME_VALIDITY, CHECK_HANDSHAKE, CHECK_KINDS_FILTER,
-    CHECK_MALFORMED, CHECK_SHUTDOWN, CHECK_VERIFY_HONESTY, CheckStatus, ProviderTarget,
-    run_conformance,
+    CHECK_ANCHOR_RELEVANCE, CHECK_AS_OF, CHECK_BUDGET_HONESTY, CHECK_CONSENT_SCOPE,
+    CHECK_CORRELATION, CHECK_EMBEDDING_FINGERPRINT, CHECK_FRAME_VALIDITY, CHECK_HANDSHAKE,
+    CHECK_KINDS_FILTER, CHECK_MALFORMED, CHECK_SHUTDOWN, CHECK_VERIFY_HONESTY, CheckStatus,
+    ProviderTarget, run_conformance,
 };
 
 /// Path to the fixture binary, built automatically for integration tests.
@@ -40,7 +40,7 @@ async fn a_well_behaved_provider_is_fully_conformant() {
         report.failures().collect::<Vec<_>>()
     );
     // Every check ran and passed (none skipped for a stdio provider).
-    assert_eq!(report.checks.len(), 11);
+    assert_eq!(report.checks.len(), 12);
     for name in [
         CHECK_HANDSHAKE,
         CHECK_CONSENT_SCOPE,
@@ -49,6 +49,7 @@ async fn a_well_behaved_provider_is_fully_conformant() {
         CHECK_BUDGET_HONESTY,
         CHECK_AS_OF,
         CHECK_KINDS_FILTER,
+        CHECK_ANCHOR_RELEVANCE,
         CHECK_SHUTDOWN,
         CHECK_MALFORMED,
         CHECK_EMBEDDING_FINGERPRINT,
@@ -205,4 +206,16 @@ async fn scoring_a_dimension_mismatched_embedding_fails_embedding_fingerprint() 
     for name in [CHECK_HANDSHAKE, CHECK_FRAME_VALIDITY, CHECK_BUDGET_HONESTY] {
         assert_eq!(status_of(&report, name), CheckStatus::Pass, "{name}");
     }
+}
+
+#[tokio::test]
+async fn ignoring_anchors_fails_the_anchor_relevance_check() {
+    // §G3/§G4. The graph is what the protocol is named for and was its least
+    // exercised surface: the fixture declared `graph: false` with no relations
+    // at all, so every graph requirement passed vacuously.
+    let report = run_conformance(target(&["--misbehave", "ignore-anchors"])).await;
+    assert_eq!(
+        status_of(&report, CHECK_ANCHOR_RELEVANCE),
+        CheckStatus::Fail
+    );
 }
