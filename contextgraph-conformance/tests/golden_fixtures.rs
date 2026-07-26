@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use contextgraph_conformance::check_frames;
 use contextgraph_types::{
-    ContextFrame, ContextQuery, ContextQueryResult, PROTOCOL_VERSION, Representation,
+    ContextFrame, ContextQuery, ContextQueryResult, PROTOCOL_VERSION, Relation, Representation,
 };
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -291,6 +291,99 @@ fn assert_rejected_citation(frame: ContextFrame, label: &str) {
         evidence.contains("citation_label"),
         "unexpected evidence for {label} citation: {evidence}"
     );
+}
+
+/// §G2 — `target_uri` **MUST** be a non-empty URI.
+///
+/// The spec listed this as "Verified by `frame-validity`" while `target_uri`
+/// appeared nowhere in the conformance or validation code: the rule was
+/// asserted, not checked, which is precisely what §11.1 says a conformance
+/// suite must not do. This test is the check that makes the claim true, written
+/// adversarially — a suite that only ever passes proves nothing about its
+/// ability to catch a broken provider.
+#[test]
+fn frame_validity_catches_a_relation_that_points_nowhere() {
+    let base: ContextFrame = read_fixture("context-frame.compact.valid.json");
+
+    let with_edge = |target_uri: &str| {
+        let mut frame = base.clone();
+        frame.relations = vec![Relation {
+            rel: "doc.documents".into(),
+            target_uri: target_uri.into(),
+            display_name: Some("Retry policy".into()),
+        }];
+        ContextQueryResult {
+            frames: vec![frame],
+            truncated: false,
+            dropped_estimate: None,
+        }
+    };
+
+    // Control: the fixture is conformant, and stays so with a real edge — so a
+    // failure below is attributable to `target_uri` and nothing else.
+    let (passed, evidence) = check_frames(&with_edge("file:///repo/docs/retry.md"));
+    assert!(passed, "a well-formed edge was rejected: {evidence}");
+
+    // The breach: an edge that is labelled (§G1 satisfied) but dangling.
+    for empty in ["", "   "] {
+        let (passed, evidence) = check_frames(&with_edge(empty));
+        assert!(
+            !passed,
+            "a relation with target_uri {empty:?} passed frame-validity — §G2 is unenforced again"
+        );
+        assert!(
+            evidence.contains("target_uri") && evidence.contains("§G2"),
+            "evidence must name the field and the rule, got: {evidence}"
+        );
+    }
+}
+
+/// §D1 — `content_digest`, when present, **MUST** match `sha256:<64 lowercase
+/// hex>`.
+///
+/// Found by auditing the other ten rules that name `frame-validity` as their
+/// verifier after §G2 turned out to be unenforced. This one was unenforced too,
+/// and the evidence string `check_frames` returned claimed "well-formed
+/// digests" while accepting `sha256:abc` — the very placeholder
+/// `validate::tests::rejects_the_placeholder_digest_the_repo_used_in_examples`
+/// exists to reject.
+#[test]
+fn frame_validity_catches_a_malformed_content_digest() {
+    let base: ContextFrame = read_fixture("context-frame.compact.valid.json");
+    let with_digest = |digest: Option<&str>| {
+        let mut frame = base.clone();
+        frame.content_digest = digest.map(str::to_string);
+        ContextQueryResult {
+            frames: vec![frame],
+            truncated: false,
+            dropped_estimate: None,
+        }
+    };
+
+    // Control: the fixture's real digest passes, so a failure below is
+    // attributable to the digest form and nothing else.
+    let (passed, evidence) = check_frames(&with_digest(base.content_digest.as_deref()));
+    assert!(
+        passed,
+        "a well-formed content_digest was rejected: {evidence}"
+    );
+
+    for malformed in [
+        "sha256:abc".to_string(),             // the repo's own placeholder
+        format!("sha256:{}", "A".repeat(64)), // uppercase hex — a false-negative compare
+        format!("md5:{}", "a".repeat(64)),    // undeclared algorithm
+        "a".repeat(64),                       // no algorithm prefix
+    ] {
+        let (passed, evidence) = check_frames(&with_digest(Some(&malformed)));
+        assert!(
+            !passed,
+            "content_digest {malformed:?} passed frame-validity — §D1 is unenforced again"
+        );
+        assert!(
+            evidence.contains("content_digest") && evidence.contains("§D1"),
+            "evidence must name the field and the rule, got: {evidence}"
+        );
+    }
 }
 
 #[test]

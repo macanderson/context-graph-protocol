@@ -714,6 +714,16 @@ pub fn check_frames(result: &ContextQueryResult) -> (bool, String) {
                 "frame[{i}] field `{field}` is not an RFC 3339 UTC timestamp (§F4)"
             ));
         }
+        // §D1: the frame's own content_digest, when present, must be in the
+        // protocol's digest form. Like §G2 this was listed as verified here and
+        // read by nothing — so the digest that anchors deterministic
+        // composition, usage reports and `context/verify` was held to a looser
+        // standard than the §F5 provenance digests immediately below it.
+        if !frame.has_usable_content_digest() {
+            problems.push(format!(
+                "frame[{i}] content_digest is present but not `sha256:<64 lowercase hex>` (§D1)"
+            ));
+        }
         // §F5: file provenance must carry a well-formed digest, since that is
         // the only provenance a host can independently re-read and verify.
         for index in frame.provenance_with_unusable_digests() {
@@ -721,11 +731,20 @@ pub fn check_frames(result: &ContextQueryResult) -> (bool, String) {
                 "frame[{i}] provenance[{index}] addresses a file but its digest is missing or not `sha256:<64 lowercase hex>` (§F5)"
             ));
         }
-        // §G1: a graph edge must be citable by a human label.
+        // §G1/§G2: a graph edge must be citable by a human label, and must
+        // actually point somewhere. G2 was listed as "Verified by
+        // frame-validity" while no code read `target_uri` at all — the exact
+        // self-attestation §11.1 rejects. It is verified here now.
         for (edge_index, edge) in frame.relations.iter().enumerate() {
             if !edge.has_display_name() {
                 problems.push(format!(
                     "frame[{i}] relation[{edge_index}] `{}` has no display_name (§G1 — an edge is surfaced by label, never a raw id)",
+                    edge.rel
+                ));
+            }
+            if !edge.has_target_uri() {
+                problems.push(format!(
+                    "frame[{i}] relation[{edge_index}] `{}` has an empty target_uri (§G2 — an edge to nowhere is not an edge)",
                     edge.rel
                 ));
             }
@@ -736,7 +755,7 @@ pub fn check_frames(result: &ContextQueryResult) -> (bool, String) {
         (
             true,
             format!(
-                "{} frame(s) — scores in [0,1], titles, citation labels, honest representations, RFC 3339 timestamps, well-formed digests, labelled relations",
+                "{} frame(s) — scores in [0,1], titles, citation labels, honest representations, RFC 3339 timestamps, well-formed digests, labelled and targeted relations",
                 result.frames.len()
             ),
         )

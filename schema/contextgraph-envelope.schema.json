@@ -438,11 +438,10 @@
       },
       "required": [
         "goal",
-        "kinds",
-        "anchors",
         "max_frames",
         "max_tokens"
       ],
+      "$comment": "Required is exactly what the reference serializer (contextgraph-types ContextQuery) always emits: goal, max_frames, max_tokens. kinds and anchors are skip_serializing_if=Vec::is_empty, so an unfiltered, unanchored query — the most ordinary query there is — omits them; listing them as required made that query un-representable in conformant JSON. Same bug class as the ContextFrame required list below (PR #44): the schema must not demand fields the canonical serializer elides.",
       "additionalProperties": false
     },
     "ContextQueryResult": {
