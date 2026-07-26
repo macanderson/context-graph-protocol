@@ -168,3 +168,13 @@ jobs:
         working-directory: site
       - run: pnpm build
         working-directory: site
+      # The witness asserts the site still exposes the docs it claims to, on the
+      # neutral theme, with the logo wired up. It has lived in the repo passing
+      # locally and running nowhere, which makes it decoration rather than a
+      # gate — the same "checked in but never executed" gap this round is
+      # closing elsewhere (#51).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Docs-site witness
+        run: python3 -m unittest discover -s tests -p 'docs_site_witness_test.py' -v

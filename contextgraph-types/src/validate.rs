@@ -90,6 +90,75 @@ pub fn is_protocol_timestamp(s: &str) -> bool {
     }
 }
 
+/// Render a Unix instant (seconds since the epoch, UTC) as a protocol
+/// timestamp: the exact spelling [`is_protocol_timestamp`] accepts.
+///
+/// This exists so a host can *stamp* a temporal field without taking on a date
+/// library. `contextgraph-types` deliberately carries no dependency beyond
+/// serde (see the module docs), and every implementer in every language has to
+/// reproduce whatever this crate does — so "pull in chrono" is a cost paid by
+/// the whole ecosystem, for arithmetic that fits in twenty lines.
+///
+/// The gap it closes is concrete: the host recorded every consent decision with
+/// `granted_at: None`, because it had no way to spell the current instant. An
+/// audit ledger that never records *when* is missing the field that makes it an
+/// audit ledger.
+///
+/// Leap seconds are not representable — a Unix timestamp cannot express one —
+/// so this never emits `:60`, though the validator accepts it from a peer.
+///
+/// ```
+/// use contextgraph_types::{format_protocol_timestamp, is_protocol_timestamp};
+///
+/// assert_eq!(format_protocol_timestamp(0), "1970-01-01T00:00:00Z");
+/// assert_eq!(format_protocol_timestamp(1_784_000_000), "2026-07-14T03:33:20Z");
+/// assert!(is_protocol_timestamp(&format_protocol_timestamp(1_784_000_000)));
+/// ```
+pub fn format_protocol_timestamp(unix_seconds: i64) -> String {
+    // `div_euclid`/`rem_euclid` rather than `/` and `%`: for instants before
+    // the epoch the truncating operators would round the day *up* and yield a
+    // negative time-of-day.
+    let days = unix_seconds.div_euclid(SECONDS_PER_DAY);
+    let second_of_day = unix_seconds.rem_euclid(SECONDS_PER_DAY);
+
+    let (year, month, day) = civil_from_days(days);
+    let hour = second_of_day / 3_600;
+    let minute = (second_of_day % 3_600) / 60;
+    let second = second_of_day % 60;
+
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
+}
+
+const SECONDS_PER_DAY: i64 = 86_400;
+
+/// Civil (proleptic Gregorian) date from a day count relative to 1970-01-01.
+///
+/// Howard Hinnant's `civil_from_days`, the standard formulation. It shifts the
+/// epoch to 0000-03-01 so the leap day lands at the *end* of the year, which is
+/// what lets the era arithmetic below avoid special-casing February.
+fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    // 719_468 = days from 0000-03-01 to 1970-01-01.
+    let z = days + 719_468;
+    // A 400-year era is exactly 146_097 days — the Gregorian cycle.
+    let era = z.div_euclid(146_097);
+    let day_of_era = z.rem_euclid(146_097); // [0, 146096]
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365; // [0, 399]
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100); // [0, 365]
+    // Month index in the March-based year.
+    let month_prime = (5 * day_of_year + 2) / 153; // [0, 11]
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1; // [1, 31]
+    let month = if month_prime < 10 {
+        month_prime + 3
+    } else {
+        month_prime - 9
+    }; // [1, 12]
+    // January and February belong to the following calendar year.
+    let year = if month <= 2 { year + 1 } else { year };
+    (year, month, day)
+}
+
 fn two_digits(pair: &[u8]) -> Option<u32> {
     if pair.len() == 2 && pair.iter().all(u8::is_ascii_digit) {
         Some((pair[0] - b'0') as u32 * 10 + (pair[1] - b'0') as u32)
@@ -158,6 +227,66 @@ mod tests {
 
     fn digest(hex: &str) -> String {
         format!("sha256:{hex}")
+    }
+
+    #[test]
+    fn formats_known_instants() {
+        assert_eq!(format_protocol_timestamp(0), "1970-01-01T00:00:00Z");
+        assert_eq!(format_protocol_timestamp(1), "1970-01-01T00:00:01Z");
+        assert_eq!(format_protocol_timestamp(86_399), "1970-01-01T23:59:59Z");
+        assert_eq!(format_protocol_timestamp(86_400), "1970-01-02T00:00:00Z");
+        assert_eq!(
+            format_protocol_timestamp(1_784_000_000),
+            "2026-07-14T03:33:20Z"
+        );
+    }
+
+    #[test]
+    fn formats_leap_days_and_century_rules() {
+        // 2000 is a leap year (divisible by 400); 1900 was not (divisible by
+        // 100 but not 400). The era arithmetic has to get both right.
+        assert_eq!(
+            format_protocol_timestamp(951_782_400),
+            "2000-02-29T00:00:00Z"
+        );
+        assert_eq!(
+            format_protocol_timestamp(-2_203_891_200),
+            "1900-03-01T00:00:00Z"
+        );
+        assert_eq!(
+            format_protocol_timestamp(1_709_164_800),
+            "2024-02-29T00:00:00Z"
+        );
+    }
+
+    #[test]
+    fn formats_instants_before_the_epoch_without_rounding_the_day_up() {
+        // The trap `div_euclid` avoids: truncating division would place this
+        // one second *before* the epoch on 1970-01-01 with a negative clock.
+        assert_eq!(format_protocol_timestamp(-1), "1969-12-31T23:59:59Z");
+        assert_eq!(format_protocol_timestamp(-86_400), "1969-12-31T00:00:00Z");
+    }
+
+    /// The formatter and the validator must agree — a host that stamps a field
+    /// with the one and is checked by the other cannot be allowed to disagree.
+    #[test]
+    fn everything_it_formats_is_a_valid_protocol_timestamp() {
+        // A wide spread: pre-epoch, epoch, leap days, far future, and a stride
+        // that lands on assorted times of day.
+        let mut instants = vec![-2_203_891_200, -86_401, -1, 0, 951_782_400, 1_784_000_000];
+        let mut t = -62_135_596_800; // 0001-01-01T00:00:00Z
+        while t < 4_102_444_800 {
+            // through 2100
+            instants.push(t);
+            t += 999_999_937; // a prime-ish stride, so it doesn't align to days
+        }
+        for instant in instants {
+            let formatted = format_protocol_timestamp(instant);
+            assert!(
+                is_protocol_timestamp(&formatted),
+                "format_protocol_timestamp({instant}) produced `{formatted}`, which the validator rejects"
+            );
+        }
     }
 
     #[test]

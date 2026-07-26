@@ -13,7 +13,7 @@ edition = "2024"
 rust-version = "1.90"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/macanderson/context-graph-protocol"
-homepage = "https://github.com/macanderson/context-graph-protocol"
+homepage = "https://contextgraphprotocol.org"
 # Default: crates opt IN to publishing. The three Context Graph Protocol crates each set
 # `publish = true`; any future internal/helper crate stays unpublished by default.
 publish = false

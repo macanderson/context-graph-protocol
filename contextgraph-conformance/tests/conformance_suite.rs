@@ -4,9 +4,10 @@
 //! proving the suite catches a broken provider (task deliverable).
 
 use contextgraph_conformance::{
-    CHECK_AS_OF, CHECK_BUDGET_HONESTY, CHECK_CONSENT_SCOPE, CHECK_EMBEDDING_FINGERPRINT,
-    CHECK_FRAME_VALIDITY, CHECK_HANDSHAKE, CHECK_MALFORMED, CHECK_SHUTDOWN, CHECK_VERIFY_HONESTY,
-    CheckStatus, ProviderTarget, run_conformance,
+    CHECK_ANCHOR_RELEVANCE, CHECK_AS_OF, CHECK_BUDGET_HONESTY, CHECK_CONSENT_SCOPE,
+    CHECK_CORRELATION, CHECK_EMBEDDING_FINGERPRINT, CHECK_FRAME_VALIDITY, CHECK_HANDSHAKE,
+    CHECK_KINDS_FILTER, CHECK_MALFORMED, CHECK_SHUTDOWN, CHECK_VERIFY_HONESTY, CheckStatus,
+    ProviderTarget, run_conformance,
 };
 
 /// Path to the fixture binary, built automatically for integration tests.
@@ -38,8 +39,8 @@ async fn a_well_behaved_provider_is_fully_conformant() {
         "expected conformant; failures: {:?}",
         report.failures().collect::<Vec<_>>()
     );
-    // All nine checks ran and passed (none skipped for a stdio provider).
-    assert_eq!(report.checks.len(), 9);
+    // Every check ran and passed (none skipped for a stdio provider).
+    assert_eq!(report.checks.len(), 12);
     for name in [
         CHECK_HANDSHAKE,
         CHECK_CONSENT_SCOPE,
@@ -47,12 +48,32 @@ async fn a_well_behaved_provider_is_fully_conformant() {
         CHECK_VERIFY_HONESTY,
         CHECK_BUDGET_HONESTY,
         CHECK_AS_OF,
+        CHECK_KINDS_FILTER,
+        CHECK_ANCHOR_RELEVANCE,
         CHECK_SHUTDOWN,
         CHECK_MALFORMED,
         CHECK_EMBEDDING_FINGERPRINT,
+        CHECK_CORRELATION,
     ] {
         assert_eq!(status_of(&report, name), CheckStatus::Pass, "{name}");
     }
+}
+
+#[tokio::test]
+async fn dropping_the_correlation_id_fails_the_correlation_check() {
+    // §H4 had no check of its own: the `drop-correlation-id` mode only ever
+    // went red because losing the id desynchronizes everything downstream, so
+    // an SDK could declare `correlation: true`, never echo, and pass.
+    let report = run_conformance(target(&["--misbehave", "drop-correlation-id"])).await;
+    assert_eq!(status_of(&report, CHECK_CORRELATION), CheckStatus::Fail);
+}
+
+#[tokio::test]
+async fn ignoring_a_narrowed_kinds_filter_fails_the_kinds_check() {
+    // §Q1. The unfiltered `sample_query` could never catch this: it sends
+    // `kinds: []`, so a provider that ignored the filter entirely passed.
+    let report = run_conformance(target(&["--misbehave", "ignore-kinds"])).await;
+    assert_eq!(status_of(&report, CHECK_KINDS_FILTER), CheckStatus::Fail);
 }
 
 #[tokio::test]
@@ -185,4 +206,16 @@ async fn scoring_a_dimension_mismatched_embedding_fails_embedding_fingerprint() 
     for name in [CHECK_HANDSHAKE, CHECK_FRAME_VALIDITY, CHECK_BUDGET_HONESTY] {
         assert_eq!(status_of(&report, name), CheckStatus::Pass, "{name}");
     }
+}
+
+#[tokio::test]
+async fn ignoring_anchors_fails_the_anchor_relevance_check() {
+    // §G3/§G4. The graph is what the protocol is named for and was its least
+    // exercised surface: the fixture declared `graph: false` with no relations
+    // at all, so every graph requirement passed vacuously.
+    let report = run_conformance(target(&["--misbehave", "ignore-anchors"])).await;
+    assert_eq!(
+        status_of(&report, CHECK_ANCHOR_RELEVANCE),
+        CheckStatus::Fail
+    );
 }
