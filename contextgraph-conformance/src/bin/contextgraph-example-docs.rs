@@ -92,6 +92,9 @@ enum Misbehave {
     /// `egress: false` — a scope that contradicts the data-flow posture
     /// (trips `consent-scope`).
     ScopeLie,
+    /// Ignore a non-empty `query.kinds`, returning frames of a kind the host
+    /// explicitly excluded (trips `kinds-filter`).
+    IgnoreKinds,
 }
 
 #[derive(Parser)]
@@ -185,6 +188,13 @@ fn main() {
                     continue;
                 }
                 let mut frames = canned_frames(args.misbehave);
+                // §Q1: a non-empty `kinds` is a filter, not a hint. Returning a
+                // frame outside it spends the host's budget on content it
+                // explicitly excluded. `ignore-kinds` skips this, which the
+                // `kinds-filter` probe catches.
+                if args.misbehave != Some(Misbehave::IgnoreKinds) && !query.kinds.is_empty() {
+                    frames.retain(|f| query.kinds.contains(&f.kind));
+                }
                 // §F4/§6.1: honor an `as_of` pin — content not yet true at the
                 // pinned instant is not returned. The timestamp profile is one
                 // spelling per instant, so a lexicographic compare on the UTC
@@ -397,18 +407,29 @@ fn canned_frames(misbehave: Option<Misbehave>) -> Vec<ContextFrame> {
         ),
         // Became true only in the autumn — *after* the `as_of` probe's pin, so
         // an as_of-honoring provider omits it from a mid-year pinned query.
-        doc_frame(
-            "frm_configuration",
-            "Configuration",
-            "Providers declare their data-flow direction at the handshake so hosts can \
-             gate consent before sending any query.",
-            "configuration.md",
-            "L1-25",
-            "2026-09-01T00:00:00Z",
-            0.61,
-            2,
-            misbehave,
-        ),
+        //
+        // Deliberately a **different kind** from the frame above. The §Q1 probe
+        // narrows to the first kind this provider declares (`doc`), so the
+        // fixture has to serve something *outside* that narrowing for the
+        // filter to have observable work to do. When every frame shared one
+        // kind, a provider that ignored `kinds` entirely still passed the
+        // check — a decorative check is the thing this round is removing, not
+        // adding.
+        {
+            let mut frame = doc_frame(
+                "frm_configuration",
+                "Configuration example",
+                "let host = Host::new().with_provider(\"docs\", provider);",
+                "configuration.md",
+                "L1-25",
+                "2026-09-01T00:00:00Z",
+                0.61,
+                2,
+                misbehave,
+            );
+            frame.kind = FrameKind::Snippet;
+            frame
+        },
     ]
     .into_iter()
     .enumerate()

@@ -205,6 +205,30 @@ graph-capable provider **SHOULD** boost frames within a small number of relation
 hops of an anchor. The ranking algorithm stays provider-private; the *contract*
 is only that anchors bias relevance.
 
+| # | Requirement | Verified by |
+| - | ----------- | ----------- |
+| **Q1** | When `kinds` is non-empty, a provider **MUST NOT** return a frame whose `kind` is outside it. Empty `kinds` means any kind. A provider serving none of the requested kinds returns zero frames, or replies `unsupported_kind`. | `kinds-filter` |
+
+### 5.1 Why `kinds` binds (Q1)
+
+`kinds` shipped as a request field with documented syntax and no stated
+semantics, and not one implementation honored it — the reference provider and
+all three SDKs declared `capabilities.query.kinds` and then ignored the filter,
+returning whatever they had. That is the dead-capability surface
+[ADR 0004](docs/adr/0004-dead-capability-surface.md) purged elsewhere, in its
+subtler form: not an unreachable field, but a reachable one that silently does
+nothing.
+
+Specifying it rather than dropping it, because unlike `upsert`/`subscribe` the
+surface is already load-bearing: `unsupported_kind` (§10) exists precisely to
+answer "you asked for kinds I don't serve", which presupposes the filter binds.
+A host that narrows to `["snippet"]` to keep prose out of a code-reasoning
+prompt, and silently receives `doc` frames anyway, has had its budget spent on
+content it explicitly excluded.
+
+Q1 is a filter, not a ranking rule: it says which frames are *eligible*, and
+leaves ordering provider-private like the rest of §5.
+
 ### 5.1 Embedding space (E1)
 
 | # | Requirement |

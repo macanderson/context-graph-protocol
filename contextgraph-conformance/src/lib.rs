@@ -53,11 +53,12 @@
 
 use contextgraph_host::{
     ConsentRecord, ContextProvider, DropReason, Host, HostError, RawStdioConnection,
+    frame_kind_name,
 };
 use contextgraph_types::capability::fingerprint_dimensions;
 use contextgraph_types::{
-    Capabilities, ConsentReceipt, ContextQuery, ContextQueryResult, ErrorCode, FrameId, Grantor,
-    ProviderInfo,
+    Capabilities, ConsentReceipt, ContextQuery, ContextQueryResult, ErrorCode, FrameId, FrameKind,
+    Grantor, ProviderInfo,
 };
 
 pub mod host_conformance;
@@ -79,6 +80,8 @@ pub const CHECK_AS_OF: &str = "as-of-temporal";
 pub const CHECK_SHUTDOWN: &str = "shutdown-clean";
 pub const CHECK_MALFORMED: &str = "malformed-input-tolerance";
 pub const CHECK_EMBEDDING_FINGERPRINT: &str = "embedding-fingerprint";
+pub const CHECK_CORRELATION: &str = "correlation";
+pub const CHECK_KINDS_FILTER: &str = "kinds-filter";
 
 /// How to reach the provider under test. `contextgraph-inspect` builds one of these
 /// from its CLI arguments; tests build them directly.
@@ -153,6 +156,7 @@ pub async fn run_conformance(target: ProviderTarget) -> ConformanceReport {
                 CHECK_CONSENT_SCOPE,
                 CHECK_BUDGET_HONESTY,
                 CHECK_AS_OF,
+                CHECK_KINDS_FILTER,
                 CHECK_SHUTDOWN,
             ] {
                 checks.push(CheckResult::skip(name, "handshake failed"));
@@ -164,6 +168,7 @@ pub async fn run_conformance(target: ProviderTarget) -> ConformanceReport {
         Some((program, args)) => {
             checks.push(malformed_stdio_probe(&program, &args).await);
             checks.push(embedding_fingerprint_stdio_probe(&program, &args).await);
+            checks.push(correlation_stdio_probe(&program, &args).await);
         }
         None => {
             checks.push(CheckResult::skip(
@@ -173,6 +178,10 @@ pub async fn run_conformance(target: ProviderTarget) -> ConformanceReport {
             checks.push(CheckResult::skip(
                 CHECK_EMBEDDING_FINGERPRINT,
                 "wire-level §E1 bad_request probe applies to stdio providers only",
+            ));
+            checks.push(CheckResult::skip(
+                CHECK_CORRELATION,
+                "wire-level §H4 id-echo probe applies to stdio providers only",
             ));
         }
     }
@@ -277,8 +286,11 @@ async fn run_query_and_shutdown_checks(
     }
 
     // The temporal probe fires its own `as_of`-pinned query, so it stands on
-    // its own regardless of how the unpinned query above fared.
+    // its own regardless of how the unpinned query above fared. The §Q1 probe
+    // is independent for the same reason — it narrows `kinds`, which the
+    // unfiltered query above deliberately never does.
     checks.push(check_as_of(&host, id).await);
+    checks.push(check_kinds_filter(&host, id, caps).await);
 
     let results = host.shutdown().await;
     match results.iter().find(|(pid, _)| pid == id) {
@@ -593,6 +605,111 @@ async fn embedding_fingerprint_stdio_probe(program: &str, args: &[String]) -> Ch
     }
 }
 
+/// The correlation id the §H4 probe sends. Deliberately distinctive so a
+/// provider that echoes *something* — a counter, its own id — fails rather
+/// than coincidentally matching.
+const CORRELATION_PROBE_ID: &str = "cgp-conformance-h4-7f3a";
+
+/// **§H4** — a provider declaring `capabilities.correlation` **MUST** echo a
+/// request's `id` verbatim on the corresponding `frames` or `error`.
+///
+/// This check exists because the guarantee was previously unenforceable from
+/// outside. H4's only witness was the reference provider's
+/// `drop-correlation-id` misbehave mode, and that mode "went red" merely
+/// because dropping the id desynchronizes the host's demultiplexer and breaks
+/// every *other* check downstream. Nothing actually asserted the echo — so an
+/// external implementation (each of the three SDKs) could declare
+/// `correlation: true`, never echo an id, and pass the suite. Requiring the
+/// matching check in `conformance-red.sh` is what surfaced the hole.
+///
+/// The probe is raw-stdio rather than host-driven for the same reason the §E1
+/// probe is: the host layer *interprets* correlation (it demultiplexes on the
+/// id and raises `CorrelationMismatch`), so driving through it would test the
+/// host's reaction rather than the provider's wire behavior.
+async fn correlation_stdio_probe(program: &str, args: &[String]) -> CheckResult {
+    let mut conn = match RawStdioConnection::spawn(program, args).await {
+        Ok(conn) => conn,
+        Err(error) => {
+            return CheckResult::fail(
+                CHECK_CORRELATION,
+                format!("could not spawn provider: {error}"),
+            );
+        }
+    };
+    let caps = match conn.handshake().await {
+        Ok((_, caps)) => caps,
+        Err(error) => {
+            return CheckResult::skip(
+                CHECK_CORRELATION,
+                format!("handshake failed before the §H4 probe could run: {error}"),
+            );
+        }
+    };
+    if !caps.correlation {
+        // Not a failure: correlation is negotiated, and a lock-step provider
+        // that never claims it is conformant. H4 binds only those who declare.
+        return CheckResult::skip(
+            CHECK_CORRELATION,
+            "provider does not declare capabilities.correlation, so §H4 does not bind it",
+        );
+    }
+
+    let query = sample_query();
+    if let Err(error) = conn
+        .send(&contextgraph_host::Envelope::Query {
+            id: Some(CORRELATION_PROBE_ID.to_string()),
+            query,
+        })
+        .await
+    {
+        return CheckResult::fail(
+            CHECK_CORRELATION,
+            format!("provider closed its input before the §H4 probe query: {error}"),
+        );
+    }
+
+    let reply = match conn.recv().await {
+        Ok(reply) => reply,
+        Err(error) => {
+            return CheckResult::fail(
+                CHECK_CORRELATION,
+                format!("provider mishandled the §H4 probe: {error}"),
+            );
+        }
+    };
+
+    let kind = contextgraph_host::envelope_kind(&reply);
+    // `frames` and `error` both answer a query, and H4 binds both.
+    match reply.correlation_id() {
+        Some(echoed) if echoed == CORRELATION_PROBE_ID => CheckResult::pass(
+            CHECK_CORRELATION,
+            format!(
+                "provider declares correlation and echoed the request id verbatim on its `{kind}` reply (§H4)"
+            ),
+        ),
+        Some(echoed) => CheckResult::fail(
+            CHECK_CORRELATION,
+            format!(
+                "provider declares correlation but echoed `{echoed}` on its `{kind}` reply instead of the request's `{CORRELATION_PROBE_ID}` — a host demultiplexing on the id would match this reply to the wrong request (§H4)"
+            ),
+        ),
+        None if matches!(reply, contextgraph_host::Envelope::Frames { .. })
+            || matches!(reply, contextgraph_host::Envelope::Error { .. }) =>
+        {
+            CheckResult::fail(
+                CHECK_CORRELATION,
+                format!(
+                    "provider declares correlation but its `{kind}` reply carried no id — the host cannot match it to the request it answers, so the connection is forced back to lock-step (§H4)"
+                ),
+            )
+        }
+        None => CheckResult::fail(
+            CHECK_CORRELATION,
+            format!("provider answered the §H4 probe with an unexpected `{kind}` envelope"),
+        ),
+    }
+}
+
 /// The instant the `as_of` probe pins retrieval to (`SPEC.md` §6.1). Chosen to
 /// fall *between* the reference fixture's two frame validity windows, so an
 /// honest provider's pinned answer is observably narrower than its unpinned one.
@@ -645,6 +762,87 @@ async fn check_as_of(host: &Host, id: &str) -> CheckResult {
             }
         }
         Err(error) => CheckResult::fail(CHECK_AS_OF, format!("as_of query failed: {error}")),
+    }
+}
+
+/// **§Q1** — a non-empty `kinds` is a filter a provider must honor.
+///
+/// The probe narrows to a single kind drawn from the provider's *own* declared
+/// `capabilities.query.kinds`, so it can never be an unfair request: the
+/// provider said it serves this kind. Every returned frame must then be of that
+/// kind.
+///
+/// Worth stating why this check did not exist until now: [`sample_query`] sends
+/// `kinds: []`, so every provider was only ever asked the unfiltered question,
+/// and a provider that ignored the filter entirely passed the whole suite. All
+/// four reference implementations did exactly that.
+async fn check_kinds_filter(host: &Host, id: &str, caps: &Capabilities) -> CheckResult {
+    let Some(declared) = caps.query.kinds.first() else {
+        return CheckResult::skip(
+            CHECK_KINDS_FILTER,
+            "provider declares no query kinds, so §Q1 has no kind to narrow to",
+        );
+    };
+    let Some(kind) = frame_kind_from_wire(declared) else {
+        return CheckResult::skip(
+            CHECK_KINDS_FILTER,
+            format!(
+                "provider declares kind `{declared}`, which is outside the closed FrameKind vocabulary, so §Q1 cannot be probed"
+            ),
+        );
+    };
+
+    let query = ContextQuery {
+        kinds: vec![kind],
+        ..sample_query()
+    };
+    match host.query_provider(id, &query).await {
+        Ok(result) => {
+            let off_kind: Vec<String> = result
+                .frames
+                .iter()
+                .filter(|frame| frame.kind != kind)
+                .map(|frame| format!("{} (kind={})", frame.id, frame_kind_name(frame.kind)))
+                .collect();
+            if off_kind.is_empty() {
+                CheckResult::pass(
+                    CHECK_KINDS_FILTER,
+                    format!(
+                        "kinds=[{declared}]: all {} returned frame(s) are of the requested kind (§Q1)",
+                        result.frames.len()
+                    ),
+                )
+            } else {
+                CheckResult::fail(
+                    CHECK_KINDS_FILTER,
+                    format!(
+                        "provider returned {} frame(s) outside the requested kinds=[{declared}] — content the host explicitly excluded, charged against its budget (§Q1): {}",
+                        off_kind.len(),
+                        off_kind.join(", ")
+                    ),
+                )
+            }
+        }
+        Err(error) => CheckResult::fail(
+            CHECK_KINDS_FILTER,
+            format!("kinds-filtered query failed: {error}"),
+        ),
+    }
+}
+
+/// Parse a declared capability kind string back into the closed [`FrameKind`]
+/// vocabulary. `None` for anything outside it — a provider may declare an
+/// extension kind, and §Q1 simply has nothing to say about it.
+fn frame_kind_from_wire(kind: &str) -> Option<FrameKind> {
+    match kind {
+        "snippet" => Some(FrameKind::Snippet),
+        "symbol" => Some(FrameKind::Symbol),
+        "fact" => Some(FrameKind::Fact),
+        "doc" => Some(FrameKind::Doc),
+        "memory" => Some(FrameKind::Memory),
+        "episode" => Some(FrameKind::Episode),
+        "graph" => Some(FrameKind::Graph),
+        _ => None,
     }
 }
 
