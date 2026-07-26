@@ -20,10 +20,10 @@ use contextgraph_host::wire::{Envelope, decode_line, encode_line};
 use contextgraph_host::{ContextProvider, IngestConfig, PasteIngest, ingest_paste};
 use contextgraph_types::{ContextQuery, Representation};
 
-/// The exact `required` key set the JSON Schema declares for a `ContextFrame`,
-/// read from the schema in the repo so the test tracks the schema rather than a
+/// The exact `required` key set the JSON Schema declares for `definition`, read
+/// from the schema in the repo so the test tracks the schema rather than a
 /// hard-coded copy of it.
-fn schema_required_frame_keys() -> Vec<String> {
+fn schema_required_keys(definition: &str) -> Vec<String> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("workspace root")
@@ -32,12 +32,61 @@ fn schema_required_frame_keys() -> Vec<String> {
     let raw =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     let schema: serde_json::Value = serde_json::from_str(&raw).expect("schema is valid JSON");
-    schema["$defs"]["ContextFrame"]["required"]
+    schema["$defs"][definition]["required"]
         .as_array()
-        .expect("$defs.ContextFrame.required is an array")
+        .unwrap_or_else(|| panic!("$defs.{definition}.required is an array"))
         .iter()
         .map(|v| v.as_str().expect("a required key is a string").to_string())
         .collect()
+}
+
+fn schema_required_frame_keys() -> Vec<String> {
+    schema_required_keys("ContextFrame")
+}
+
+/// The most ordinary query there is — no kind filter, no anchors — must be
+/// representable in conformant JSON.
+///
+/// The same bug this module's header describes for `ContextFrame` was still
+/// live one type over: `kinds` and `anchors` are `skip_serializing_if =
+/// "Vec::is_empty"`, so the reference serializer omits them, while the schema
+/// listed both as `required`. An unfiltered, unanchored query — what a host
+/// sends when it wants anything relevant — therefore failed schema validation.
+///
+/// Asserting against the schema's own `required` array rather than a literal
+/// list is what makes this a guard instead of a snapshot: re-adding either key
+/// to `required` fails here immediately.
+#[test]
+fn an_unfiltered_unanchored_query_satisfies_the_schemas_required_keys() {
+    let query = ContextQuery {
+        goal: "why does the retry loop give up".into(),
+        query_text: None,
+        embedding: None,
+        kinds: Vec::new(),
+        anchors: Vec::new(),
+        max_frames: 8,
+        max_tokens: 2000,
+        as_of: None,
+        representation_preferences: Vec::new(),
+    };
+
+    let value = serde_json::to_value(&query).expect("query serializes");
+    let object = value.as_object().expect("a query serializes to an object");
+
+    // Precondition: the elision this guards is real, not incidental.
+    assert!(
+        !object.contains_key("kinds") && !object.contains_key("anchors"),
+        "the reference serializer no longer elides empty kinds/anchors — \
+         this guard's premise changed: {value}"
+    );
+
+    for key in schema_required_keys("ContextQuery") {
+        assert!(
+            object.contains_key(&key),
+            "an ordinary query omits schema-required key `{key}`, making it \
+             un-representable in conformant JSON: {value}"
+        );
+    }
 }
 
 /// The ADR's motivating paste: a noisy log, a data table, an attached note, and

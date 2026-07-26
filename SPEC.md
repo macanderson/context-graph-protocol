@@ -482,14 +482,14 @@ a notification-shaped 1.x addition (§13) and is not defined here.
 
 ```jsonc
 // host → provider
-{ "type": "verify", "id": "v1",
+{ "type": "verify",
   "request": { "frames": [
     { "provider_id": "code-graph", "frame_id": "frm_retry",
       "content_digest": "sha256:<64 hex>" }
   ] } }
 
 // provider → host
-{ "type": "verified", "id": "v1",
+{ "type": "verified",
   "response": { "verdicts": [
     { "frame": { "provider_id": "code-graph", "frame_id": "frm_retry",
                  "content_digest": "sha256:<64 hex>" },

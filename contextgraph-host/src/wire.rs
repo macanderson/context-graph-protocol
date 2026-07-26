@@ -36,9 +36,21 @@
 //! (`docs/sketches/push-invalidation.md`).
 //!
 //! `id` is optional so that a provider written against an earlier revision
-//! stays conformant: a host that has not seen a provider echo an `id` **MUST**
-//! fall back to lock-step. Concurrency is negotiated by observation, not by a
-//! capability flag.
+//! stays conformant: it is queried in lock-step and is fully conformant.
+//!
+//! Correlation is negotiated **explicitly**, via
+//! [`Capabilities::correlation`](contextgraph_types::Capabilities::correlation)
+//! — a host **MUST NOT** send an `id` to a provider that did not declare it
+//! (`SPEC.md` §3.2). This paragraph previously said the opposite ("negotiated
+//! by observation, not by a capability flag"), which predates the capability
+//! and inverts a MUST NOT: a reply carrying no `id` is ambiguous between "does
+//! not implement correlation" and "implements it incorrectly", and a guarantee
+//! whose violation is indistinguishable from legitimate behaviour cannot be
+//! checked.
+//!
+//! Note that `verify`/`verified` carry no `id` at all: a verdict echoes the
+//! frame identity it answers *in full*, so those exchanges correlate by
+//! matching rather than by envelope id (`SPEC.md` §9).
 
 use contextgraph_types::{
     Capabilities, ContextQuery, ContextQueryResult, ErrorCode, ProviderInfo, VerifyRequest,
