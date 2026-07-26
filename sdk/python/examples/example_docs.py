@@ -43,6 +43,18 @@ def _current_digest(frame_id: str) -> str | None:
     }.get(frame_id)
 
 
+def _is_anchored(frame: dict[str, Any], anchors: list[str]) -> bool:
+    """Whether ``frame`` is anchored by any of ``anchors`` (SPEC.md §G4).
+
+    Zero hops via the frame's own ``uri``, one hop via a relation's
+    ``target_uri``. String equality, so the predicate is decidable and two
+    implementations cannot disagree about what "anchored" means.
+    """
+    if frame.get("uri") in anchors:
+        return True
+    return any(rel.get("target_uri") in anchors for rel in frame.get("relations", []))
+
+
 def _doc_frame(
     frame_id: str,
     title: str,
@@ -74,7 +86,16 @@ def _doc_frame(
             }
         ],
         "citation_label": f"{file} {rng}",
-        "relations": [],
+        # A labelled edge to the symbol this page documents. §G4 makes a frame
+        # "anchored" when its own `uri` or any relation's `target_uri` equals a
+        # query anchor, so this edge is what an anchored query reaches at one hop.
+        "relations": [
+            {
+                "rel": "doc.documents",
+                "target_uri": f"symbol:///docs/{file}#overview",
+                "display_name": f"{title} overview",
+            }
+        ],
     }
 
 
@@ -97,7 +118,7 @@ class ExampleDocsProvider:
         return {
             "query": {"kinds": ["doc", "snippet"]},
             "correlation": True,
-            "graph": False,
+            "graph": True,
             # Declaring the embedding space it indexes lets the provider reject a
             # vector from a different one (§E1). A provider that declares no
             # fingerprint has nothing to contradict and is not E1-probed.
@@ -117,29 +138,33 @@ class ExampleDocsProvider:
                 f"indexes {EMBEDDING_DIMENSIONS} ({EMBEDDING_FINGERPRINT}) (§E1)",
                 code="bad_request",
             )
-        return {
-            "frames": [
-                _doc_frame(
-                    "frm_getting_started",
-                    "Getting Started",
-                    "Install the reference binding, then implement the required provider methods.",
-                    "getting-started.md",
-                    "L1-40",
-                    0.82,
-                    GETTING_STARTED_DIGEST,
-                ),
-                _doc_frame(
-                    "frm_configuration",
-                    "Configuration",
-                    "Providers declare their data-flow direction at the handshake so hosts can gate consent before sending any query.",
-                    "configuration.md",
-                    "L1-25",
-                    0.61,
-                    CONFIGURATION_DIGEST,
-                ),
-            ],
-            "truncated": False,
-        }
+        frames = [
+            _doc_frame(
+                "frm_getting_started",
+                "Getting Started",
+                "Install the reference binding, then implement the required provider methods.",
+                "getting-started.md",
+                "L1-40",
+                0.82,
+                GETTING_STARTED_DIGEST,
+            ),
+            _doc_frame(
+                "frm_configuration",
+                "Configuration",
+                "Providers declare their data-flow direction at the handshake so hosts can gate consent before sending any query.",
+                "configuration.md",
+                "L1-25",
+                0.61,
+                CONFIGURATION_DIGEST,
+            ),
+        ]
+        # §G4: a frame is anchored when its own `uri`, or any relation's
+        # `target_uri`, equals one of the query's anchors. A graph-declaring
+        # provider ranks anchored frames first -- the "boost" §G3 asks for.
+        anchors = query.get("anchors") or []
+        if anchors:
+            frames.sort(key=lambda f: not _is_anchored(f, anchors))
+        return {"frames": frames, "truncated": False}
 
     def verify(self, request: dict[str, Any]) -> dict[str, Any]:
         # Honest verify: compare each presented digest against what is currently
