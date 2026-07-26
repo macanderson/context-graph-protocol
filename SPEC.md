@@ -205,6 +205,30 @@ graph-capable provider **SHOULD** boost frames within a small number of relation
 hops of an anchor. The ranking algorithm stays provider-private; the *contract*
 is only that anchors bias relevance.
 
+| # | Requirement | Verified by |
+| - | ----------- | ----------- |
+| **Q1** | When `kinds` is non-empty, a provider **MUST NOT** return a frame whose `kind` is outside it. Empty `kinds` means any kind. A provider serving none of the requested kinds returns zero frames, or replies `unsupported_kind`. | `kinds-filter` |
+
+### 5.1 Why `kinds` binds (Q1)
+
+`kinds` shipped as a request field with documented syntax and no stated
+semantics, and not one implementation honored it — the reference provider and
+all three SDKs declared `capabilities.query.kinds` and then ignored the filter,
+returning whatever they had. That is the dead-capability surface
+[ADR 0004](docs/adr/0004-dead-capability-surface.md) purged elsewhere, in its
+subtler form: not an unreachable field, but a reachable one that silently does
+nothing.
+
+Specifying it rather than dropping it, because unlike `upsert`/`subscribe` the
+surface is already load-bearing: `unsupported_kind` (§10) exists precisely to
+answer "you asked for kinds I don't serve", which presupposes the filter binds.
+A host that narrows to `["snippet"]` to keep prose out of a code-reasoning
+prompt, and silently receives `doc` frames anyway, has had its budget spent on
+content it explicitly excluded.
+
+Q1 is a filter, not a ranking rule: it says which frames are *eligible*, and
+leaves ordering provider-private like the rest of §5.
+
 ### 5.1 Embedding space (E1)
 
 | # | Requirement |
@@ -416,7 +440,24 @@ content is what goes into a prompt.
 | - | ----------- | ----------- |
 | **G1** | Every `Relation` **MUST** carry a non-empty `display_name` — an edge is surfaced by human label, never a raw id. | `frame-validity` |
 | **G2** | `target_uri` **MUST** be a non-empty URI. | `frame-validity` |
-| **G3** | A provider declaring `capabilities.graph` **SHOULD** boost frames within a small number of relation hops of a query `anchor`. | advisory |
+| **G3** | A provider declaring `capabilities.graph` **SHOULD** boost frames within a small number of relation hops of a query `anchor`. | `anchor-relevance` |
+| **G4** | A frame is **anchored** by an anchor URI when its own `uri` equals that anchor (zero hops), or any of its `relations[].target_uri` does (one hop). A provider declaring `capabilities.graph` and given a non-empty `anchors` **MUST** return at least one anchored frame when it has one to serve, and **SHOULD** rank anchored frames above unanchored ones. | `anchor-relevance` |
+
+### 8.2 Why anchoring needed a definition (G4)
+
+G3 said providers should "boost frames within a small number of relation hops of
+an anchor" and stopped there — it never said what an anchor is compared
+*against*. Two conformant providers could reasonably match anchors against the
+frame `uri`, against `relations[].target_uri`, or against neither, and no test
+could distinguish a provider doing sophisticated graph traversal from one
+ignoring `anchors` entirely. The reference fixture did the latter: it declared
+`graph: false`, served frames with no relations at all, and every graph
+requirement passed vacuously.
+
+G4 gives "anchored" a decidable predicate — string equality on URIs, at zero or
+one hop — so the SHOULD in G3 becomes something a suite can actually witness.
+Deeper traversal stays provider-private: G4 is a floor on what must be *found*,
+not a ceiling on how hard a provider may look.
 
 ### 8.1 Relation vocabulary (SHOULD)
 
@@ -548,11 +589,15 @@ What remains genuinely unchecked:
   (C8) are properties of the host's HTTP client; exercising them needs a real
   non-loopback, TLS network peer the in-process harness cannot stand up. They
   remain the host-side harness's next increment.
-- **R3 delimiting is checked; breakout-resistance is not.** The harness proves
-  `content` is fenced as quoted material, but the reference `compose_context`
-  does not escape a content-embedded fence token — hardened, injection-resistant
-  delimiting (an unguessable fence, escaping) is the composition module, issue
-  #15.
+- **R3 breakout-resistance is now escaping, not an unguessable fence.** The
+  reference `compose_context` neutralizes a content-embedded `<frame`/`</frame>`
+  token and escapes fence attributes, so content cannot terminate the block that
+  quotes it or forge a sibling frame (issue #15). Escaping rather than a random
+  delimiter is deliberate: composition's contract is a byte-stable prompt prefix
+  (§1 of `docs/context-reuse.md`), and a per-turn nonce would forfeit the
+  provider prompt cache to buy a property escaping already provides. What
+  remains open is the *rest* of the composition module — global budget packing
+  and cross-provider dedup — still issue #15.
 - **F5-bytes verifies a host-trusted source, not any provider-named `uri`.** The
   verifier re-reads a path the host chooses to trust; automatically re-reading an
   arbitrary `uri` a provider supplies is a capability decision (path confinement,
@@ -585,7 +630,7 @@ The freeze drops `-draft` without a flag day (§3.1) only if a `contextgraph/1.0
 implementation can safely receive a message a later `1.x` peer emits. That
 requires a stated rule for what "receive" does with surface the receiver was not
 built to know about. These rules are normative; they are what make the additive
-bias of §14 real rather than aspirational.
+bias of §15 real rather than aspirational.
 
 | # | Requirement |
 | - | ----------- |
@@ -609,7 +654,52 @@ know only ever grew, and nothing it relied on was moved out from under it.
 
 ---
 
-## 14. Changing this specification
+## 14. Attribution
+
+Provenance (§6.2) answers *where an item came from*. Attribution answers the
+other half of the same question — *what it did* — so that including a frame is
+an evaluable decision rather than an act of faith. Cost without outcome prompts
+no decision ("this frame cost 400 tokens"), and outcome without cost prompts the
+wrong one ("this frame was never cited" — it cost four).
+
+| # | Requirement | Verified by |
+| - | ----------- | ----------- |
+| **A1** | A frame's attribution handle **is** its `FrameId` (§6.3) — the same `(provider id, frame id, content_digest)` triple used for composition, dedup, usage reports (§U1), and `verify` (§9). An implementation **MUST NOT** mint a separate attribution id. | `contextgraph-types::attribution` |
+| **A2** | A host reporting attribution **MUST** report `selected`, `rendered`, and `cited` as independent observations, not a single score. `cited` **MUST** mean the model's output referred to the frame, an observable fact — never an inference that the frame *influenced* the output. | `contextgraph-types::attribution` |
+| **A3** | An attribution record **MUST** be reconcilable: coherent (`cited` ⇒ `rendered` ⇒ `selected`) and naming a frame the paired usage report actually billed. | `AttributionReport::is_reconcilable` |
+
+### 14.1 Why one id, and three booleans
+
+**One id (A1).** A second identity would be free to disagree with the first, and
+a disagreement between *the frame that was billed* and *the frame that was
+cited* is precisely the confusion attribution exists to remove.
+
+**Three booleans (A2).** They are separately observable and collapse badly. The
+case that matters most is a frame that was `selected` and `rendered` but never
+`cited`: the host paid its tokens, the model read it, and it changed nothing.
+A `used`/`unused` flag cannot express that, and a 0–1 usefulness score would
+invent a precision nobody measured. `selected` without `rendered` is a third
+distinct state — ranked in, then dropped by budget packing — and it is neither
+credit nor debit, because it was never shown.
+
+Attribution is a **host self-report**. Unlike `token_cost`, which §B3 anchors to
+a canonical rule anyone can recompute, there is no way to check a host's claim
+that a frame was cited; the guarantee is scoped to hosts that want honest
+measurement, not enforced against ones that don't.
+
+**Not on the wire.** There is no `context/feedback` method and no
+`Capabilities.feedback` in this revision. The vocabulary is specified because it
+has to be shared for scores to be comparable across implementations; the
+transport is deferred to a 1.x additive minor
+(`docs/sketches/attribution-feedback.md`). Shipping a negotiated feedback method
+with no provider consuming it would recreate exactly the dead capability surface
+[ADR 0004](docs/adr/0004-dead-capability-surface.md) removed — and the asymmetry
+favors waiting: adding the method later is family-safe, removing a dead one is
+not.
+
+---
+
+## 15. Changing this specification
 
 See [GOVERNANCE.md](./GOVERNANCE.md). A normative change needs an issue, a PR
 updating this document and `CHANGELOG.md`, and a **witness** — a conformance

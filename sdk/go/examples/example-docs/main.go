@@ -9,6 +9,7 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	cg "github.com/macanderson/context-graph-protocol/sdk/go/contextgraph"
@@ -64,7 +65,32 @@ func docFrame(id, title, content, file, rng string, score float64, digest string
 			By:     "contextgraph-go-example-docs",
 		}},
 		CitationLabel: file + " " + rng,
+		// A labelled edge to the symbol this page documents. §G4 makes a frame
+		// "anchored" when its own URI or any relation's TargetURI equals a query
+		// anchor, so this edge is what an anchored query reaches at one hop.
+		Relations: []cg.Relation{{
+			Rel:         "doc.documents",
+			TargetURI:   "symbol:///docs/" + file + "#overview",
+			DisplayName: title + " overview",
+		}},
 	}
+}
+
+// isAnchored reports whether frame is anchored by any of anchors (SPEC.md §G4):
+// zero hops via the frame's own URI, one hop via a relation's TargetURI. String
+// equality, so two implementations cannot disagree about what "anchored" means.
+func isAnchored(frame cg.ContextFrame, anchors []string) bool {
+	for _, anchor := range anchors {
+		if frame.URI == anchor {
+			return true
+		}
+		for _, rel := range frame.Relations {
+			if rel.TargetURI == anchor {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type exampleDocsProvider struct{}
@@ -92,7 +118,7 @@ func (exampleDocsProvider) Capabilities() cg.Capabilities {
 	return cg.Capabilities{
 		Query:                 cg.QueryCapability{Kinds: []string{"doc", "snippet"}},
 		Correlation:           true,
-		Graph:                 false,
+		Graph:                 true,
 		EmbeddingsFingerprint: &fingerprint,
 		Verify:                true,
 	}
@@ -112,29 +138,37 @@ func (exampleDocsProvider) Query(query cg.ContextQuery) (cg.ContextQueryResult, 
 			),
 		}
 	}
-	return cg.ContextQueryResult{
-		Frames: []cg.ContextFrame{
-			docFrame(
-				"frm_getting_started",
-				"Getting Started",
-				"Install the reference binding, then implement the required provider methods.",
-				"getting-started.md",
-				"L1-40",
-				0.82,
-				gettingStartedDigest,
-			),
-			docFrame(
-				"frm_configuration",
-				"Configuration",
-				"Providers declare their data-flow direction at the handshake so hosts can gate consent before sending any query.",
-				"configuration.md",
-				"L1-25",
-				0.61,
-				configurationDigest,
-			),
-		},
-		Truncated: false,
-	}, nil
+	frames := []cg.ContextFrame{
+		docFrame(
+			"frm_getting_started",
+			"Getting Started",
+			"Install the reference binding, then implement the required provider methods.",
+			"getting-started.md",
+			"L1-40",
+			0.82,
+			gettingStartedDigest,
+		),
+		docFrame(
+			"frm_configuration",
+			"Configuration",
+			"Providers declare their data-flow direction at the handshake so hosts can gate consent before sending any query.",
+			"configuration.md",
+			"L1-25",
+			0.61,
+			configurationDigest,
+		),
+	}
+	// §G4: a frame is anchored when its own URI, or any relation's TargetURI,
+	// equals one of the query's anchors. A graph-declaring provider ranks
+	// anchored frames first — the "boost" §G3 asks for. SliceStable keeps the
+	// relative order of equally-anchored frames, so composition stays
+	// deterministic.
+	if len(query.Anchors) > 0 {
+		sort.SliceStable(frames, func(i, j int) bool {
+			return isAnchored(frames[i], query.Anchors) && !isAnchored(frames[j], query.Anchors)
+		})
+	}
+	return cg.ContextQueryResult{Frames: frames, Truncated: false}, nil
 }
 
 // Verify implements cg.Verifier: compare each presented digest against what is

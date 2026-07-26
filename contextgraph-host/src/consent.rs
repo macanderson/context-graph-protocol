@@ -16,8 +16,12 @@
 //! receipts: the append-only ledger and the gate.
 
 use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use contextgraph_types::{ConsentReceipt, DataFlow, EgressScope, ProviderInfo};
+use contextgraph_types::{
+    ConsentReceipt, DataFlow, EgressScope, ProviderInfo, format_protocol_timestamp,
+    is_protocol_timestamp,
+};
 use serde::{Deserialize, Serialize};
 
 /// A recorded consent decision for one provider. `granted_scope` is the
@@ -39,6 +43,12 @@ pub struct ConsentRecord {
 impl ConsentRecord {
     /// Record consent for a provider, naming the data-flow direction and the
     /// scope of what may leave.
+    ///
+    /// `granted_at` is left unset here and stamped by
+    /// [`ConsentStore::record`] at the moment the decision enters the ledger —
+    /// the only place that can honestly claim to know *when* consent was
+    /// given. Use [`granted_at`](Self::granted_at) to supply your own instant
+    /// (replaying a persisted decision, or a host with its own clock).
     pub fn new(
         provider_id: impl Into<String>,
         data_flow: DataFlow,
@@ -51,6 +61,36 @@ impl ConsentRecord {
             granted_at: None,
         }
     }
+
+    /// Pin when this consent was granted, as a protocol timestamp
+    /// (`SPEC.md` §6.1 F4).
+    ///
+    /// A non-F4 instant is **rejected rather than stored**: the ledger is the
+    /// audit trail, and a timestamp nobody can parse is worse than the absence
+    /// the field already models honestly. Same guard the temporal fields carry
+    /// on the wire — never emit a string outside the profile.
+    pub fn granted_at(mut self, when: impl Into<String>) -> Self {
+        let when = when.into();
+        if is_protocol_timestamp(&when) {
+            self.granted_at = Some(when);
+        }
+        self
+    }
+}
+
+/// The current instant as a protocol timestamp (`SPEC.md` §6.1 F4).
+///
+/// A system clock set before 1970 yields a negative Unix time, which
+/// [`format_protocol_timestamp`] handles rather than saturating — a wrong-but-
+/// well-formed timestamp is still auditable, where a clamped one silently
+/// claims the epoch.
+fn now_protocol_timestamp() -> String {
+    let now = SystemTime::now();
+    let seconds = match now.duration_since(UNIX_EPOCH) {
+        Ok(elapsed) => elapsed.as_secs() as i64,
+        Err(before_epoch) => -(before_epoch.duration().as_secs() as i64),
+    };
+    format_protocol_timestamp(seconds)
 }
 
 /// The host's pre-query consent verdict for one provider — the gate result the
@@ -90,7 +130,18 @@ impl ConsentStore {
     }
 
     /// Record (or replace) legacy boolean consent for a provider.
-    pub fn record(&mut self, record: ConsentRecord) {
+    ///
+    /// Stamps `granted_at` with the host clock when the caller left it unset.
+    /// The field existed from the start and was *never* populated by anything
+    /// — every consent decision the reference host recorded went into the
+    /// ledger with no time on it, which is precisely the datum an audit needs
+    /// ("when did I agree to this?"). Stamping at insertion is the one place
+    /// that can answer honestly; a caller replaying a persisted decision keeps
+    /// its original instant via [`ConsentRecord::granted_at`].
+    pub fn record(&mut self, mut record: ConsentRecord) {
+        if record.granted_at.is_none() {
+            record.granted_at = Some(now_protocol_timestamp());
+        }
         self.records.insert(record.provider_id.clone(), record);
     }
 
@@ -208,6 +259,62 @@ impl ConsentStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recording_consent_stamps_when_it_was_granted() {
+        let mut store = ConsentStore::new();
+        store.record(ConsentRecord::new(
+            "github",
+            DataFlow {
+                reads: true,
+                egress: true,
+                ..DataFlow::default()
+            },
+            "issue titles and bodies",
+        ));
+
+        let stamped = store
+            .records
+            .get("github")
+            .expect("the record is in the ledger");
+        let granted_at = stamped
+            .granted_at
+            .as_deref()
+            .expect("an audit ledger records when consent was granted");
+        assert!(
+            is_protocol_timestamp(granted_at),
+            "granted_at `{granted_at}` must be in the F4 temporal profile"
+        );
+    }
+
+    #[test]
+    fn a_caller_supplied_instant_is_preserved_not_overwritten() {
+        // Replaying a persisted decision must keep its original instant —
+        // re-stamping on load would quietly rewrite the audit trail to "now".
+        let mut store = ConsentStore::new();
+        store.record(
+            ConsentRecord::new("github", DataFlow::default(), "issue titles")
+                .granted_at("2026-01-01T00:00:00Z"),
+        );
+
+        assert_eq!(
+            store.records["github"].granted_at.as_deref(),
+            Some("2026-01-01T00:00:00Z")
+        );
+    }
+
+    #[test]
+    fn a_non_f4_instant_is_refused_rather_than_stored() {
+        // The ledger never holds a timestamp nobody can parse; the field falls
+        // back to the honest absence it already models.
+        let record = ConsentRecord::new("github", DataFlow::default(), "issue titles")
+            .granted_at("last tuesday");
+        assert_eq!(record.granted_at, None);
+
+        let record = ConsentRecord::new("github", DataFlow::default(), "issue titles")
+            .granted_at("2026-01-01T00:00:00+02:00");
+        assert_eq!(record.granted_at, None, "F4 is UTC-only");
+    }
 
     fn egress_info() -> ProviderInfo {
         ProviderInfo {

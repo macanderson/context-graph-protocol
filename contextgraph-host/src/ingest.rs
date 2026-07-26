@@ -27,6 +27,50 @@
 //! served (§B3), and every frame satisfies its
 //! [`representation_invariants`](ContextFrame::representation_invariants).
 //!
+//! # Classification precedence
+//!
+//! `classify` walks a ladder from the least ambiguous shape to the most, and
+//! the *order* is load-bearing rather than incidental — several of these shapes
+//! can imitate each other:
+//!
+//! 1. a fenced ```` ``` ```` region → `Code` (the user drew the box themselves);
+//! 2. a lone path-shaped token → `PathRef`;
+//! 3. an exception header plus stack frames → `StackTrace`;
+//! 4. a **timestamped** log — half the lines open with a clock and some line
+//!    carries a level token — → `Log`, deliberately *ahead* of table detection,
+//!    because a pipe-delimited log (`ts | LEVEL | msg`) otherwise reads as a
+//!    table purely for sharing a delimiter count;
+//! 5. an explicitly delimited table (`|`, tab, comma) → `Table`;
+//! 6. a weaker log (level tokens or bracketed prefixes, no timestamps) → `Log`;
+//! 7. a whitespace-aligned table → `Table`, the weakest tabular signal and
+//!    therefore the last one tried: the two spaces after a padded `INFO ` look
+//!    exactly like a column break;
+//! 8. unfenced but code-shaped lines → `Code`; anything left is `Prose`.
+//!
+//! ## Known limits
+//!
+//! Heuristics this cheap misread things, and the misreads below are *accepted*
+//! rather than unnoticed. None of them can produce a dishonest frame — cost,
+//! digest, and provenance are computed from the bytes actually emitted whatever
+//! the kind — and every one of them is visible in the [`SegmentReport`] pill, so
+//! a host UI can offer the correction rather than the user discovering it later:
+//!
+//! - **A CSV of sentences reads as prose.** Comma detection requires cells that
+//!   read like values (see `MAX_CELL_WORDS`), because English is full of
+//!   commas. The block still becomes a verbatim `doc` frame — losing the column
+//!   summary, not the evidence.
+//! - **A scheme-less `example.com/path.rs` still reads as an anchor.** A
+//!   hostname-shaped first segment is now rejected (`looks_like_path`), so
+//!   `example.com/path` is prose; but a token ending in a source extension is
+//!   taken as a path, because in a workspace paste that is overwhelmingly what
+//!   it is.
+//! - **Syslog and bare clocks identify a log but never bound it.** `Jul 20
+//!   18:00:01` names no year and `18:00:01` names no day; F4 has no spelling for
+//!   "no date", so the line counts as timestamped for classification while
+//!   `valid_from`/`valid_to` stay empty rather than carry an invented instant.
+//! - **A zone-less timestamp is read as UTC.** See `zone_is_utc` for why that
+//!   assumption is the honest one and a numeric offset is refused instead.
+//!
 //! [ADR 0006]: https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0006-prompt-ingestion-as-a-local-provider.md
 
 use std::collections::{BTreeSet, HashSet};
@@ -55,6 +99,17 @@ const LOG_HEAD: usize = 8;
 const LOG_TAIL: usize = 4;
 /// Data rows shown in a distilled table sample.
 const TABLE_SAMPLE: usize = 5;
+/// Rows a block needs before an *ambiguous* delimiter (a comma, a run of
+/// spaces) is allowed to make it a table. Two lines that share a comma are a
+/// coincidence; three are a shape.
+const MIN_AMBIGUOUS_TABLE_ROWS: usize = 3;
+/// Longest a cell may be, in words, for an ambiguously-delimited block to still
+/// read as tabular. Data cells are short; clauses are not, and this is the guard
+/// that keeps a comma-spliced paragraph out of the table distiller.
+const MAX_CELL_WORDS: usize = 4;
+/// Stack frames kept from the top of a distilled trace. The top is where the
+/// fault is; the tail is framework and runtime.
+const STACK_FRAMES: usize = 8;
 /// Head/tail lines kept when distilling an oversized code block.
 const CODE_HEAD: usize = 20;
 const CODE_TAIL: usize = 8;
@@ -148,8 +203,11 @@ impl Default for IngestConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SegmentKind {
-    /// A log or trace capture → an `episode` frame.
+    /// A log capture → an `episode` frame.
     Log,
+    /// An exception or panic with its stack → an `episode` frame, distilled by
+    /// the trace-aware distiller rather than the line-salience one.
+    StackTrace,
     /// Delimited tabular data → a `fact` frame.
     Table,
     /// A source-code block → a `snippet` frame.
@@ -163,7 +221,10 @@ pub enum SegmentKind {
 impl SegmentKind {
     fn frame_kind(self) -> Option<FrameKind> {
         match self {
-            SegmentKind::Log => Some(FrameKind::Episode),
+            // A stack trace is an episode for the same reason a log is: it is a
+            // capture of something that *happened*, at an instant, not a
+            // standing fact about the workspace.
+            SegmentKind::Log | SegmentKind::StackTrace => Some(FrameKind::Episode),
             SegmentKind::Table => Some(FrameKind::Fact),
             SegmentKind::Code => Some(FrameKind::Snippet),
             SegmentKind::Prose => Some(FrameKind::Doc),
@@ -174,6 +235,7 @@ impl SegmentKind {
     fn citation_label(self) -> &'static str {
         match self {
             SegmentKind::Log => "pasted log",
+            SegmentKind::StackTrace => "pasted stack trace",
             SegmentKind::Table => "pasted table",
             SegmentKind::Code => "pasted code",
             SegmentKind::Prose => "pasted note",
@@ -185,6 +247,9 @@ impl SegmentKind {
     /// defensible default, always in `[0, 1]` (§F1).
     fn score(self) -> f32 {
         match self {
+            // A traceback outranks a log: someone who pastes one has already
+            // done the filtering, and it names the failure directly.
+            SegmentKind::StackTrace => 0.85,
             SegmentKind::Log => 0.8,
             SegmentKind::Code => 0.75,
             SegmentKind::Table => 0.7,
@@ -382,7 +447,8 @@ fn split_blocks(text: &str) -> Vec<RawBlock> {
 }
 
 /// Classify a block. Order matters: the most specific, least-ambiguous shapes
-/// are tested first.
+/// are tested first, and the full ladder — with the misreads it knowingly
+/// accepts — is documented under [Classification precedence](self#classification-precedence).
 fn classify(block: &RawBlock) -> SegmentKind {
     if block.fenced_code {
         return SegmentKind::Code;
@@ -391,11 +457,28 @@ fn classify(block: &RawBlock) -> SegmentKind {
     if lines.len() == 1 && looks_like_path(lines[0]) {
         return SegmentKind::PathRef;
     }
-    if looks_like_table(&lines) {
+    if looks_like_stack_trace(&lines) {
+        return SegmentKind::StackTrace;
+    }
+    // A timestamped log outranks table detection. `ts | LEVEL | msg` shares a
+    // delimiter count with a table, but a clock at the head of every line is by
+    // far the stronger signal — and getting it right routes the block to the
+    // `episode` frame and the log distiller instead of a column summary that
+    // would describe a log as if it were data.
+    if looks_like_timestamped_log(&lines) {
+        return SegmentKind::Log;
+    }
+    if delimited_table_delimiter(&lines).is_some() {
         return SegmentKind::Table;
     }
     if looks_like_log(&lines) {
         return SegmentKind::Log;
+    }
+    // Whitespace alignment is the weakest tabular signal — the padding after a
+    // fixed-width `INFO ` is indistinguishable from a column break — so it is
+    // offered the block only once the log heuristics have declined it.
+    if aligned_table_delimiter(&lines).is_some() {
+        return SegmentKind::Table;
     }
     if looks_like_code(&lines) {
         return SegmentKind::Code;
@@ -428,6 +511,15 @@ fn looks_like_path(line: &str) -> bool {
         .next()
         .and_then(|name| name.rsplit_once('.'))
         .is_some_and(|(_, ext)| PATH_EXTENSIONS.contains(&ext));
+    // `example.com/path` is a URL that lost its scheme, not a directory: a first
+    // segment carrying a dot is a hostname far more often than it is a folder.
+    // A rooted prefix (`./example.com/x`) or a known source extension still
+    // wins, because those are unambiguous even with a dotted first segment.
+    let host_like =
+        !rooted && !has_extension && s.split('/').next().is_some_and(|first| first.contains('.'));
+    if host_like {
+        return false;
+    }
     // A slash makes it a path; a rooted prefix or a known extension makes a
     // slashless token (`net.rs`, `src`) a path too.
     (s.contains('/') && (rooted || has_extension || s.matches('/').count() >= 1))
@@ -435,24 +527,145 @@ fn looks_like_path(line: &str) -> bool {
         || has_extension
 }
 
-/// Whether the block is delimited tabular data (pipe or tab separated).
-fn looks_like_table(lines: &[&str]) -> bool {
+// ---------------------------------------------------------------------------
+// Tabular shapes
+// ---------------------------------------------------------------------------
+
+/// How a tabular block separates its columns.
+///
+/// The variants are ordered by how unambiguous the signal is, and that ordering
+/// is why they are a type rather than a `char`: a `|` or a tab repeated the same
+/// number of times on every line is almost never prose, while a comma or a run
+/// of spaces frequently is — so the last two carry extra guards both in
+/// detection and in `classify`'s precedence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TableDelimiter {
+    /// `| a | b |` — markdown, psql, and most CLI table output.
+    Pipe,
+    /// Tab-separated: a spreadsheet copy/paste.
+    Tab,
+    /// `a,b,c` — CSV, minus the quoting rules (see [`split_row`]).
+    Comma,
+    /// Columns padded apart with runs of spaces: `ps`, `df`, `kubectl get`.
+    Whitespace,
+}
+
+/// The delimiter of a table whose columns are separated *explicitly*.
+///
+/// `|` and tab need only two rows: prose does not accidentally carry the same
+/// number of pipes on every line. A comma is a different animal — English is
+/// full of them — so CSV additionally wants a third row and cells that read like
+/// values rather than clauses.
+fn delimited_table_delimiter(lines: &[&str]) -> Option<TableDelimiter> {
     if lines.len() < 2 {
-        return false;
+        return None;
     }
-    for delimiter in ['|', '\t'] {
-        let counts: Vec<usize> = lines.iter().map(|l| l.matches(delimiter).count()).collect();
-        if let Some(common) = most_common(&counts)
-            && common >= 1
-        {
-            let agree = counts.iter().filter(|&&c| c == common).count();
-            // ≥70% of rows share the same column count.
-            if agree * 10 >= lines.len() * 7 {
-                return true;
+    if rows_agree_on_delimiter_count(lines, '|') {
+        return Some(TableDelimiter::Pipe);
+    }
+    // A tab at the *head* of a line is indentation, not an empty first column —
+    // without this, a tab-indented stack trace or code block reads as a
+    // two-column TSV purely because every line starts with one.
+    let indented = lines.iter().filter(|l| l.starts_with('\t')).count();
+    if rows_agree_on_delimiter_count(lines, '\t') && indented * 10 < lines.len() * 7 {
+        return Some(TableDelimiter::Tab);
+    }
+    if lines.len() >= MIN_AMBIGUOUS_TABLE_ROWS
+        && rows_agree_on_delimiter_count(lines, ',')
+        && rows_read_as_values(lines, TableDelimiter::Comma)
+    {
+        return Some(TableDelimiter::Comma);
+    }
+    None
+}
+
+/// The delimiter of a table whose columns are padded apart with spaces.
+///
+/// Kept separate from [`delimited_table_delimiter`] because `classify` needs to
+/// try it *after* the log heuristics — the space padding of a fixed-width level
+/// column is exactly this shape.
+fn aligned_table_delimiter(lines: &[&str]) -> Option<TableDelimiter> {
+    if lines.len() < MIN_AMBIGUOUS_TABLE_ROWS {
+        return None;
+    }
+    let counts: Vec<usize> = lines
+        .iter()
+        .map(|l| split_row(l, TableDelimiter::Whitespace).len())
+        .collect();
+    let common = most_common(&counts)?;
+    // One column is not a table, it is a list of lines.
+    if common < 2 || !majority_agrees(&counts, common) {
+        return None;
+    }
+    rows_read_as_values(lines, TableDelimiter::Whitespace).then_some(TableDelimiter::Whitespace)
+}
+
+/// The delimiter this block parses with, whichever family it belongs to.
+fn table_delimiter(lines: &[&str]) -> Option<TableDelimiter> {
+    delimited_table_delimiter(lines).or_else(|| aligned_table_delimiter(lines))
+}
+
+/// Whether ≥70 % of rows carry the same non-zero count of `delimiter`. A shared
+/// count is what distinguishes a table from lines that merely happen to contain
+/// the character.
+fn rows_agree_on_delimiter_count(lines: &[&str], delimiter: char) -> bool {
+    let counts: Vec<usize> = lines.iter().map(|l| l.matches(delimiter).count()).collect();
+    most_common(&counts).is_some_and(|common| common >= 1 && majority_agrees(&counts, common))
+}
+
+/// Whether at least 70 % of `counts` equal `common`.
+fn majority_agrees(counts: &[usize], common: usize) -> bool {
+    let agree = counts.iter().filter(|&&c| c == common).count();
+    agree * 10 >= counts.len() * 7
+}
+
+/// Whether every cell reads like a *value* rather than a clause.
+///
+/// This is the guard that keeps a comma-spliced paragraph, or prose that happens
+/// to be padded, out of the table distiller: real cells are short, sentences are
+/// not. It costs a genuine CSV whose last column is a free-text message — that
+/// block becomes a verbatim `doc` frame instead, which loses the column summary
+/// and none of the evidence.
+fn rows_read_as_values(lines: &[&str], delimiter: TableDelimiter) -> bool {
+    lines.iter().all(|line| {
+        split_row(line, delimiter)
+            .iter()
+            .all(|cell| cell.split_whitespace().count() <= MAX_CELL_WORDS)
+    })
+}
+
+/// Split one row into trimmed cells.
+///
+/// CSV quoting is deliberately not implemented: a quoted field containing a
+/// comma splits into two cells here. The compact rendering is a *sample* whose
+/// job is to convey shape and types, and the exact bytes stay content-addressed
+/// one `[full]` re-query away — so a mis-split costs fidelity in the preview and
+/// nothing at all in the evidence.
+fn split_row(line: &str, delimiter: TableDelimiter) -> Vec<String> {
+    match delimiter {
+        TableDelimiter::Pipe => {
+            let mut cells: Vec<String> = line.split('|').map(|c| c.trim().to_string()).collect();
+            // Pipe tables usually have leading/trailing delimiters → empty edges.
+            if cells.first().is_some_and(String::is_empty) {
+                cells.remove(0);
             }
+            if cells.last().is_some_and(String::is_empty) {
+                cells.pop();
+            }
+            cells
         }
+        TableDelimiter::Tab => line.split('\t').map(|c| c.trim().to_string()).collect(),
+        TableDelimiter::Comma => line.split(',').map(|c| c.trim().to_string()).collect(),
+        // Two spaces is the narrowest gap a column ever gets; a single space is
+        // just a space. Empty fragments come from wider padding, not from empty
+        // cells, so they are dropped rather than counted as columns.
+        TableDelimiter::Whitespace => line
+            .split("  ")
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+            .map(str::to_string)
+            .collect(),
     }
-    false
 }
 
 const LOG_LEVELS: &[&str] = &[
@@ -462,6 +675,9 @@ const LOG_LEVELS: &[&str] = &[
 const ALERT_LEVELS: &[&str] = &[
     "ERROR", "ERR", "WARN", "WARNING", "FATAL", "CRITICAL", "CRIT", "PANIC", "PANICKED", "SEVERE",
 ];
+/// Fragments that mark a line as belonging to a trace *within* a log. A whole
+/// trace is its own [`SegmentKind::StackTrace`]; these keep the log heuristic
+/// from rejecting the traceback a log happens to contain.
 const STACK_MARKERS: &[&str] = &[
     "at ",
     "File \"",
@@ -474,12 +690,38 @@ const STACK_MARKERS: &[&str] = &[
 
 /// Whether at least half of the non-empty lines look like log or trace lines.
 fn looks_like_log(lines: &[&str]) -> bool {
-    let non_empty: Vec<&&str> = lines.iter().filter(|l| !l.trim().is_empty()).collect();
+    let non_empty: Vec<&str> = non_empty_lines(lines);
     if non_empty.is_empty() {
         return false;
     }
     let matched = non_empty.iter().filter(|l| is_log_line(l)).count();
     matched * 2 >= non_empty.len()
+}
+
+/// Whether the block is a log that *stamps its lines*: at least half open with a
+/// recognizable timestamp, and some line carries a level token.
+///
+/// This is the strong log signal, and it is what lets `classify` put logs ahead
+/// of table detection without a genuine table falling through — a markdown row
+/// or a CSV row opens with its delimiter or its first cell, not with a clock.
+fn looks_like_timestamped_log(lines: &[&str]) -> bool {
+    let non_empty: Vec<&str> = non_empty_lines(lines);
+    if non_empty.is_empty() {
+        return false;
+    }
+    let stamped = non_empty
+        .iter()
+        .filter(|l| leading_timestamp(l).is_some())
+        .count();
+    stamped * 2 >= non_empty.len() && non_empty.iter().any(|l| has_level_token(l, LOG_LEVELS))
+}
+
+fn non_empty_lines<'a>(lines: &[&'a str]) -> Vec<&'a str> {
+    lines
+        .iter()
+        .copied()
+        .filter(|l| !l.trim().is_empty())
+        .collect()
 }
 
 fn is_log_line(line: &str) -> bool {
@@ -493,14 +735,121 @@ fn is_log_line(line: &str) -> bool {
     if has_level_token(t, LOG_LEVELS) {
         return true;
     }
+    if leading_timestamp(t).is_some() {
+        return true;
+    }
     let first = t.split_whitespace().next().unwrap_or("");
     if first.starts_with('[') {
         return true;
     }
-    // A leading timestamp-ish token: begins with a digit and carries a `:` or
-    // `-` (a clock or a date).
+    // A leading timestamp-ish token the parser above declined to recognize:
+    // begins with a digit and carries a `:` or `-` (a clock or a date).
     first.chars().next().is_some_and(|c| c.is_ascii_digit())
         && (first.contains(':') || first.contains('-'))
+}
+
+// ---------------------------------------------------------------------------
+// Stack traces
+// ---------------------------------------------------------------------------
+
+/// Whether the block *is* a stack trace, rather than merely containing one.
+///
+/// Three conditions together, because each alone misfires: a header naming the
+/// failure, at least two frame lines, and frames making up at least a quarter of
+/// the block. The last one is what keeps a 300-line log with one embedded
+/// traceback classified as a log — the trace is a small part of what the user
+/// pasted, and the salience distiller is the right one for the whole.
+fn looks_like_stack_trace(lines: &[&str]) -> bool {
+    let non_empty = non_empty_lines(lines).len();
+    if non_empty == 0 {
+        return false;
+    }
+    let frames = lines.iter().filter(|l| is_stack_frame_line(l)).count();
+    frames >= 2 && frames * 4 >= non_empty && lines.iter().any(|l| is_exception_header(l))
+}
+
+/// Whether a line names the failure a trace is about.
+///
+/// Both dominant conventions are covered, and they disagree about *where* the
+/// line goes: Java, JavaScript, and Rust put it first; Python puts it last,
+/// after the frames.
+fn is_exception_header(line: &str) -> bool {
+    // A trace pasted out of a log wears the log's ceremony: `2026-07-20
+    // 18:00:01 ERROR java.lang.IllegalStateException: …`. Stripping it first is
+    // what keeps the clock's own colons from being read as the exception's.
+    let t = strip_log_prefix(line.trim());
+    if t.starts_with("Traceback (most recent call last)")
+        || t.starts_with("thread '")
+        || t.contains("panicked at")
+        || t.starts_with("Caused by")
+        || (t.starts_with("goroutine ") && t.contains("[running]"))
+    {
+        return true;
+    }
+    // `java.lang.NullPointerException: …`, `ValueError: boom`, `Uncaught
+    // TypeError: …`. The type has to be one or two tokens: a prose sentence
+    // ("the config had an Error: see below") carries more words before the
+    // colon, and reading it as a header would drag whole paragraphs into the
+    // trace distiller.
+    let head = t.split_once(':').map_or(t, |(before, _)| before);
+    let words: Vec<&str> = head.split_whitespace().collect();
+    if words.is_empty() || words.len() > 2 {
+        return false;
+    }
+    let name = words[words.len() - 1];
+    // Trailing segment only: `java.lang.IllegalStateException` is qualified.
+    let name = name.rsplit('.').next().unwrap_or(name);
+    name.ends_with("Error") || name.ends_with("Exception")
+}
+
+/// Strip a log line's ceremonial prefix — a timestamp, a level, a bracketed
+/// thread or logger name — leaving the message.
+///
+/// Bounded to a few tokens so it can never eat the message itself: the prefix of
+/// a real log line is a timestamp (at most two tokens), a level, and maybe one
+/// bracketed name.
+fn strip_log_prefix(line: &str) -> &str {
+    let mut rest = line.trim_start();
+    for _ in 0..4 {
+        let ceremonial = leading_timestamp(rest).is_some()
+            || rest.starts_with('[')
+            || rest
+                .split_whitespace()
+                .next()
+                .is_some_and(|token| has_level_token(token, LOG_LEVELS));
+        if !ceremonial {
+            break;
+        }
+        let Some((_, tail)) = rest.split_once(char::is_whitespace) else {
+            break;
+        };
+        rest = tail.trim_start();
+    }
+    rest
+}
+
+/// Whether a line names one frame of a stack.
+fn is_stack_frame_line(line: &str) -> bool {
+    let t = line.trim_start();
+    // Java / JavaScript / .NET, and the source lines of a Rust backtrace.
+    if t.starts_with("at ") {
+        return true;
+    }
+    // Python.
+    if t.starts_with("File \"") {
+        return true;
+    }
+    // Ruby: `from app.rb:3:in 'foo'`.
+    if t.starts_with("from ") && t.contains(':') {
+        return true;
+    }
+    // Go: a tab-indented source location under the function that called it.
+    if line.starts_with('\t') && t.contains(".go:") {
+        return true;
+    }
+    // Rust's numbered backtrace frames: `  12: core::panicking::panic_fmt`.
+    let digits = t.bytes().take_while(u8::is_ascii_digit).count();
+    digits > 0 && t[digits..].starts_with(": ")
 }
 
 fn is_alert_line(line: &str) -> bool {
@@ -573,15 +922,54 @@ fn most_common(values: &[usize]) -> Option<usize> {
 // Distillation
 // ---------------------------------------------------------------------------
 
+/// Pick the singular or plural noun for `count`. A distilled rendering that
+/// says "1 lines elided" reads as a bug in the distiller, which is not a thought
+/// to put in a reader's head about the evidence they are being shown.
+fn plural<'a>(count: usize, one: &'a str, many: &'a str) -> &'a str {
+    if count == 1 { one } else { many }
+}
+
+/// A run of identical consecutive log lines, collapsed to one representative.
+///
+/// A retry loop that logs the same line four hundred times should cost one line
+/// plus a count — not four hundred lines, and above all not four hundred *slots*
+/// in the salience budget, crowding out the one line that differs.
+struct LogRun<'a> {
+    text: &'a str,
+    repeats: usize,
+}
+
+fn collapse_runs<'a>(lines: &[&'a str]) -> Vec<LogRun<'a>> {
+    let mut runs: Vec<LogRun<'a>> = Vec::new();
+    for &line in lines {
+        match runs.last_mut() {
+            Some(run) if run.text == line => run.repeats += 1,
+            _ => runs.push(LogRun {
+                text: line,
+                repeats: 1,
+            }),
+        }
+    }
+    runs
+}
+
 /// The distilled inline rendering of an oversized log: a header plus the alert
 /// lines with context, or head/tail when there are no alerts, gaps elided.
+///
+/// Runs of identical lines collapse *before* selection, so both the elision
+/// counts and the header keep quoting source lines even though the selection
+/// works over distinct ones.
 fn distill_log(full: &str) -> (String, Option<String>, Option<String>) {
     let lines: Vec<&str> = full.lines().collect();
-    let total = lines.len();
-    if total == 0 {
+    let source_lines = lines.len();
+    if source_lines == 0 {
         return (String::new(), None, None);
     }
-    let alerts: Vec<usize> = (0..total).filter(|&i| is_alert_line(lines[i])).collect();
+    let runs = collapse_runs(&lines);
+    let total = runs.len();
+    let alerts: Vec<usize> = (0..total)
+        .filter(|&i| is_alert_line(runs[i].text))
+        .collect();
 
     let mut keep: BTreeSet<usize> = BTreeSet::new();
     keep.insert(0);
@@ -607,64 +995,292 @@ fn distill_log(full: &str) -> (String, Option<String>, Option<String>) {
     let alert_note = if alerts.is_empty() {
         String::new()
     } else {
-        format!(", {} error/warn line(s)", alerts.len())
+        // Source lines, not runs: "3 error line(s)" that were the same line
+        // three times is still three lines of the log the user pasted.
+        let alert_lines: usize = alerts.iter().map(|&i| runs[i].repeats).sum();
+        format!(", {alert_lines} error/warn line(s)")
     };
-    out.push_str(&format!("[{total}-line log{alert_note}]\n"));
+    out.push_str(&format!("[{source_lines}-line log{alert_note}]\n"));
 
     let mut prev: Option<usize> = None;
     for &i in &keep {
         if let Some(p) = prev
             && i > p + 1
         {
-            out.push_str(&format!("… ({} lines elided) …\n", i - p - 1));
+            let elided: usize = runs[p + 1..i].iter().map(|r| r.repeats).sum();
+            out.push_str(&format!(
+                "… ({elided} {} elided) …\n",
+                plural(elided, "line", "lines")
+            ));
         }
-        out.push_str(lines[i]);
+        out.push_str(runs[i].text);
         out.push('\n');
+        if runs[i].repeats > 1 {
+            out.push_str(&format!("… (×{})\n", runs[i].repeats));
+        }
         prev = Some(i);
     }
 
-    let valid_from = leading_timestamp(lines.first().copied());
-    let valid_to = leading_timestamp(lines.last().copied());
+    let (valid_from, valid_to) = temporal_window(&lines);
     (out.trim_end().to_string(), valid_from, valid_to)
 }
 
-/// The first whitespace-delimited token of `line`, but only if it is already in
-/// the protocol timestamp profile (§F4). Opportunistic and guarded: a log whose
-/// timestamps are not F4-shaped simply yields no temporal bound rather than an
-/// invalid one.
-fn leading_timestamp(line: Option<&str>) -> Option<String> {
-    let token = line?.split_whitespace().next()?;
-    is_protocol_timestamp(token).then(|| token.to_string())
+/// The distilled inline rendering of a stack trace: every non-frame line — the
+/// exception, its message, the `Caused by` chain — plus the top [`STACK_FRAMES`]
+/// frames, then a count of the frames dropped.
+///
+/// Non-frame lines are kept at *both* ends because the two dominant conventions
+/// disagree about where the exception goes (Java first, Python last), and losing
+/// either end would lose the one line that says what went wrong.
+fn distill_stack_trace(full: &str) -> String {
+    let lines: Vec<&str> = full.lines().collect();
+    let frames: BTreeSet<usize> = (0..lines.len())
+        .filter(|&i| is_stack_frame_line(lines[i]))
+        .collect();
+    let (Some(&first), Some(&last)) = (frames.first(), frames.last()) else {
+        return full.to_string();
+    };
+    let kept: BTreeSet<usize> = frames.iter().take(STACK_FRAMES).copied().collect();
+    let elided = frames.len() - kept.len();
+
+    let mut out = String::new();
+    let mut previous_kept = true;
+    let mut noted = false;
+    for (i, line) in lines.iter().enumerate() {
+        let keep = if i < first || i > last {
+            // The header block above the stack and the trailing block below it.
+            true
+        } else if frames.contains(&i) {
+            kept.contains(&i)
+        } else {
+            // A continuation of the frame above it — Python's source line, a
+            // Rust `at …` path — travels with the frame it belongs to.
+            previous_kept
+        };
+        if keep {
+            out.push_str(line);
+            out.push('\n');
+        } else if !noted && elided > 0 {
+            out.push_str(&format!(
+                "… ({elided} more {})\n",
+                plural(elided, "frame", "frames")
+            ));
+            noted = true;
+        }
+        previous_kept = keep;
+    }
+    out.trim_end().to_string()
+}
+
+/// The temporal window a capture's first and last lines imply, both ends in the
+/// §F4 profile or absent.
+///
+/// The ends are ordered rather than assigned positionally: a
+/// reverse-chronological capture — `journalctl -r`, and most log UIs — would
+/// otherwise yield `valid_from > valid_to`, a window no reader can use.
+fn temporal_window(lines: &[&str]) -> (Option<String>, Option<String>) {
+    let first = leading_instant(lines.first().copied());
+    let last = leading_instant(lines.last().copied());
+    match (&first, &last) {
+        (Some(f), Some(t)) if f > t => (last, first),
+        _ => (first, last),
+    }
+}
+
+/// The §F4 instant a line opens with, if it opens with one at all — the guarded
+/// feed for a frame's `valid_from` / `valid_to`.
+fn leading_instant(line: Option<&str>) -> Option<String> {
+    leading_timestamp(line?)?.normalized
+}
+
+/// A timestamp recognized at the head of a line.
+struct LeadingTimestamp {
+    /// The §F4 spelling of the instant — `YYYY-MM-DDTHH:MM:SS(.f+)?Z` — when one
+    /// can be derived *without inventing information*.
+    ///
+    /// `None` for shapes that are unmistakably timestamps but name no day
+    /// (syslog's `Jul 20 18:00:01`, a bare `18:00:01` clock, a date with no
+    /// clock): they still identify the line as a log, but F4 has no spelling for
+    /// a partial instant, and filling in the missing year or hour would put a
+    /// fabricated instant into a frame's temporal bound.
+    normalized: Option<String>,
+}
+
+/// Recognize a timestamp at the start of `line`, normalizing to §F4 where the
+/// shape allows.
+///
+/// This is the one place the module reads a clock, and it is **guarded at the
+/// exit**: every candidate is run through [`is_protocol_timestamp`] before it is
+/// returned, so an out-of-range date (`2026-02-30`) or a shape this parser
+/// mis-assembles yields no window rather than an invalid F4 string (§F4).
+fn leading_timestamp(line: &str) -> Option<LeadingTimestamp> {
+    let t = line.trim_start();
+    // A bracketed timestamp is the same timestamp wearing punctuation:
+    // `[2026-07-20 18:00:01] INFO …`. Only the bracket's contents are offered to
+    // the parser, so a `[worker-3]` prefix cannot bleed into the clock.
+    let candidate = match t.strip_prefix('[') {
+        Some(rest) => rest.split_once(']')?.0,
+        None => t,
+    };
+    let candidate = candidate.trim_start();
+    if let Some(dated) = parse_dated_timestamp(candidate) {
+        return Some(dated);
+    }
+    // Syslog (RFC 3164), `Jul 20 18:00:01`, and a bare clock, `18:00:01.123`:
+    // recognized so the line still reads as a log, never normalized.
+    if is_syslog_timestamp(candidate) || parse_clock(candidate).is_some() {
+        return Some(LeadingTimestamp { normalized: None });
+    }
+    None
+}
+
+/// `YYYY-MM-DD` or `YYYY/MM/DD`, then `T` or a space, then a clock, then an
+/// optional zone. The only family that can produce an F4 string, because it is
+/// the only one that names a day.
+fn parse_dated_timestamp(s: &str) -> Option<LeadingTimestamp> {
+    let b = s.as_bytes();
+    if b.len() < 10 {
+        return None;
+    }
+    let separator = b[4];
+    if (separator != b'-' && separator != b'/') || b[7] != separator {
+        return None;
+    }
+    if !b[..4].iter().all(u8::is_ascii_digit)
+        || !b[5..7].iter().all(u8::is_ascii_digit)
+        || !b[8..10].iter().all(u8::is_ascii_digit)
+    {
+        return None;
+    }
+    let date = format!("{}-{}-{}", &s[..4], &s[5..7], &s[8..10]);
+    // Everything below is a *recognized* timestamp; the question from here is
+    // only whether it can be spelled in F4 without guessing.
+    let unnormalized = Some(LeadingTimestamp { normalized: None });
+
+    // A bare date carries no clock, and midnight would be a guess.
+    let Some(after_separator) = s[10..].strip_prefix(['T', 't', ' ']) else {
+        return unnormalized;
+    };
+    let Some((clock, tail)) = parse_clock(after_separator) else {
+        return unnormalized;
+    };
+    if !zone_is_utc(tail) {
+        return unnormalized;
+    }
+    let candidate = format!("{date}T{clock}Z");
+    if is_protocol_timestamp(&candidate) {
+        return Some(LeadingTimestamp {
+            normalized: Some(candidate),
+        });
+    }
+    unnormalized
+}
+
+/// `HH:MM:SS` with an optional fraction, returned in F4 spelling along with
+/// whatever followed it.
+///
+/// A comma decimal separator (`18:00:01,123` — logback, .NET, and most of
+/// Europe) normalizes to a point, which is the only spelling F4 accepts.
+fn parse_clock(s: &str) -> Option<(String, &str)> {
+    let b = s.as_bytes();
+    if b.len() < 8 || b[2] != b':' || b[5] != b':' {
+        return None;
+    }
+    if !(b[..2].iter().all(u8::is_ascii_digit)
+        && b[3..5].iter().all(u8::is_ascii_digit)
+        && b[6..8].iter().all(u8::is_ascii_digit))
+    {
+        return None;
+    }
+    let mut clock = s[..8].to_string();
+    let mut rest = &s[8..];
+    if let Some(fraction) = rest.strip_prefix(['.', ',']) {
+        let digits = fraction.bytes().take_while(u8::is_ascii_digit).count();
+        if digits > 0 {
+            clock.push('.');
+            clock.push_str(&fraction[..digits]);
+            rest = &fraction[digits..];
+        }
+    }
+    Some((clock, rest))
+}
+
+/// Whether what follows a clock denotes UTC — the only zone this module will
+/// normalize.
+///
+/// Two different decisions live here, and the asymmetry is the point. A
+/// **zone-less** timestamp is *read* as UTC: that is an assumption, and the
+/// honest one, because every line in a paste shares one clock, so the window's
+/// duration and the ordering of its ends stay correct even when the absolute
+/// offset does not — whereas refusing it drops the bi-temporal bound for the
+/// overwhelmingly common case of a log with no zone at all. A **numeric offset**
+/// is refused rather than assumed: converting `+02:00` to UTC needs date
+/// arithmetic (month ends, leap years) that this module has no business
+/// hand-rolling, and a silently wrong instant is worse than no window.
+fn zone_is_utc(tail: &str) -> bool {
+    let t = tail.trim_start();
+    if t.is_empty() {
+        return true;
+    }
+    let ends_token = |rest: &str| rest.is_empty() || rest.starts_with(char::is_whitespace);
+    if let Some(rest) = t.strip_prefix(['Z', 'z']) {
+        return ends_token(rest);
+    }
+    for utc in ["+00:00", "-00:00", "+0000", "-0000"] {
+        if let Some(rest) = t.strip_prefix(utc) {
+            return ends_token(rest);
+        }
+    }
+    // `+02:00`, `-0500` — the offsets we decline to convert.
+    if t.starts_with(['+', '-']) {
+        return false;
+    }
+    if let Some(rest) = t.strip_prefix("UTC").or_else(|| t.strip_prefix("GMT")) {
+        return ends_token(rest);
+    }
+    // Anything else is the rest of the log line, not a zone.
+    true
+}
+
+const MONTH_ABBREVIATIONS: &[&str] = &[
+    "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+];
+
+/// RFC 3164 syslog: `Jul 20 18:00:01` (the day is space-padded when single
+/// digit, hence the whitespace split rather than fixed offsets).
+fn is_syslog_timestamp(s: &str) -> bool {
+    let mut tokens = s.split_whitespace();
+    let Some(month) = tokens.next() else {
+        return false;
+    };
+    if !MONTH_ABBREVIATIONS.contains(&month.to_ascii_lowercase().as_str()) {
+        return false;
+    }
+    let Some(day) = tokens.next() else {
+        return false;
+    };
+    if day.is_empty() || day.len() > 2 || !day.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    tokens
+        .next()
+        .is_some_and(|clock| parse_clock(clock).is_some())
 }
 
 /// The distilled inline rendering of a table: shape, inferred column types, and
 /// a small sample of rows.
 fn distill_table(full: &str) -> String {
     let lines: Vec<&str> = full.lines().filter(|l| !l.trim().is_empty()).collect();
-    let delimiter = if lines.iter().any(|l| l.contains('|')) {
-        '|'
+    // The detector already agreed this block is tabular; the fallback covers a
+    // block that reached the distiller by another route (a paste truncated
+    // mid-row, say), where a slightly wrong sample beats losing the block.
+    let delimiter = table_delimiter(&lines).unwrap_or(if lines.iter().any(|l| l.contains('|')) {
+        TableDelimiter::Pipe
     } else {
-        '\t'
-    };
+        TableDelimiter::Tab
+    });
 
-    let parse = |line: &str| -> Vec<String> {
-        let mut cells: Vec<String> = line
-            .split(delimiter)
-            .map(|c| c.trim().to_string())
-            .collect();
-        // Pipe tables usually have leading/trailing delimiters → empty edges.
-        if delimiter == '|' {
-            if cells.first().is_some_and(|c| c.is_empty()) {
-                cells.remove(0);
-            }
-            if cells.last().is_some_and(|c| c.is_empty()) {
-                cells.pop();
-            }
-        }
-        cells
-    };
-
-    let mut rows: Vec<Vec<String>> = lines.iter().map(|l| parse(l)).collect();
+    let mut rows: Vec<Vec<String>> = lines.iter().map(|l| split_row(l, delimiter)).collect();
     // Drop a markdown separator row (`---|:--:|---`).
     rows.retain(|r| !r.iter().all(|c| is_separator_cell(c)));
     if rows.is_empty() {
@@ -677,13 +1293,14 @@ fn distill_table(full: &str) -> String {
 
     let mut column_summaries: Vec<String> = Vec::with_capacity(cols);
     for (idx, name) in header.iter().enumerate() {
-        let samples: Vec<&str> = data
+        // Every data row contributes, *including* the ones with nothing in this
+        // column — a short row is a hole, and holes are what make a column
+        // nullable.
+        let cells: Vec<&str> = data
             .iter()
-            .filter_map(|r| r.get(idx))
-            .map(String::as_str)
-            .filter(|c| !c.is_empty())
+            .map(|r| r.get(idx).map_or("", String::as_str))
             .collect();
-        column_summaries.push(format!("{name} ({})", infer_column_type(&samples)));
+        column_summaries.push(format!("{name} ({})", infer_column_type(&cells)));
     }
 
     let mut out = String::new();
@@ -707,26 +1324,136 @@ fn is_separator_cell(cell: &str) -> bool {
     !c.is_empty() && c.chars().all(|ch| ch == '-' || ch == ':')
 }
 
-fn infer_column_type(samples: &[&str]) -> &'static str {
-    if samples.is_empty() {
-        return "text";
+/// A column's inferred type, for the distilled header line.
+///
+/// Two properties beyond the scalar families earn the handful of bytes they
+/// cost, because each changes how the sample below them should be read:
+/// `currency` and `percent` are numbers whose *unit lives in the cell* (`12%` is
+/// neither the integer 12 nor free text), and a trailing `?` marks a column with
+/// holes — five sampled rows can easily all be populated while the other four
+/// thousand are not, and "this column is sometimes missing" is exactly the kind
+/// of thing a model should not have to infer from a five-row window.
+fn infer_column_type(cells: &[&str]) -> String {
+    let values: Vec<&str> = cells.iter().copied().filter(|c| !is_null_cell(c)).collect();
+    let nullable = values.len() < cells.len();
+    if values.is_empty() {
+        return "empty".to_string();
     }
-    if samples.iter().all(|s| s.parse::<i64>().is_ok()) {
-        return "int";
+    let all = |predicate: fn(&str) -> bool| values.iter().all(|s| predicate(s));
+    let base = if all(is_percent) {
+        "percent"
+    } else if all(is_currency) {
+        "currency"
+    } else if all(|s| number_shape(s) == Some(NumberShape::Integer)) {
+        "int"
+    } else if all(|s| number_shape(s).is_some()) {
+        "float"
+    } else if all(|s| matches!(s.to_ascii_lowercase().as_str(), "true" | "false")) {
+        "bool"
+    } else if all(looks_like_datetime) {
+        "timestamp"
+    } else {
+        "text"
+    };
+    if nullable {
+        format!("{base}?")
+    } else {
+        base.to_string()
     }
-    if samples.iter().all(|s| s.parse::<f64>().is_ok()) {
-        return "float";
+}
+
+/// Cell spellings that mean "no value here".
+///
+/// Deliberately short: an over-eager null list erases legitimate values (`NA`
+/// really is North America in some tables). These are the spellings common
+/// enough across CSV exports, database dumps, and CLI output that missing them
+/// would mislabel most real columns.
+fn is_null_cell(cell: &str) -> bool {
+    let c = cell.trim();
+    c.is_empty()
+        || matches!(
+            c.to_ascii_lowercase().as_str(),
+            "null" | "nil" | "none" | "n/a" | "na" | "nan" | "-" | "—"
+        )
+}
+
+/// Whether a number carries a fractional part — the whole difference between an
+/// `int` column and a `float` one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NumberShape {
+    Integer,
+    Fractional,
+}
+
+/// Parse a decimal number, tolerating `1,234,567` thousands grouping (which is
+/// presentation, not a different value).
+fn number_shape(s: &str) -> Option<NumberShape> {
+    let body = s.trim();
+    let body = body.strip_prefix(['-', '+']).unwrap_or(body);
+    let (integer, fraction) = match body.split_once('.') {
+        Some((integer, fraction)) => (integer, Some(fraction)),
+        None => (body, None),
+    };
+    if !is_grouped_digits(integer) {
+        return None;
     }
-    if samples
-        .iter()
-        .all(|s| matches!(s.to_ascii_lowercase().as_str(), "true" | "false"))
-    {
-        return "bool";
+    match fraction {
+        None => Some(NumberShape::Integer),
+        Some(f) if !f.is_empty() && f.bytes().all(|b| b.is_ascii_digit()) => {
+            Some(NumberShape::Fractional)
+        }
+        Some(_) => None,
     }
-    if samples.iter().all(|s| looks_like_datetime(s)) {
-        return "timestamp";
+}
+
+/// Digits, optionally in `1,234,567` thousands groups. Insisting the groups be
+/// exactly three digits is what keeps `1,2,3` — three CSV cells that lost their
+/// delimiter — from reading as one number.
+fn is_grouped_digits(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
     }
-    "text"
+    if !s.contains(',') {
+        return s.bytes().all(|b| b.is_ascii_digit());
+    }
+    let mut groups = s.split(',');
+    let head = groups.next().unwrap_or("");
+    if head.is_empty() || head.len() > 3 || !head.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    groups.all(|g| g.len() == 3 && g.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// `42%`, `-3.5 %`.
+fn is_percent(s: &str) -> bool {
+    s.trim()
+        .strip_suffix('%')
+        .is_some_and(|number| number_shape(number).is_some())
+}
+
+const CURRENCY_SYMBOLS: &[char] = &['$', '€', '£', '¥', '₹', '₽'];
+
+/// `$1,234.56`, `-€10`, `1234.56 USD`, and the accountant's parenthesized
+/// negative `(1,200.00)` — provided a symbol or an ISO code is present, since
+/// the bare parenthesized form is indistinguishable from a footnote.
+fn is_currency(s: &str) -> bool {
+    let t = s.trim();
+    let t = t
+        .strip_prefix('(')
+        .and_then(|inner| inner.strip_suffix(')'))
+        .unwrap_or(t);
+    let body = t.strip_prefix(['-', '+']).unwrap_or(t);
+    if let Some(rest) = body.strip_prefix(CURRENCY_SYMBOLS) {
+        return number_shape(rest.trim_start()).is_some();
+    }
+    if let Some(rest) = body.strip_suffix(CURRENCY_SYMBOLS) {
+        return number_shape(rest.trim_end()).is_some();
+    }
+    body.rsplit_once(' ').is_some_and(|(number, code)| {
+        code.len() == 3
+            && code.bytes().all(|b| b.is_ascii_uppercase())
+            && number_shape(number).is_some()
+    })
 }
 
 fn looks_like_datetime(s: &str) -> bool {
@@ -812,6 +1539,19 @@ impl Artifact {
                         vt,
                     )
                 }
+                SegmentKind::StackTrace => {
+                    // A traceback is one instant, not a span: when the capture
+                    // opens with a timestamp, both ends of the window are it.
+                    let at = leading_instant(full_content.lines().next());
+                    (
+                        distill_stack_trace(&full_content),
+                        verbatim_transform(),
+                        transform("stack_frame_head"),
+                        ContentFidelity::Summarized,
+                        at.clone(),
+                        at,
+                    )
+                }
                 SegmentKind::Table => (
                     distill_table(&full_content),
                     verbatim_transform(),
@@ -858,6 +1598,7 @@ impl Artifact {
         let line_count = full_content.lines().count();
         let title = match kind {
             SegmentKind::Log => format!("log · {line_count} lines"),
+            SegmentKind::StackTrace => format!("stack trace · {line_count} lines"),
             SegmentKind::Table => format!("table · {line_count} lines"),
             SegmentKind::Code => format!("code · {line_count} lines"),
             SegmentKind::Prose => "note".to_string(),
