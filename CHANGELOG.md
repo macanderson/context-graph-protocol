@@ -96,6 +96,38 @@ which. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1
   host. Wire-compatible; Rust API breaking (#5, #6, #11).
 
 ### Fixed
+- **`SPEC.md` §9's `verify` example no longer fails the schema `SPEC.md` ships.**
+  Both envelopes carried `"id": "v1"`, but §3.2 grants an `id` only to
+  `query`/`frames`/`error`, the reference `Envelope::Verify`/`Verified` have no
+  such field, and the schema is `additionalProperties: false` — the example was
+  invalid against the protocol's own definition. The `id`s are removed;
+  `verify` correlates by full frame identity, not by envelope id. Root cause:
+  `schema/validate-examples.py` checked `examples/` but never `SPEC.md`, so the
+  one example surface with no machine check was the one that drifted. It now
+  validates every fenced `jsonc` block in `SPEC.md` too (comments and documented
+  placeholders normalized away, structure checked), and CI's existing `schema`
+  job therefore catches this class of drift.
+- **JSON Schema: an ordinary `ContextQuery` was un-representable.** `kinds` and
+  `anchors` were listed as `required` while both are
+  `skip_serializing_if = "Vec::is_empty"` in the reference type, so an
+  unfiltered, unanchored query — what a host sends when it wants anything
+  relevant — failed schema validation. Exactly the bug fixed for `ContextFrame`
+  below, one type over. A test now asserts an ordinary query satisfies the
+  schema's own `required` array, and a cross-audit of all 16 shared types
+  confirms no other type demands a field its serializer elides.
+- **§G2 and §D1 are now actually verified, not merely asserted.** Both named
+  `frame-validity` as their verifier while neither `target_uri` nor the frame's
+  own `content_digest` was read by any check — the self-attestation §11.1
+  exists to rule out. `check_frames` now rejects a relation with an empty
+  `target_uri` (§G2) and a present-but-malformed `content_digest` (§D1); its
+  evidence string had claimed "well-formed digests" while accepting
+  `sha256:abc`. §D1 was found by auditing the other ten rules that cite
+  `frame-validity` after §G2 turned out to be unenforced; the remaining nine
+  were confirmed enforced.
+- **`contextgraph-host::wire` docs no longer invert a MUST NOT.** The module
+  said concurrency is "negotiated by observation, not by a capability flag",
+  contradicting `SPEC.md` §3.2 and the shipped `Capabilities::correlation`: a
+  host **MUST NOT** send an `id` to a provider that did not declare correlation.
 - JSON Schema: a `ContextFrame`'s `required` is now exactly what the reference
   serializer always emits (`id`, `kind`, `title`, `score`, `token_cost`).
   `provenance` and `relations` were listed as globally required but are
