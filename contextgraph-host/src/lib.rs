@@ -1,6 +1,6 @@
 //! `contextgraph-host` — the Context Graph Protocol host runtime.
 //!
-//! An Context Graph Protocol **host** is the side of the protocol that asks for context: it
+//! A Context Graph Protocol **host** is the side of the protocol that asks for context: it
 //! discovers providers, negotiates capabilities, routes a
 //! [`ContextQuery`](contextgraph_types::ContextQuery) to the ones that can answer,
 //! budgets and cites what comes back, and gates what may leave the machine.
@@ -84,6 +84,6 @@ pub use stdio::{RawStdioConnection, StdioProvider};
 pub use verify::{DigestVerification, verify_file_provenance, verify_provenance_digest};
 pub use wire::{Envelope, decode_line, encode_line, envelope_kind, versions_compatible};
 
-/// The Context Graph Protocol protocol version this host speaks, re-exported from `contextgraph-types`
+/// The Context Graph Protocol version this host speaks, re-exported from `contextgraph-types`
 /// (`SPEC.md`).
 pub use contextgraph_types::PROTOCOL_VERSION;

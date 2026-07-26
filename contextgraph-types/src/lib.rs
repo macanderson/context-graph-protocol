@@ -10,6 +10,7 @@
 //!
 //! Protocol version: `contextgraph/1.0-draft`.
 
+pub mod attribution;
 pub mod capability;
 pub mod consent;
 pub mod error_code;
@@ -22,6 +23,7 @@ pub mod usage;
 pub mod validate;
 pub mod verify;
 
+pub use attribution::{AttributionReport, ContextUse};
 pub use capability::{
     Capabilities, DataFlow, ProviderInfo, QueryCapability, embedding_fingerprints_match,
     fingerprint_dimensions,
@@ -39,7 +41,9 @@ pub use token::{
     BYTES_PER_BUDGET_TOKEN, SUGGESTED_HOST_SAFETY_FACTOR, budget_from_model_tokens, budget_tokens,
 };
 pub use usage::{ProviderUsage, ServedFrame, UsageReport};
-pub use validate::{DIGEST_ALGORITHMS, is_protocol_timestamp, is_well_formed_digest};
+pub use validate::{
+    DIGEST_ALGORITHMS, format_protocol_timestamp, is_protocol_timestamp, is_well_formed_digest,
+};
 pub use verify::{FrameVerdict, Verdict, VerifyRequest, VerifyResponse};
 
 /// The protocol version string this crate implements. Frozen to `contextgraph/1.0`
