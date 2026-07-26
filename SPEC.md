@@ -630,7 +630,7 @@ The freeze drops `-draft` without a flag day (§3.1) only if a `contextgraph/1.0
 implementation can safely receive a message a later `1.x` peer emits. That
 requires a stated rule for what "receive" does with surface the receiver was not
 built to know about. These rules are normative; they are what make the additive
-bias of §14 real rather than aspirational.
+bias of §15 real rather than aspirational.
 
 | # | Requirement |
 | - | ----------- |
@@ -654,7 +654,52 @@ know only ever grew, and nothing it relied on was moved out from under it.
 
 ---
 
-## 14. Changing this specification
+## 14. Attribution
+
+Provenance (§6.2) answers *where an item came from*. Attribution answers the
+other half of the same question — *what it did* — so that including a frame is
+an evaluable decision rather than an act of faith. Cost without outcome prompts
+no decision ("this frame cost 400 tokens"), and outcome without cost prompts the
+wrong one ("this frame was never cited" — it cost four).
+
+| # | Requirement | Verified by |
+| - | ----------- | ----------- |
+| **A1** | A frame's attribution handle **is** its `FrameId` (§6.3) — the same `(provider id, frame id, content_digest)` triple used for composition, dedup, usage reports (§U1), and `verify` (§9). An implementation **MUST NOT** mint a separate attribution id. | `contextgraph-types::attribution` |
+| **A2** | A host reporting attribution **MUST** report `selected`, `rendered`, and `cited` as independent observations, not a single score. `cited` **MUST** mean the model's output referred to the frame, an observable fact — never an inference that the frame *influenced* the output. | `contextgraph-types::attribution` |
+| **A3** | An attribution record **MUST** be reconcilable: coherent (`cited` ⇒ `rendered` ⇒ `selected`) and naming a frame the paired usage report actually billed. | `AttributionReport::is_reconcilable` |
+
+### 14.1 Why one id, and three booleans
+
+**One id (A1).** A second identity would be free to disagree with the first, and
+a disagreement between *the frame that was billed* and *the frame that was
+cited* is precisely the confusion attribution exists to remove.
+
+**Three booleans (A2).** They are separately observable and collapse badly. The
+case that matters most is a frame that was `selected` and `rendered` but never
+`cited`: the host paid its tokens, the model read it, and it changed nothing.
+A `used`/`unused` flag cannot express that, and a 0–1 usefulness score would
+invent a precision nobody measured. `selected` without `rendered` is a third
+distinct state — ranked in, then dropped by budget packing — and it is neither
+credit nor debit, because it was never shown.
+
+Attribution is a **host self-report**. Unlike `token_cost`, which §B3 anchors to
+a canonical rule anyone can recompute, there is no way to check a host's claim
+that a frame was cited; the guarantee is scoped to hosts that want honest
+measurement, not enforced against ones that don't.
+
+**Not on the wire.** There is no `context/feedback` method and no
+`Capabilities.feedback` in this revision. The vocabulary is specified because it
+has to be shared for scores to be comparable across implementations; the
+transport is deferred to a 1.x additive minor
+(`docs/sketches/attribution-feedback.md`). Shipping a negotiated feedback method
+with no provider consuming it would recreate exactly the dead capability surface
+[ADR 0004](docs/adr/0004-dead-capability-surface.md) removed — and the asymmetry
+favors waiting: adding the method later is family-safe, removing a dead one is
+not.
+
+---
+
+## 15. Changing this specification
 
 See [GOVERNANCE.md](./GOVERNANCE.md). A normative change needs an issue, a PR
 updating this document and `CHANGELOG.md`, and a **witness** — a conformance

@@ -10,6 +10,7 @@
 //!
 //! Protocol version: `contextgraph/1.0-draft`.
 
+pub mod attribution;
 pub mod capability;
 pub mod consent;
 pub mod error_code;
@@ -22,6 +23,7 @@ pub mod usage;
 pub mod validate;
 pub mod verify;
 
+pub use attribution::{AttributionReport, ContextUse};
 pub use capability::{
     Capabilities, DataFlow, ProviderInfo, QueryCapability, embedding_fingerprints_match,
     fingerprint_dimensions,
