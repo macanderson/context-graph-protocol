@@ -209,6 +209,17 @@ impl Relation {
             .is_some_and(|name| !name.trim().is_empty())
     }
 
+    /// Whether this edge points somewhere (`SPEC.md` §G2).
+    ///
+    /// `target_uri` is a required field, so serde guarantees it is *present* —
+    /// but `""` deserializes happily, and an edge to nowhere is not an edge.
+    /// The schema has carried `minLength: 1` here from the start; §G2 claimed
+    /// `frame-validity` verified it and no code did, which is the
+    /// self-attestation §11.1 exists to rule out.
+    pub fn has_target_uri(&self) -> bool {
+        !self.target_uri.trim().is_empty()
+    }
+
     /// Whether `rel` uses the recommended vocabulary. Advisory only — a `false`
     /// here is a hint for a provider author, never a conformance failure.
     pub fn uses_recommended_vocabulary(&self) -> bool {
@@ -448,6 +459,22 @@ impl ContextFrame {
             .collect()
     }
 
+    /// Whether this frame's own `content_digest`, if it carries one, is in the
+    /// protocol's digest form (`SPEC.md` §D1).
+    ///
+    /// Absent is fine — §D1 binds the digest only "when present". What is not
+    /// fine is a *present* digest that no host can compare against, which is
+    /// what `sha256:abc` is. §D1 named `frame-validity` as its verifier while
+    /// nothing read this field: the digest that anchors deterministic
+    /// composition, usage reports, and `context/verify` was the one digest in
+    /// the protocol that went unchecked, and §F5 held provenance to a stricter
+    /// standard than the frame's own identity.
+    pub fn has_usable_content_digest(&self) -> bool {
+        self.content_digest
+            .as_deref()
+            .is_none_or(is_well_formed_digest)
+    }
+
     /// Whether this frame's fields satisfy the invariants of its declared
     /// [`representation`](Self::representation). Providers emit conforming
     /// frames; hosts reject a frame that lies about its shape (e.g. a
@@ -659,6 +686,54 @@ mod tests {
             display_name: Some("   ".into()),
         };
         assert!(!edge.has_display_name());
+    }
+
+    #[test]
+    fn a_present_content_digest_must_be_usable_but_an_absent_one_is_fine() {
+        // §D1 binds the digest only "when present": a frame that carries none
+        // is conformant, a frame that carries `sha256:abc` is not.
+        let mut frame = sample_frame();
+        frame.content_digest = None;
+        assert!(frame.has_usable_content_digest(), "absent is permitted");
+
+        frame.content_digest = Some(format!("sha256:{}", "a".repeat(64)));
+        assert!(frame.has_usable_content_digest());
+
+        for malformed in ["sha256:abc", &format!("sha256:{}", "A".repeat(64))] {
+            frame.content_digest = Some(malformed.to_string());
+            assert!(
+                !frame.has_usable_content_digest(),
+                "{malformed} is not a comparable digest"
+            );
+        }
+    }
+
+    #[test]
+    fn an_edge_pointing_nowhere_does_not_satisfy_g2() {
+        // §G2 says `target_uri` MUST be a non-empty URI and claimed
+        // `frame-validity` checked it; nothing read the field at all. serde
+        // guarantees presence (it is not an Option), so the reachable breach is
+        // the empty — or whitespace-only — string, which the schema's
+        // `minLength: 1` rejects and the Rust side silently accepted.
+        let labelled_but_dangling = Relation {
+            rel: rel::DOC_DOCUMENTS.into(),
+            target_uri: String::new(),
+            display_name: Some("Net docs".into()),
+        };
+        assert!(labelled_but_dangling.has_display_name(), "§G1 is satisfied");
+        assert!(!labelled_but_dangling.has_target_uri(), "but §G2 is not");
+
+        let whitespace = Relation {
+            target_uri: "   ".into(),
+            ..labelled_but_dangling.clone()
+        };
+        assert!(!whitespace.has_target_uri());
+
+        let real = Relation {
+            target_uri: "file:///docs/net.md".into(),
+            ..labelled_but_dangling
+        };
+        assert!(real.has_target_uri());
     }
 
     #[test]

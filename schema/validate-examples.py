@@ -5,10 +5,18 @@ Validate the Context Graph Protocol wire examples against the JSON Schema.
 Usage:
     python3 schema/validate-examples.py
 
-Exits 0 if every message in examples/ is valid under schema/, and 1 otherwise.
+Exits 0 if every message in examples/ AND every fenced example in SPEC.md is
+valid under schema/, and 1 otherwise.
 No third-party dependencies beyond `jsonschema` (pip install jsonschema).
+
+SPEC.md is checked because it was the one example surface nothing validated, and
+it drifted: the §9 `verify` example carried an `id` member that §3.2 grants only
+to `query`/`frames`/`error`, that the reference envelope has no field for, and
+that the schema's `additionalProperties: false` rejects. The spec's own examples
+are now held to the spec's own schema.
 """
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -55,6 +63,113 @@ for i, msg in enumerate(json.loads(ref_path.read_text())):
         print(f"        {e}")
         continue
     check(f"{ref_path.name} message {i} ({msg['type']})", True)
+
+# 3. SPEC.md's own fenced examples.
+#
+# These are jsonc — `//` comments, and prose placeholders standing in for values
+# whose real form is uninteresting to a reader (`"…"`, `sha256:<64 hex>`). Both
+# are normalized away before validation, because what is being checked here is
+# STRUCTURE: member names, required members, types, and above all
+# `additionalProperties` — the class of error that put an `id` on a `verify`.
+# Substituting a placeholder never invents a member, so it cannot mask that.
+ENVELOPE_TYPES = {
+    SCHEMA["$defs"][ref["$ref"].rsplit("/", 1)[-1]]["properties"]["type"]["const"]
+    for ref in SCHEMA["oneOf"]
+}
+
+PLACEHOLDERS = [
+    (re.compile(r"sha256:<64 hex>"), "sha256:" + "a" * 64),  # §F5 digest form
+    (re.compile(r'"…"'), '"placeholder"'),                   # elided string value
+]
+
+
+def strip_line_comments(text: str) -> str:
+    """Remove `//` comments, leaving `//` inside JSON strings alone."""
+    out = []
+    for line in text.splitlines():
+        in_string = escaped = False
+        cut = None
+        for i, ch in enumerate(line):
+            if escaped:
+                escaped = False
+            elif ch == "\\" and in_string:
+                escaped = True
+            elif ch == '"':
+                in_string = not in_string
+            elif ch == "/" and not in_string and line[i + 1 : i + 2] == "/":
+                cut = i
+                break
+        out.append(line if cut is None else line[:cut])
+    return "\n".join(out)
+
+
+def json_values(text: str):
+    """Yield each successive JSON value in a block (a block may hold a pair)."""
+    decoder = json.JSONDecoder()
+    index = 0
+    while (index := _skip_ws(text, index)) < len(text):
+        value, index = decoder.raw_decode(text, index)
+        yield value
+
+
+def _skip_ws(text: str, index: int) -> int:
+    while index < len(text) and text[index] in " \t\r\n":
+        index += 1
+    return index
+
+
+spec_path = ROOT / "SPEC.md"
+spec_lines = spec_path.read_text().splitlines()
+blocks, current, start = [], None, 0
+for number, line in enumerate(spec_lines, 1):
+    if current is None:
+        if line.rstrip() == "```jsonc":
+            current, start = [], number
+    elif line.rstrip() == "```":
+        blocks.append((start, "\n".join(current)))
+        current = None
+    else:
+        current.append(line)
+
+if not blocks:
+    check("SPEC.md contains fenced jsonc examples", False)
+    print("        no ```jsonc blocks found — did the fence style change?")
+
+for start, block in blocks:
+    text = strip_line_comments(block)
+    for pattern, replacement in PLACEHOLDERS:
+        text = pattern.sub(replacement, text)
+
+    try:
+        values = list(json_values(text))
+    except json.JSONDecodeError as e:
+        check(f"SPEC.md:{start} parses as JSON", False)
+        print(f"        {e}")
+        continue
+
+    for offset, value in enumerate(values):
+        # An envelope validates against the root schema; a bare payload example
+        # (§6's frame anatomy) validates against its own $def. Naming the target
+        # keeps this auditable rather than magical.
+        if isinstance(value, dict) and value.get("type") in ENVELOPE_TYPES:
+            target, schema = f"envelope {value['type']}", SCHEMA
+        else:
+            target = "ContextFrame"
+            schema = {
+                "$schema": SCHEMA["$schema"],
+                "$ref": "#/$defs/ContextFrame",
+                "$defs": SCHEMA["$defs"],
+            }
+        label = f"SPEC.md:{start}"
+        if len(values) > 1:
+            label += f" [{offset + 1}/{len(values)}]"
+        try:
+            jsonschema.validate(value, schema)
+        except jsonschema.ValidationError as e:
+            check(f"{label} ({target})", False)
+            print(f"        {e.message}")
+            continue
+        check(f"{label} ({target})", True)
 
 print(f"\n{'OK — all examples validate' if failures == 0 else f'{failures} failure(s)'}")
 sys.exit(1 if failures else 0)
