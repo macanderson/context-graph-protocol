@@ -81,5 +81,33 @@ for i, line in enumerate(vector_lines, 1):
         continue
     check(f"{vectors_path.name} line {i} ({json.loads(line)['type']})", True)
 
+# 4. The schema's `$id` must dereference to this exact schema.
+#
+#    `$id` is the schema's public identity — the URL third parties resolve and
+#    quote. It pointed at `context-graph-protocol.org`, a hyphenated host that
+#    was never registered and returned a DNS failure, so every consumer that
+#    tried to fetch it got nothing. Now it names the live domain, and the site
+#    serves the file from `site/public/schema/`.
+#
+#    A served copy can drift from the source of truth, which would be worse than
+#    a 404: a stale schema that still resolves is one that silently validates
+#    the wrong thing. So the copy is asserted byte-identical here rather than
+#    trusted to be refreshed by hand.
+SCHEMA_SOURCE = ROOT / "schema" / "contextgraph-envelope.schema.json"
+SCHEMA_SERVED = ROOT / "site" / "public" / "schema" / "contextgraph-envelope.schema.json"
+expected_id = f"https://contextgraphprotocol.org/schema/{SCHEMA_SOURCE.name}"
+
+check(f"$id is {expected_id}", SCHEMA.get("$id") == expected_id)
+
+if not SCHEMA_SERVED.exists():
+    check(f"site serves the schema at {SCHEMA_SERVED.relative_to(ROOT)}", False)
+    print(f"        missing — copy it: cp {SCHEMA_SOURCE.relative_to(ROOT)} {SCHEMA_SERVED.relative_to(ROOT)}")
+    failures += 1
+else:
+    identical = SCHEMA_SERVED.read_bytes() == SCHEMA_SOURCE.read_bytes()
+    check("the served schema copy is byte-identical to the source", identical)
+    if not identical:
+        print(f"        refresh it: cp {SCHEMA_SOURCE.relative_to(ROOT)} {SCHEMA_SERVED.relative_to(ROOT)}")
+
 print(f"\n{'OK — all examples validate' if failures == 0 else f'{failures} failure(s)'}")
 sys.exit(1 if failures else 0)
