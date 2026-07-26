@@ -25,6 +25,11 @@ Reference documentation for the **Context Graph Protocol** crates:
 - [**Implementing a provider**](./implementing-a-provider.md) — how a third
   party builds a CGP provider, in Rust (via `ContextProvider`) or any other
   language (via the wire protocol directly). Start here to *build* something.
+- [**Prompt ingestion**](./prompt-ingestion.md) — the paste treated as a local
+  provider: intent and anchors extracted, the rest turned into
+  content-addressed evidence frames that are compact by default and pulled at
+  `[full]` on demand. Provider *policy*, not protocol — a worked example of
+  building one.
 - [**Running conformance**](./running-conformance.md) — how to prove your
   provider (or host) is Context Graph Protocol conformant, via the `contextgraph-inspect` CLI or the
   `contextgraph-conformance` library. Start here to *verify* what you built.

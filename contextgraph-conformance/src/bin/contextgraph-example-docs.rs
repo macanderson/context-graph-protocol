@@ -16,10 +16,11 @@ use std::io::{BufRead, Write};
 use clap::{Parser, ValueEnum};
 use contextgraph_host::wire::Envelope;
 use contextgraph_types::capability::{QueryCapability, fingerprint_dimensions};
+use contextgraph_types::frame::rel;
 use contextgraph_types::{
     Capabilities, ContextFrame, ContextQuery, ContextQueryResult, DataFlow, EgressScope, ErrorCode,
-    FrameKind, FrameVerdict, PROTOCOL_VERSION, Provenance, ProviderInfo, Representation, Verdict,
-    VerifyRequest, VerifyResponse, budget_tokens,
+    FrameKind, FrameVerdict, PROTOCOL_VERSION, Provenance, ProviderInfo, Relation, Representation,
+    Verdict, VerifyRequest, VerifyResponse, budget_tokens,
 };
 
 /// The embedding space this fixture declares it indexes (`SPEC.md` §E1). Its
@@ -92,6 +93,12 @@ enum Misbehave {
     /// `egress: false` — a scope that contradicts the data-flow posture
     /// (trips `consent-scope`).
     ScopeLie,
+    /// Ignore a non-empty `query.kinds`, returning frames of a kind the host
+    /// explicitly excluded (trips `kinds-filter`).
+    IgnoreKinds,
+    /// Declare `capabilities.graph` but ignore `query.anchors`, dropping the
+    /// anchored frame instead of boosting it (trips `anchor-relevance`).
+    IgnoreAnchors,
 }
 
 #[derive(Parser)]
@@ -185,6 +192,29 @@ fn main() {
                     continue;
                 }
                 let mut frames = canned_frames(args.misbehave);
+                // §Q1: a non-empty `kinds` is a filter, not a hint. Returning a
+                // frame outside it spends the host's budget on content it
+                // explicitly excluded. `ignore-kinds` skips this, which the
+                // `kinds-filter` probe catches.
+                if args.misbehave != Some(Misbehave::IgnoreKinds) && !query.kinds.is_empty() {
+                    frames.retain(|f| query.kinds.contains(&f.kind));
+                }
+                // §G4: a frame is anchored when its own `uri`, or any of its
+                // relations' `target_uri`, equals one of the query's anchors.
+                // A graph-declaring provider must return an anchored frame when
+                // it has one, and should rank anchored above unanchored — the
+                // "boost" G3 asks for, made decidable. `ignore-anchors` drops
+                // the anchored frame instead, which `anchor-relevance` catches.
+                if !query.anchors.is_empty() {
+                    if args.misbehave == Some(Misbehave::IgnoreAnchors) {
+                        frames.retain(|f| !is_anchored(f, &query.anchors));
+                    } else {
+                        // A stable partition: anchored frames first, relative
+                        // order otherwise preserved, so composition stays
+                        // deterministic.
+                        frames.sort_by_key(|f| !is_anchored(f, &query.anchors));
+                    }
+                }
                 // §F4/§6.1: honor an `as_of` pin — content not yet true at the
                 // pinned instant is not returned. The timestamp profile is one
                 // spelling per instant, so a lexicographic compare on the UTC
@@ -267,7 +297,11 @@ fn capabilities() -> Capabilities {
             kinds: vec!["doc".into(), "snippet".into()],
         },
         correlation: true,
-        graph: false,
+        // The protocol is named for the graph, and this fixture used to declare
+        // `graph: false` with `relations: vec![]` on every frame — so G1/G2
+        // passed vacuously and G3's anchor boost was never witnessed at all.
+        // It now serves real labelled edges and honors `anchors` (§G4).
+        graph: true,
         // Declaring the embedding space it indexes lets the provider reject a
         // vector from a different one (§E1). A provider that declares no
         // fingerprint has nothing to contradict and is not E1-probed.
@@ -362,6 +396,20 @@ fn verify_honestly(request: &VerifyRequest) -> VerifyResponse {
     )
 }
 
+/// Whether `frame` is anchored by any of `anchors` (`SPEC.md` §G4): its own
+/// `uri` at zero hops, or any labelled edge's `target_uri` at one hop.
+fn is_anchored(frame: &ContextFrame, anchors: &[String]) -> bool {
+    let zero_hop = frame
+        .uri
+        .as_deref()
+        .is_some_and(|u| anchors.iter().any(|a| a == u));
+    zero_hop
+        || frame
+            .relations
+            .iter()
+            .any(|r| anchors.contains(&r.target_uri))
+}
+
 fn canned_frames(misbehave: Option<Misbehave>) -> Vec<ContextFrame> {
     let bad_score = misbehave == Some(Misbehave::BadScore);
     let empty_citation = misbehave == Some(Misbehave::EmptyCitation);
@@ -397,18 +445,29 @@ fn canned_frames(misbehave: Option<Misbehave>) -> Vec<ContextFrame> {
         ),
         // Became true only in the autumn — *after* the `as_of` probe's pin, so
         // an as_of-honoring provider omits it from a mid-year pinned query.
-        doc_frame(
-            "frm_configuration",
-            "Configuration",
-            "Providers declare their data-flow direction at the handshake so hosts can \
-             gate consent before sending any query.",
-            "configuration.md",
-            "L1-25",
-            "2026-09-01T00:00:00Z",
-            0.61,
-            2,
-            misbehave,
-        ),
+        //
+        // Deliberately a **different kind** from the frame above. The §Q1 probe
+        // narrows to the first kind this provider declares (`doc`), so the
+        // fixture has to serve something *outside* that narrowing for the
+        // filter to have observable work to do. When every frame shared one
+        // kind, a provider that ignored `kinds` entirely still passed the
+        // check — a decorative check is the thing this round is removing, not
+        // adding.
+        {
+            let mut frame = doc_frame(
+                "frm_configuration",
+                "Configuration example",
+                "let host = Host::new().with_provider(\"docs\", provider);",
+                "configuration.md",
+                "L1-25",
+                "2026-09-01T00:00:00Z",
+                0.61,
+                2,
+                misbehave,
+            );
+            frame.kind = FrameKind::Snippet;
+            frame
+        },
     ]
     .into_iter()
     .enumerate()
@@ -507,7 +566,15 @@ fn doc_frame(
         }],
         citation_label: Some(format!("{file} {range}")),
         embedding: None,
-        relations: vec![],
+        // A labelled edge to the symbol this page documents. §G4 makes a frame
+        // "anchored" when its own `uri` or any `relations[].target_uri` equals
+        // a query anchor, so this edge is what an anchored query reaches at one
+        // hop.
+        relations: vec![Relation {
+            rel: rel::DOC_DOCUMENTS.into(),
+            target_uri: format!("symbol:///docs/{file}#overview"),
+            display_name: Some(format!("{title} overview")),
+        }],
     }
 }
 

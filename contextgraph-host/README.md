@@ -4,7 +4,7 @@ The host runtime for the **Context Graph Protocol**: provider discovery,
 stdio + streamable-HTTP transports, capability negotiation, budget-honest
 fan-out routing, and egress consent gating.
 
-An Context Graph Protocol **host** is the side of the protocol that asks for context. `contextgraph-host`
+A Context Graph Protocol **host** is the side of the protocol that asks for context. `contextgraph-host`
 is a ready-made host you can embed in any Rust agent: register providers
 (in-process, a child process over stdio, or a remote HTTP endpoint), fan a
 query out to all of them concurrently, and get back frames that passed

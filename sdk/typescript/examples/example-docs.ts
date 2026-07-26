@@ -30,6 +30,16 @@ const CONFIGURATION_DIGEST = `sha256:${"22".repeat(32)}`;
 // dimension — the 2nd `/`-separated segment (384) — is the length a query
 // embedding must match; a contradicting length is a vector from a different
 // space, rejected `bad_request` rather than scored into meaningless similarity.
+/**
+ * Whether `frame` is anchored by any of `anchors` (SPEC.md §G4): zero hops via
+ * the frame's own `uri`, one hop via a relation's `target_uri`. String
+ * equality, so two implementations cannot disagree about what "anchored" means.
+ */
+function isAnchored(frame: ContextFrame, anchors: string[]): boolean {
+  if (frame.uri !== undefined && anchors.includes(frame.uri)) return true;
+  return (frame.relations ?? []).some((rel) => anchors.includes(rel.target_uri));
+}
+
 const EMBEDDING_FINGERPRINT = "bge-small-en-v1.5/384/l2";
 const EMBEDDING_DIMENSIONS = Number(EMBEDDING_FINGERPRINT.split("/")[1]);
 
@@ -75,7 +85,16 @@ function docFrame(
       },
     ],
     citation_label: `${file} ${range}`,
-    relations: [],
+    // A labelled edge to the symbol this page documents. §G4 makes a frame
+    // "anchored" when its own `uri` or any relation's `target_uri` equals a
+    // query anchor, so this edge is what an anchored query reaches at one hop.
+    relations: [
+      {
+        rel: "doc.documents",
+        target_uri: `symbol:///docs/${file}#overview`,
+        display_name: `${title} overview`,
+      },
+    ],
   };
 }
 
@@ -99,7 +118,7 @@ const provider: Provider = {
     return {
       query: { kinds: ["doc", "snippet"] },
       correlation: true,
-      graph: false,
+      graph: true,
       // Declaring the embedding space it indexes lets the provider reject a
       // vector from a different one (§E1). A provider that declares no
       // fingerprint has nothing to contradict and is not E1-probed.
@@ -121,29 +140,36 @@ const provider: Provider = {
         "bad_request",
       );
     }
-    return {
-      frames: [
-        docFrame(
-          "frm_getting_started",
-          "Getting Started",
-          "Install the reference binding, then implement the required provider methods.",
-          "getting-started.md",
-          "L1-40",
-          0.82,
-          GETTING_STARTED_DIGEST,
-        ),
-        docFrame(
-          "frm_configuration",
-          "Configuration",
-          "Providers declare their data-flow direction at the handshake so hosts can gate consent before sending any query.",
-          "configuration.md",
-          "L1-25",
-          0.61,
-          CONFIGURATION_DIGEST,
-        ),
-      ],
-      truncated: false,
-    };
+    const frames = [
+      docFrame(
+        "frm_getting_started",
+        "Getting Started",
+        "Install the reference binding, then implement the required provider methods.",
+        "getting-started.md",
+        "L1-40",
+        0.82,
+        GETTING_STARTED_DIGEST,
+      ),
+      docFrame(
+        "frm_configuration",
+        "Configuration",
+        "Providers declare their data-flow direction at the handshake so hosts can gate consent before sending any query.",
+        "configuration.md",
+        "L1-25",
+        0.61,
+        CONFIGURATION_DIGEST,
+      ),
+    ];
+    // §G4: a frame is anchored when its own `uri`, or any relation's
+    // `target_uri`, equals one of the query's anchors. A graph-declaring
+    // provider ranks anchored frames first — the "boost" §G3 asks for.
+    const anchors = query.anchors ?? [];
+    if (anchors.length > 0) {
+      frames.sort(
+        (a, b) => Number(isAnchored(b, anchors)) - Number(isAnchored(a, anchors)),
+      );
+    }
+    return { frames, truncated: false };
   },
 
   verify(request: VerifyRequest): VerifyResponse {
