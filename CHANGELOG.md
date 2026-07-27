@@ -107,14 +107,14 @@ which. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1
   validates every fenced `jsonc` block in `SPEC.md` too (comments and documented
   placeholders normalized away, structure checked), and CI's existing `schema`
   job therefore catches this class of drift.
-- **JSON Schema: an ordinary `ContextQuery` was un-representable.** `kinds` and
-  `anchors` were listed as `required` while both are
-  `skip_serializing_if = "Vec::is_empty"` in the reference type, so an
-  unfiltered, unanchored query — what a host sends when it wants anything
-  relevant — failed schema validation. Exactly the bug fixed for `ContextFrame`
-  below, one type over. A test now asserts an ordinary query satisfies the
-  schema's own `required` array, and a cross-audit of all 16 shared types
-  confirms no other type demands a field its serializer elides.
+- **Regression guard for the `ContextQuery` `required` fix.** The schema change
+  itself landed independently in #63; this adds the test that keeps it fixed —
+  an ordinary unfiltered, unanchored query must satisfy the schema's *own*
+  `required` array (read from the schema, so it cannot drift into a stale
+  snapshot). A cross-audit of all 16 shared types confirms no other type demands
+  a field its serializer elides — this bug class has now recurred twice
+  (`ContextFrame` in PR #44, `ContextQuery` in #63), so it is worth a standing
+  check rather than another one-off fix.
 - **§G2 and §D1 are now actually verified, not merely asserted.** Both named
   `frame-validity` as their verifier while neither `target_uri` nor the frame's
   own `content_digest` was read by any check — the self-attestation §11.1
