@@ -6,7 +6,7 @@
 //! light (`SPEC.md` §1 — depends only on `contextgraph-types` + transport
 //! crates).
 
-use contextgraph_types::{DataFlow, EgressScope};
+use contextgraph_types::{DataFlow, EgressScope, ErrorCode};
 
 /// Anything the host runtime can surface while talking to a provider.
 #[derive(Debug, thiserror::Error)]
@@ -44,8 +44,21 @@ pub enum HostError {
     Timeout { id: String, timeout_ms: u64 },
 
     /// The provider reported an error over the wire (an `error` envelope).
-    #[error("provider {id} reported an error: {message}")]
-    Provider { id: String, message: String },
+    ///
+    /// `code` carries the structured [`ErrorCode`] the provider sent (#9) so it
+    /// survives the transport boundary instead of collapsing to a bare message;
+    /// a host can then key its reaction ([`ErrorCode::reaction`]) off the code
+    /// rather than sniffing the free-form string. `None` when the provider
+    /// declared no code — read it as [`ErrorCode::Internal`] per SPEC.md.
+    #[error(
+        "provider {id} reported an error{}: {message}",
+        .code.as_ref().map(|c| format!(" ({c})")).unwrap_or_default()
+    )]
+    Provider {
+        id: String,
+        code: Option<ErrorCode>,
+        message: String,
+    },
 
     /// The provider declares `egress` and has no recorded consent, so the
     /// host refuses to transmit a query to it (`SPEC.md`

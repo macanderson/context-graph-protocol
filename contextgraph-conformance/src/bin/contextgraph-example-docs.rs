@@ -49,6 +49,10 @@ enum Misbehave {
     /// Exit on receiving a malformed line (trips
     /// `malformed-input-tolerance`).
     CrashOnGarbage,
+    /// Stay alive on a malformed line but answer it with `internal` instead of
+    /// the `bad_request` §R1 recommends — a structured error that is not the
+    /// right one (trips `malformed-input-tolerance`).
+    MislabelMalformed,
     /// Declare a `token_cost` far below the canonical count for the content
     /// actually served (trips `budget-honesty` §B3).
     ///
@@ -137,11 +141,19 @@ fn main() {
                 if args.misbehave == Some(Misbehave::CrashOnGarbage) {
                     std::process::exit(1);
                 }
+                // §R1 recommends `bad_request`; `mislabel-malformed` answers
+                // with `internal` instead, to prove the malformed-input check
+                // now inspects the *code* rather than passing on any error.
+                let code = if args.misbehave == Some(Misbehave::MislabelMalformed) {
+                    ErrorCode::Internal
+                } else {
+                    ErrorCode::BadRequest
+                };
                 write_envelope(
                     &mut stdout,
                     &Envelope::Error {
                         id: None,
-                        code: Some(ErrorCode::BadRequest),
+                        code: Some(code),
                         message: "line was not a valid CGP envelope".into(),
                     },
                 );
