@@ -1,5 +1,8 @@
 # contextgraph-host
 
+[![crates.io](https://img.shields.io/crates/v/contextgraph-host.svg)](https://crates.io/crates/contextgraph-host)
+[![docs.rs](https://img.shields.io/docsrs/contextgraph-host)](https://docs.rs/contextgraph-host)
+
 The host runtime for the **Context Graph Protocol**: provider discovery,
 stdio + streamable-HTTP transports, capability negotiation, budget-honest
 fan-out routing, and egress consent gating.

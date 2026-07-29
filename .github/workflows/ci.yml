@@ -147,6 +147,25 @@ jobs:
       - run: pip install jsonschema
       - run: python3 schema/validate-examples.py
 
+  publish-dry-run:
+    name: contextgraph-types packages cleanly (crates.io dry run)
+    runs-on: ubuntu-latest
+    # Cheap, credential-free proof that the first crate in the publish chain
+    # (see PUBLISHING.md) still packages, resolves, and compiles in isolation.
+    # `--dry-run` never authenticates and never uploads — it aborts right
+    # before that step. Verified: `cargo publish --dry-run -p contextgraph-types`
+    # needs no `cargo login` and no CARGO_REGISTRY_TOKEN. Scoped to
+    # contextgraph-types only because it's the one crate in the chain with no
+    # unpublished workspace-internal dependency to resolve — contextgraph-host
+    # and contextgraph-conformance can't dry-run until contextgraph-types is
+    # actually live on crates.io (see PUBLISHING.md's note on why local
+    # pre-publish verification is asymmetric).
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo publish --dry-run -p contextgraph-types
+
   site:
     name: docs site builds
     runs-on: ubuntu-latest

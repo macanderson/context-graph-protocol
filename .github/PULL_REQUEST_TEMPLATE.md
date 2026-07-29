@@ -20,6 +20,18 @@
 - [ ] All commits signed off (`git commit -s`, DCO)
 - [ ] `CHANGELOG.md` updated under `[Unreleased]` if user-visible
 
+## Registry submission (only if adding a row to `docs/registry.md`)
+
+- [ ] Not applicable — this PR does not add/change a conformance registry entry
+- [ ] The exact, reproducible `contextgraph-inspect ... --json` invocation used
+      to produce the listed report is included below (no self-attested
+      listings — a maintainer must be able to re-run it and get the same
+      result)
+- [ ] Every check in the linked report is `pass` or `skip`, none `fail`
+
+<!-- If applicable, paste the invocation and, if convenient, the JSON report
+     itself (or attach it) here. -->
+
 ## Protocol-stability impact (if a spec/wire change)
 
 - [ ] Not applicable — no wire or spec change

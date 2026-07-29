@@ -1,0 +1,126 @@
+name: Downstream Canary
+
+# The code-side half of the #27 boundary enforcement (see
+# docs/adaptive-context-reconciliation.md's "Enforcement" section and ADR
+# 0007's Consequences). Downstream docs now hold only a pinned pointer to
+# this repo for frame/wire semantics — the risk that remains is a code/type
+# break in contextgraph-* that the pinned `rev` in a downstream Cargo.toml
+# doesn't surface until a human bumps it. This workflow builds the known
+# downstream consumer (stella) against THIS repo's HEAD so that break is
+# visible before the freeze, not after.
+#
+# Deliberately advisory, not a required check: this repo's own gate must stay
+# green on this repo's own guarantees, not on a downstream project's
+# unrelated churn. `continue-on-error` + an explicit ::warning:: keeps the
+# signal visible without letting a foreign repo block a merge here.
+
+on:
+  schedule:
+    # Daily, off the hour, so it doesn't line up with everyone else's cron.
+    - cron: "17 6 * * *"
+  workflow_dispatch: {}
+  pull_request:
+    # Only when a PR could plausibly move the thing this canary watches —
+    # the wire-level crates themselves, or the canary's own definition.
+    paths:
+      - "contextgraph-types/**"
+      - "contextgraph-host/**"
+      - "contextgraph-trace/**"
+      - "contextgraph-conformance/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/downstream-canary.yml"
+      - ".github/scripts/downstream-canary-stella.sh"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  stella-canary:
+    name: stella builds against CGP HEAD (advisory)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout context-graph-protocol (this repo, HEAD)
+        uses: actions/checkout@v5
+        with:
+          path: cgp
+
+      - name: Checkout stella (public)
+        uses: actions/checkout@v5
+        with:
+          repository: macanderson/stella
+          path: stella
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            cgp
+            stella
+
+      - name: Build + test stella's contextgraph-* consumers against local HEAD
+        id: build
+        continue-on-error: true
+        env:
+          CGP_DIR: ${{ github.workspace }}/cgp
+          STELLA_DIR: ${{ github.workspace }}/stella
+        run: ./cgp/.github/scripts/downstream-canary-stella.sh
+
+      - name: Flag the break (advisory — does not fail the job)
+        if: steps.build.outcome == 'failure'
+        run: |
+          echo "::warning title=downstream canary::stella no longer builds against context-graph-protocol HEAD (${{ github.sha }}) — a breaking change to contextgraph-types::ContextFrame or another wire type likely needs a coordinated stella update before the next freeze/tag."
+          {
+            echo "### :warning: Downstream canary: \`stella\` failed"
+            echo
+            echo "stella (macanderson/stella) no longer builds/tests against this repo's HEAD (\`${{ github.sha }}\`). See the \`build\` step log above for the compiler error."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  oxagen-canary:
+    name: oxagen conformance fixtures pinned to CGP HEAD (advisory, deferred)
+    runs-on: ubuntu-latest
+    steps:
+      # oxagen-platform is private, so reading it at all needs a token with
+      # cross-org repo access — that token does not exist yet
+      # (OXAGEN_PLATFORM_TOKEN). Wiring it is the deferred human step this
+      # job is waiting on; until then it degrades to a no-op notice instead
+      # of a red (or silently absent) job.
+      - name: Check for cross-org access
+        id: gate
+        env:
+          HAS_TOKEN: ${{ secrets.OXAGEN_PLATFORM_TOKEN != '' }}
+        run: |
+          echo "has_token=$HAS_TOKEN" >> "$GITHUB_OUTPUT"
+          if [[ "$HAS_TOKEN" != "true" ]]; then
+            echo "::notice title=downstream canary::oxagen-canary is a no-op — OXAGEN_PLATFORM_TOKEN is not set, so this repo cannot check out the private macanderson/oxagen-platform to validate its pinned CGP conformance fixtures. Wiring that token (a fine-grained PAT with read access to that repo) is the deferred human step; see docs/adaptive-context-reconciliation.md."
+          fi
+
+      - name: Checkout oxagen-platform (private, cross-org)
+        if: steps.gate.outputs.has_token == 'true'
+        uses: actions/checkout@v5
+        with:
+          repository: macanderson/oxagen-platform
+          token: ${{ secrets.OXAGEN_PLATFORM_TOKEN }}
+          path: oxagen
+          sparse-checkout: |
+            docs/specs/adaptive-context
+
+      - name: oxagen's CGP fixtures, pinned against this HEAD (deferred to #28)
+        if: steps.gate.outputs.has_token == 'true'
+        continue-on-error: true
+        run: |
+          # oxagen-platform's own spec (docs/specs/adaptive-context/spec.md
+          # §3, "Out (deferred, with owners)") explicitly defers running the
+          # Rust contextgraph-conformance suite against its HTTP endpoint
+          # until this repo ships the lifecycle capability (issue #28). Until
+          # #28 lands there is no wire surface on the oxagen side for this
+          # job to build or test against — so, with access wired, this step
+          # only asserts the pinned fixtures directory that #28 will exercise
+          # is still where the spec says it is, as a placeholder that turns
+          # into a real conformance run once #28 ships.
+          test -d oxagen/docs/specs/adaptive-context
+          echo "::notice title=downstream canary::oxagen cross-org access is wired, but the real fixture-vs-HEAD conformance run stays deferred until #28 (lifecycle capability) ships — see docs/specs/adaptive-context/spec.md §3 in oxagen-platform."

@@ -10,6 +10,11 @@ passes the same conformance suite that judges the Rust reference provider.
 
 ## Install
 
+> **Not yet published to PyPI.** The command below does not resolve yet — see
+> [`sdk/PUBLISHING.md`](../PUBLISHING.md) for the publish checklist and
+> current status. Until then, install from a checkout: `pip install -e
+> sdk/python` from the repository root.
+
 ```sh
 pip install contextgraph-sdk
 ```

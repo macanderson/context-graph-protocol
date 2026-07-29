@@ -1,0 +1,90 @@
+name: Release
+
+# Publishes the three publishable Context Graph Protocol crates to crates.io,
+# in dependency order (see PUBLISHING.md): contextgraph-types -> contextgraph-host
+# -> contextgraph-conformance. `contextgraph-trace` is deliberately excluded — it
+# inherits the workspace's `publish = false` default (see its Cargo.toml).
+#
+# This workflow is inert by construction. A `contextgraph-v*` tag push alone
+# can never publish anything:
+#   1. `preflight` runs unconditionally (no environment, no secrets) and only
+#      proves contextgraph-types still packages — it cannot publish anything.
+#   2. The `publish` job targets the `crates-io` GitHub Environment, which
+#      must exist and have required reviewers configured — the job pauses
+#      there for a human "Approve and deploy" click before a single step
+#      inside it runs.
+#   3. `CARGO_REGISTRY_TOKEN` must exist as a secret scoped to that same
+#      environment. No secret, no publish, regardless of approval.
+#
+# Neither of those exists yet as of writing (issue #16 is prep only — no real
+# publish, no tag, no environment/secret setup). Standing up both is a
+# one-time, human, repo-Settings action; see PUBLISHING.md.
+#
+# A failure partway through (e.g. contextgraph-types publishes but
+# contextgraph-host's index-propagation wait times out) is not auto-retried:
+# re-running this workflow would try to re-publish an already-live version,
+# which crates.io rejects outright. Finish the remaining crates manually
+# following PUBLISHING.md's sequence instead — this is the same one-way-door
+# constraint that file documents for a by-hand release.
+
+on:
+  push:
+    tags:
+      - "contextgraph-v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Unconditional, credential-free, no environment gate: proves the leaf
+  # crate still packages and compiles in isolation *before* a human is asked
+  # to spend an approval click on the job below. Same check CI already runs
+  # on every PR (see the `publish-dry-run` job in ci.yml) — repeated here
+  # because a tag can in principle point at a commit CI never ran against.
+  preflight:
+    name: preflight (dry-run, no credentials, no approval needed)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo publish --dry-run -p contextgraph-types
+
+  publish:
+    name: publish crates.io (contextgraph-types -> contextgraph-host -> contextgraph-conformance)
+    needs: preflight
+    runs-on: ubuntu-latest
+    environment: crates-io
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish contextgraph-types
+        run: cargo publish -p contextgraph-types --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Wait for contextgraph-types to propagate to the sparse index
+        run: ./.github/scripts/wait-for-crate.sh contextgraph-types "${GITHUB_REF_NAME#contextgraph-v}"
+
+      # contextgraph-host depends on contextgraph-types via a path dep with a
+      # ">=0.1.0" version requirement (see contextgraph-host/Cargo.toml) —
+      # crates.io strips the path and resolves the version req against the
+      # registry, so this step fails fast if the wait above returned too
+      # early.
+      - name: Publish contextgraph-host
+        run: cargo publish -p contextgraph-host --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Wait for contextgraph-host to propagate to the sparse index
+        run: ./.github/scripts/wait-for-crate.sh contextgraph-host "${GITHUB_REF_NAME#contextgraph-v}"
+
+      - name: Publish contextgraph-conformance
+        run: cargo publish -p contextgraph-conformance --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

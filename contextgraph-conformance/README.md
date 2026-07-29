@@ -1,5 +1,8 @@
 # contextgraph-conformance
 
+[![crates.io](https://img.shields.io/crates/v/contextgraph-conformance.svg)](https://crates.io/crates/contextgraph-conformance)
+[![docs.rs](https://img.shields.io/docsrs/contextgraph-conformance)](https://docs.rs/contextgraph-conformance)
+
 The public conformance suite for the **Context Graph Protocol**, plus
 `contextgraph-inspect` — an interactive Context Graph Protocol prober analogous to MCP's inspector.
 
