@@ -1,8 +1,6 @@
-<div style="text-align: center; margin: 10px auto;">
-  <img src="./assets/contextgraph-logo.svg" width="400px" height="100%">
-</div>
-
 # Context Graph Protocol (draft v0.1.0)
+
+https://contextgraphprotocol.org
 
 **The canonical architecture for building context graphs that agents use to reason over.**
 
