@@ -12,6 +12,46 @@ which. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1
 ## [Unreleased]
 
 ### Added
+- **Conformance registry + provider badge** (`site/content/docs/registry.mdx`,
+  `docs/registry.md`, #20) — a page listing providers that are green on
+  `contextgraph-conformance`'s suite, each backed by a reproducible
+  `contextgraph-inspect --json` report (not a self-attested claim), seeded with
+  the bundled `contextgraph-example-docs` reference fixture and its captured
+  12/12 report. This is where the governance "two independent implementations"
+  freeze criterion becomes checkable. Adds a static `conformant.svg` badge and a
+  PR-template submission checklist requiring the exact reproducing invocation.
+- **Release prep** (`.github/workflows/release.yml`, #16) — a tag-triggered
+  (`contextgraph-v*`) workflow that publishes `contextgraph-types` →
+  `contextgraph-host` → `contextgraph-conformance` to crates.io in dependency
+  order, polling the sparse index between publishes
+  (`.github/scripts/wait-for-crate.sh`). A tag push alone can never publish: an
+  unconditional credential-free `publish-dry-run` CI job packages
+  `contextgraph-types` on every PR, and the real publish is gated behind a
+  `crates-io` GitHub Environment requiring reviewer approval. Adds crates.io +
+  docs.rs badges to the root and per-crate READMEs (they read "not found" until
+  the first real publish). Version cut and the environment/secret are the
+  owner's call (see #16).
+- **SDK publish prep** (`sdk/PUBLISHING.md`, `.github/workflows/publish-sdks.yml`,
+  #59) — a per-registry release checklist (npm already live via #46; PyPI and Go
+  pending) plus a tag-gated, secret-guarded publish workflow. The TypeScript SDK
+  is published to npm as `@contextgraphprotocol/typescript-sdk` 0.1.0; the PyPI
+  (`contextgraph-sdk`) and Go module publishes stay human-only (registry upload
+  and an addressable git tag). SDK READMEs now say "not yet published" so the
+  install snippets aren't misleading.
+- **Downstream canary CI** (`.github/workflows/downstream-canary.yml`, #29) —
+  the code-side half of the #27 boundary. Builds stella's `contextgraph-*`
+  consumers (`stella-graph`, `stella-context`, `stella-cli`) against this repo's
+  HEAD via a local `[patch]` override (`.github/scripts/downstream-canary-stella.sh`),
+  on a daily schedule, `workflow_dispatch`, and PRs touching the wire crates.
+  Deliberately advisory (`continue-on-error` + a `::warning::` flag) — a
+  downstream break is a pre-freeze signal, not a reason to fail this repo's gate
+  on a foreign project's state. A guarded `oxagen-canary` job activates once a
+  human wires `OXAGEN_PLATFORM_TOKEN`.
+- **Schema `$id` now names a URL that actually resolves** (#58). `$id` pointed at
+  `contextgraphprotocol.org/schema/…`, which 404s until the Vercel project is
+  Git-linked to this repo's `site/` (#57); it now names this repo's GitHub-raw
+  URL, which resolves today regardless of how #57 is decided, as an interim
+  measure until the domain can serve the file for real.
 - **`SPEC.md` normative completeness pass** — folds every shipped wire surface
   into the single normative home ahead of the freeze (#49, #50, #48, #13). Adds
   §9 **Verification** (`verify`/`verified`, V1–V4), §6.3 **Frame identity**

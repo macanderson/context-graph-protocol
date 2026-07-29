@@ -148,7 +148,8 @@ the #28 profile alone.
 - **Re-drift is structurally prevented, not linted.** With the normative frame
   text living in exactly one place and the downstream docs holding only a pinned
   pointer, there is nothing left to drift. The downstream canary
-  (issue [#29](https://github.com/macanderson/context-graph-protocol/issues/29))
+  (issue [#29](https://github.com/macanderson/context-graph-protocol/issues/29),
+  implemented as [`.github/workflows/downstream-canary.yml`](../../.github/workflows/downstream-canary.yml))
   guards the *code* side by building stella and the oxagen copy against this
   repo's HEAD.
 

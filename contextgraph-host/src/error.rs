@@ -6,7 +6,7 @@
 //! light (`SPEC.md` §1 — depends only on `contextgraph-types` + transport
 //! crates).
 
-use contextgraph_types::{DataFlow, EgressScope};
+use contextgraph_types::{DataFlow, EgressScope, ErrorCode};
 
 /// Anything the host runtime can surface while talking to a provider.
 #[derive(Debug, thiserror::Error)]
@@ -33,6 +33,23 @@ pub enum HostError {
     #[error("transport error talking to provider {id}: {message}")]
     Transport { id: String, message: String },
 
+    /// The host refused to open a plaintext (`http://`) transport to a
+    /// non-loopback provider (`SPEC.md` §4.2, **C7**): the query payload — and
+    /// any bearer credential — would cross the network in cleartext. Raised
+    /// **before** any bytes are sent, so nothing left the host. The message
+    /// names only the id and host — never a credential (C8).
+    #[error(
+        "refusing an insecure (plaintext http) transport to non-loopback provider {id} at host `{host}`: TLS is required for any non-loopback provider (C7)"
+    )]
+    InsecureTransport { id: String, host: String },
+
+    /// The provider rejected the host's bearer credential (`HTTP 401`). Distinct
+    /// from a bare [`Transport`](Self::Transport) failure so a host can react to
+    /// an auth rejection specifically. The message names only the id and the
+    /// status — never the credential itself (`SPEC.md` §4.2, **C8**).
+    #[error("provider {id} rejected the host credential (HTTP 401 Unauthorized)")]
+    Unauthorized { id: String },
+
     /// The provider's child process closed its stream mid-exchange — it
     /// crashed. Isolated to this provider; never poisons a `query_all`
     /// (task deliverable 5).
@@ -44,8 +61,21 @@ pub enum HostError {
     Timeout { id: String, timeout_ms: u64 },
 
     /// The provider reported an error over the wire (an `error` envelope).
-    #[error("provider {id} reported an error: {message}")]
-    Provider { id: String, message: String },
+    ///
+    /// `code` carries the structured [`ErrorCode`] the provider sent (#9) so it
+    /// survives the transport boundary instead of collapsing to a bare message;
+    /// a host can then key its reaction ([`ErrorCode::reaction`]) off the code
+    /// rather than sniffing the free-form string. `None` when the provider
+    /// declared no code — read it as [`ErrorCode::Internal`] per SPEC.md.
+    #[error(
+        "provider {id} reported an error{}: {message}",
+        .code.as_ref().map(|c| format!(" ({c})")).unwrap_or_default()
+    )]
+    Provider {
+        id: String,
+        code: Option<ErrorCode>,
+        message: String,
+    },
 
     /// The provider declares `egress` and has no recorded consent, so the
     /// host refuses to transmit a query to it (`SPEC.md`

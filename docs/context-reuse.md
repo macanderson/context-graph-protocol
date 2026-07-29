@@ -259,7 +259,7 @@ auditable from the wire all the way up to the invoice line.
 
 | # | Requirement | Enforced / verified by |
 | - | ----------- | ---------------------- |
-| U1 | A host **MUST** be able to produce a usage report for any query it executed, whose `budget_consumed` equals the summed `token_cost` of the served frames it reports. | `FanOut::usage_report`; `usage_report` conformance case (drives the real fixture, re-sums independently) |
+| UR1 | A host **MUST** be able to produce a usage report for any query it executed, whose `budget_consumed` equals the summed `token_cost` of the served frames it reports. | `FanOut::usage_report`; `usage_report` conformance case (drives the real fixture, re-sums independently) |
 
 ---
 

@@ -379,8 +379,9 @@ impl ContextProvider for StdioProvider {
                 verify_correlation(&self.id, sent_id.as_deref(), echoed.as_deref())?;
                 Ok(result)
             }
-            Envelope::Error { message, .. } => Err(HostError::Provider {
+            Envelope::Error { message, code, .. } => Err(HostError::Provider {
                 id: self.id.clone(),
+                code,
                 message,
             }),
             other => Err(HostError::UnexpectedEnvelope {
@@ -399,8 +400,9 @@ impl ContextProvider for StdioProvider {
         .await?;
         match conn.recv().await? {
             Envelope::Verified { response } => Ok(response),
-            Envelope::Error { message, .. } => Err(HostError::Provider {
+            Envelope::Error { message, code, .. } => Err(HostError::Provider {
                 id: self.id.clone(),
+                code,
                 message,
             }),
             other => Err(HostError::UnexpectedEnvelope {

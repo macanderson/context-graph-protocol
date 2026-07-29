@@ -33,6 +33,9 @@ Reference documentation for the **Context Graph Protocol** crates:
 - [**Running conformance**](./running-conformance.md) — how to prove your
   provider (or host) is Context Graph Protocol conformant, via the `contextgraph-inspect` CLI or the
   `contextgraph-conformance` library. Start here to *verify* what you built.
+- [**Conformance registry**](./registry.md) — providers that are Context Graph
+  Protocol conformant today, with a reproducible report backing each claim,
+  and how to get your own provider listed.
 - [**Stability**](./stability.md) — the crate-semver vs. protocol-version
   relationship, and what changes (and doesn't) as the protocol moves from
   `contextgraph/1.0-draft` to `contextgraph/1.0`.

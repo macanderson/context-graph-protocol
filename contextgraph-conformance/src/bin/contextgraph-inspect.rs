@@ -127,7 +127,7 @@ async fn interactive_probe(descriptor: &Descriptor, query_goal: Option<&str>) {
     let id = "provider";
     let added = match descriptor {
         Descriptor::Stdio { program, args } => host.add_stdio(id, program, args).await,
-        Descriptor::Http { url } => host.add_http(id, url.clone()).await,
+        Descriptor::Http { url } => host.add_http(id, url.clone(), None).await,
     };
 
     match added {

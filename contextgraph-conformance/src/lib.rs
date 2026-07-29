@@ -30,8 +30,10 @@
 //!   the pinned instant (SPEC.md §6.1). SHOULD-strength and one-sided: a
 //!   provider that returns fewer frames, or none, never fails it.
 //! - **shutdown-clean** — the provider tears down without error (SPEC.md §3).
-//! - **malformed-input-tolerance** — a garbage line is ignored-or-errored,
-//!   never crashing the host (SPEC.md §10, task deliverable). Wire-level, so it
+//! - **malformed-input-tolerance** — a garbage line is ignored, or errored with
+//!   code `bad_request`, never crashing the host (SPEC.md §R1). Staying alive is
+//!   the MUST; the structured `bad_request` code is the SHOULD this check now
+//!   inspects (#9), so an arbitrary error no longer passes. Wire-level, so it
 //!   applies to stdio providers.
 //! - **embedding-fingerprint** — a provider declaring an
 //!   `embeddings_fingerprint` rejects a query embedding whose length
@@ -210,7 +212,7 @@ async fn build_host(
         }
         ProviderTarget::Http { url } => {
             let id = "provider-under-test".to_string();
-            host.add_http(id.clone(), url).await?;
+            host.add_http(id.clone(), url, None).await?;
             capture_identity(&host, &id)?
         }
         ProviderTarget::InProcess(provider) => {
@@ -435,9 +437,13 @@ async fn check_verify_honesty(
 }
 
 /// Wire-level probe: complete the handshake on a fresh connection, inject a
-/// malformed line, then send a valid query. A conforming provider ignores or
-/// cleanly errors on the garbage and stays alive to answer the query; a
-/// provider that dies on one bad line fails (SPEC.md §10).
+/// malformed line, then send a valid query. A conforming provider either
+/// ignores the garbage and answers the query, or errors on it with code
+/// `bad_request` — and stays alive either way (SPEC.md §R1). A provider that
+/// dies on one bad line fails; so, now, does one that stays alive but reports an
+/// error *other* than `bad_request` — the code is read, not merely the fact of
+/// an error (#9), so the check can tell a well-formed rejection from an
+/// arbitrary failure.
 async fn malformed_stdio_probe(program: &str, args: &[String]) -> CheckResult {
     let mut conn = match RawStdioConnection::spawn(program, args).await {
         Ok(conn) => conn,
@@ -477,9 +483,32 @@ async fn malformed_stdio_probe(program: &str, args: &[String]) -> CheckResult {
             CHECK_MALFORMED,
             "provider ignored a malformed line and still answered a valid query",
         ),
-        Ok(contextgraph_host::Envelope::Error { message, .. }) => CheckResult::pass(
+        // §R1's SHOULD: staying alive is the MUST, but a *structured*
+        // `bad_request` is what lets a host tell "your line was malformed" from
+        // an arbitrary failure. Inspecting the code (as the §E1 probe does) is
+        // the whole point of #9 — passing on any error would leave the code
+        // unread and the distinction unmade.
+        Ok(contextgraph_host::Envelope::Error {
+            code: Some(ErrorCode::BadRequest),
+            message,
+            ..
+        }) => CheckResult::pass(
             CHECK_MALFORMED,
-            format!("provider errored cleanly on malformed input and stayed alive: {message}"),
+            format!(
+                "provider errored cleanly on malformed input with `bad_request` and stayed alive: {message}"
+            ),
+        ),
+        // Alive, but the error is not the `bad_request` §R1 recommends (a
+        // different code, or none at all). The MUST is met; the SHOULD is not,
+        // and an unstructured failure is exactly what structured codes exist to
+        // replace — so this is flagged.
+        Ok(contextgraph_host::Envelope::Error { code, message, .. }) => CheckResult::fail(
+            CHECK_MALFORMED,
+            format!(
+                "provider stayed alive but answered malformed input with `{}` rather than the `bad_request` §R1 recommends: {message}",
+                code.map(|c| c.to_string())
+                    .unwrap_or_else(|| "no code".to_string())
+            ),
         ),
         Ok(other) => CheckResult::fail(
             CHECK_MALFORMED,
