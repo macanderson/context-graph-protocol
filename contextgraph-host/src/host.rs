@@ -799,6 +799,7 @@ mod tests {
                 }),
                 Behavior::Fail(message) => Err(HostError::Provider {
                     id: self.id.clone(),
+                    code: None,
                     message: message.clone(),
                 }),
                 Behavior::Slow(duration) => {
@@ -1275,6 +1276,7 @@ mod tests {
             if let Some(message) = &self.verify_error {
                 return Err(HostError::Provider {
                     id: self.id.clone(),
+                    code: None,
                     message: message.clone(),
                 });
             }

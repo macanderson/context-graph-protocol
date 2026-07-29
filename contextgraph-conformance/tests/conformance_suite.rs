@@ -126,6 +126,20 @@ async fn crashing_on_garbage_fails_malformed_input_tolerance() {
 }
 
 #[tokio::test]
+async fn mislabeling_malformed_input_fails_malformed_input_tolerance() {
+    // #9: staying alive is the §R1 MUST, but a structured `bad_request` is the
+    // SHOULD the check now inspects. A provider that answers a malformed line
+    // with `internal` (or any non-`bad_request` code, or none) is flagged —
+    // before, passing on "some error" left the code unread.
+    let report = run_conformance(target(&["--misbehave", "mislabel-malformed"])).await;
+    assert!(!report.passed());
+    assert_eq!(status_of(&report, CHECK_MALFORMED), CheckStatus::Fail);
+    // The provider did not crash and the handshake was fine — only the SHOULD,
+    // the specific `bad_request` code, is what failed.
+    assert_eq!(status_of(&report, CHECK_HANDSHAKE), CheckStatus::Pass);
+}
+
+#[tokio::test]
 async fn an_incompatible_protocol_version_fails_the_handshake() {
     let report = run_conformance(target(&["--misbehave", "bad-version"])).await;
     assert!(!report.passed());
