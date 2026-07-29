@@ -30,8 +30,10 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub enum HostReaction {
     /// The request itself was wrong. Retrying it unchanged will fail again.
     DoNotRetry,
-    /// The provider does not serve what was asked for. Narrow the query's
-    /// `kinds`, or stop querying this provider for them.
+    /// The provider does not serve exactly what was asked for. Adjust the
+    /// request — narrow the query's `kinds`, or downgrade
+    /// `representation_preferences` to `full` — or stop querying this provider
+    /// for it.
     NarrowOrSkip,
     /// No useful frame fits the stated budget. Raise `max_tokens` or skip.
     RaiseBudgetOrSkip,
@@ -39,6 +41,12 @@ pub enum HostReaction {
     RetryWithBackoff,
     /// The provider is tearing down. Re-spawn it or drop it from the fan-out.
     Respawn,
+    /// The provider is permanently unusable — e.g. a handshake version family
+    /// that shares no major with the host (`SPEC.md` §H3). Drop it from the
+    /// fan-out; retrying cannot help, and it is not a health blip to count and
+    /// keep. Distinct from [`DoNotRetry`](Self::DoNotRetry) (there the *request*
+    /// was wrong) and [`Respawn`](Self::Respawn) (there a retry could succeed).
+    DropProvider,
     /// A provider fault. Report it and count it against the provider's health.
     ReportAndCount,
 }
@@ -53,6 +61,14 @@ pub enum ErrorCode {
     BadRequest,
     /// The requested frame kinds are not served by this provider.
     UnsupportedKind,
+    /// The host asked for a representation the provider did not advertise in
+    /// `capabilities.representations` (`SPEC.md` §P5). The host should
+    /// re-request `full` or skip the provider.
+    UnsupportedRepresentation,
+    /// The handshake version families do not share a major, so the peers cannot
+    /// interoperate (`SPEC.md` §H3). Permanent — a host **MUST NOT** read it as
+    /// retryable — so it maps to [`HostReaction::DropProvider`], never a retry.
+    IncompatibleVersion,
     /// The budget is too small for any meaningful frame.
     BudgetUnsatisfiable,
     /// Transient overload, or a backing store is down.
@@ -73,6 +89,8 @@ impl ErrorCode {
         match self {
             Self::BadRequest => "bad_request",
             Self::UnsupportedKind => "unsupported_kind",
+            Self::UnsupportedRepresentation => "unsupported_representation",
+            Self::IncompatibleVersion => "incompatible_version",
             Self::BudgetUnsatisfiable => "budget_unsatisfiable",
             Self::Unavailable => "unavailable",
             Self::ShuttingDown => "shutting_down",
@@ -87,6 +105,8 @@ impl ErrorCode {
         match self {
             Self::BadRequest => HostReaction::DoNotRetry,
             Self::UnsupportedKind => HostReaction::NarrowOrSkip,
+            Self::UnsupportedRepresentation => HostReaction::NarrowOrSkip,
+            Self::IncompatibleVersion => HostReaction::DropProvider,
             Self::BudgetUnsatisfiable => HostReaction::RaiseBudgetOrSkip,
             Self::Unavailable => HostReaction::RetryWithBackoff,
             Self::ShuttingDown => HostReaction::Respawn,
@@ -113,6 +133,8 @@ impl From<&str> for ErrorCode {
         match raw {
             "bad_request" => Self::BadRequest,
             "unsupported_kind" => Self::UnsupportedKind,
+            "unsupported_representation" => Self::UnsupportedRepresentation,
+            "incompatible_version" => Self::IncompatibleVersion,
             "budget_unsatisfiable" => Self::BudgetUnsatisfiable,
             "unavailable" => Self::Unavailable,
             "shutting_down" => Self::ShuttingDown,
@@ -154,6 +176,8 @@ mod tests {
         let codes = [
             ErrorCode::BadRequest,
             ErrorCode::UnsupportedKind,
+            ErrorCode::UnsupportedRepresentation,
+            ErrorCode::IncompatibleVersion,
             ErrorCode::BudgetUnsatisfiable,
             ErrorCode::Unavailable,
             ErrorCode::ShuttingDown,
@@ -202,7 +226,16 @@ mod tests {
 
         assert!(!ErrorCode::BadRequest.is_retryable());
         assert!(!ErrorCode::UnsupportedKind.is_retryable());
+        assert!(!ErrorCode::UnsupportedRepresentation.is_retryable());
         assert!(!ErrorCode::BudgetUnsatisfiable.is_retryable());
         assert!(!ErrorCode::Internal.is_retryable());
+
+        // §H3: a version-family mismatch is permanent — the host drops the
+        // provider rather than retrying it.
+        assert!(!ErrorCode::IncompatibleVersion.is_retryable());
+        assert_eq!(
+            ErrorCode::IncompatibleVersion.reaction(),
+            HostReaction::DropProvider
+        );
     }
 }

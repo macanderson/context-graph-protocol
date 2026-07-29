@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://contextgraphprotocol.org/schema/contextgraph-envelope.schema.json",
+  "$id": "https://raw.githubusercontent.com/macanderson/context-graph-protocol/main/schema/contextgraph-envelope.schema.json",
   "title": "Context Graph Protocol envelope",
   "description": "A single Context Graph Protocol message \u2014 the unit exchanged on the wire (one object per NDJSON line over stdio, one request/response body over streamable HTTP). An envelope is an internally-tagged enum: the `type` field selects the variant and sits at the same level as the payload fields. Validate one message at a time against this root schema; validate individual payloads against the entries in `$defs`.",
   "$comment": "This schema is the AUTHORING-STRICT profile: `additionalProperties: false` throughout, so it catches typos in fixtures and reference messages. It is NOT the interop contract. Per SPEC.md \u00a713 U1, a receiver on the wire MUST ignore unrecognised members rather than reject the message \u2014 that is what lets a contextgraph/1.x minor add optional fields a 1.0 peer harmlessly drops. Do not use this schema to reject a peer's live message solely for carrying unknown members; use it to lint what you author.",
@@ -577,7 +577,7 @@
         },
         "canonical_token_cost": {
           "$ref": "#/$defs/u32",
-          "$comment": "Token cost of the complete canonical source content. If token_cost or canonical_token_cost is present, tokenizer_ref should name the tokenizer."
+          "$comment": "Token cost of the complete canonical source content, produced by an actual tokenizer (unlike the byte-formula token_cost, §B3/§7.2). If canonical_token_cost is present, tokenizer_ref SHOULD name the tokenizer that produced it."
         },
         "tokenizer_ref": { "type": "string", "minLength": 1 },
         "valid_from": {

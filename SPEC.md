@@ -427,6 +427,26 @@ budget.
 refinement — an optional handshake tokenizer id plus an optional exact count. It
 does not disturb the floor established here.)*
 
+### 7.3 Usage reports
+
+Budget honesty (B1–B4) stops at the individual frame. A host that meters context
+into a billing system — the usage-events → warehouse → invoice loop platforms
+reselling agents run — needs the per-request roll-up, and every host inventing
+that shape independently leaves context cost unauditable one level up from the
+wire. A **usage report** is that roll-up: a host-side artifact, not a wire
+envelope, whose total is pinned to the same byte-exact `token_cost` (B3) the
+frames already carry, so the number a customer is billed is the number the
+frames actually cost.
+
+| # | Requirement | Verified by |
+| - | ----------- | ----------- |
+| **UR1** | A host **MUST** be able to produce a usage report for any query it executed, whose `budget_consumed` equals the summed `token_cost` of the served frames it reports. The report **MUST** reference those frames by their `FrameId` (§6.3), so a billed total is walkable back to the exact `(provider id, frame id, content_digest)` triples behind it. | `contextgraph-host::FanOut::usage_report` |
+
+The full report shape and its warehouse/billing metering path are described in
+the companion [`docs/context-reuse.md` §2](./docs/context-reuse.md). `UR1` is a
+distinct rule from the extensibility `U1` of §13 (ignore-unknown-members); the
+two share no anchor.
+
 ---
 
 ## 8. Graph
@@ -470,6 +490,22 @@ inventing `calls` / `call` / `code.call`:
 
 Provider-specific edges belong under their own namespace (`myindex.owns`), which
 keeps the shared namespace meaningful.
+
+### 8.3 Multi-hop traversal is deferred
+
+**A wire operation for walking edges beyond one hop is not defined in
+`contextgraph/1.0`.** G4 pins the one traversal semantics a suite can witness —
+the zero-or-one-hop *anchored* predicate — and stops there. There is no
+`neighbors` request in 1.0: a host receives frames with their edges from a
+`query` and composes them; it never asks a provider to return a node's
+neighborhood to a given depth. Freezing that operation now, with no host
+emitting it, would reintroduce the dead-capability surface §8.2 and
+[ADR 0004](./docs/adr/0004-dead-capability-surface.md) work to avoid. When a
+concrete traversal consumer forces its design it can land as an additive minor,
+gated on a new `capabilities.neighbors`, with `depth: 1` defined to return
+exactly the G4 anchored set so nothing this freeze witnessed is invalidated. A
+design sketch lives under
+[`docs/sketches/context-neighbors.md`](./docs/sketches/context-neighbors.md).
 
 ---
 
@@ -584,11 +620,20 @@ fence. Run it: `contextgraph-inspect host` (CI: `host-conformance.sh`).
 
 What remains genuinely unchecked:
 
-- **C4, C7, C8 — the HTTP transport rules.** Treating every non-loopback
-  provider as egress (C4), requiring TLS (C7), and never logging credentials
-  (C8) are properties of the host's HTTP client; exercising them needs a real
-  non-loopback, TLS network peer the in-process harness cannot stand up. They
-  remain the host-side harness's next increment.
+- **C4, C7, C8 — the HTTP transport rules.** These bind the host's HTTP client.
+  **C7 (TLS for non-loopback) and C8 (credentials never logged) are now enforced
+  and unit-tested in the reference host** (issue #13): the transport refuses a
+  plaintext `http://` connection to a non-loopback provider with a typed
+  `HostError::InsecureTransport` *before any bytes leave the host*, keeps the
+  loopback `http://` exception, attaches a bearer credential via reqwest's
+  `bearer_auth` rather than a format string, and renders every `Credential` as a
+  fixed `Credential(<redacted>)` placeholder in both `Debug` and `Display` so it
+  cannot spill into a log or a panic — each covered by a `contextgraph-host` unit
+  test. What remains genuinely unchecked is full *live-TLS-peer* conformance:
+  exercising the handshake, TLS negotiation, and credential exchange end-to-end
+  against a real non-loopback TLS peer — and witnessing C4's treat-as-egress
+  override over that same peer — needs a network peer the in-process harness
+  cannot stand up, and stays the host-side harness's next increment.
 - **R3 breakout-resistance is now escaping, not an unguessable fence.** The
   reference `compose_context` neutralizes a content-embedded `<frame`/`</frame>`
   token and escapes fence attributes, so content cannot terminate the block that
@@ -664,7 +709,7 @@ wrong one ("this frame was never cited" — it cost four).
 
 | # | Requirement | Verified by |
 | - | ----------- | ----------- |
-| **A1** | A frame's attribution handle **is** its `FrameId` (§6.3) — the same `(provider id, frame id, content_digest)` triple used for composition, dedup, usage reports (§U1), and `verify` (§9). An implementation **MUST NOT** mint a separate attribution id. | `contextgraph-types::attribution` |
+| **A1** | A frame's attribution handle **is** its `FrameId` (§6.3) — the same `(provider id, frame id, content_digest)` triple used for composition, dedup, usage reports (§7.3, UR1), and `verify` (§9). An implementation **MUST NOT** mint a separate attribution id. | `contextgraph-types::attribution` |
 | **A2** | A host reporting attribution **MUST** report `selected`, `rendered`, and `cited` as independent observations, not a single score. `cited` **MUST** mean the model's output referred to the frame, an observable fact — never an inference that the frame *influenced* the output. | `contextgraph-types::attribution` |
 | **A3** | An attribution record **MUST** be reconcilable: coherent (`cited` ⇒ `rendered` ⇒ `selected`) and naming a frame the paired usage report actually billed. | `AttributionReport::is_reconcilable` |
 

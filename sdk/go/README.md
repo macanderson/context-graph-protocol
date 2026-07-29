@@ -11,6 +11,12 @@ the same conformance suite that judges the Rust reference provider.
 
 ## Install
 
+> **Not yet published.** Go modules publish by tag, and that tag
+> (`sdk/go/v0.1.0`) has not been cut yet, so the command below does not
+> resolve — see [`sdk/PUBLISHING.md`](../PUBLISHING.md) for the publish
+> checklist and current status. Until then, `require` a pseudo-version
+> pinned to a commit SHA, or vendor from a checkout.
+
 ```sh
 go get github.com/macanderson/context-graph-protocol/sdk/go/contextgraph
 ```

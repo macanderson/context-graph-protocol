@@ -211,18 +211,28 @@ for start, block in blocks:
 # 5. The schema's `$id` must dereference to this exact schema.
 #
 #    `$id` is the schema's public identity — the URL third parties resolve and
-#    quote. It pointed at `context-graph-protocol.org`, a hyphenated host that
-#    was never registered and returned a DNS failure, so every consumer that
-#    tried to fetch it got nothing. Now it names the live domain, and the site
-#    serves the file from `site/public/schema/`.
+#    quote. It first pointed at `context-graph-protocol.org`, a hyphenated host
+#    that was never registered and returned a DNS failure, so every consumer
+#    that tried to fetch it got nothing (issue #58). Swapping in the live
+#    apex, `contextgraphprotocol.org`, does not fix it either: the domain
+#    resolves, but `site/` does not currently own that Vercel project's Git
+#    deploy and does not serve anything under `/schema/` there — see #57,
+#    which is tracking the deploy-topology fix. Pointing `$id` at that host
+#    before #57 lands would trade one unreachable URL for another.
 #
-#    A served copy can drift from the source of truth, which would be worse than
-#    a 404: a stale schema that still resolves is one that silently validates
-#    the wrong thing. So the copy is asserted byte-identical here rather than
-#    trusted to be refreshed by hand.
+#    So this is an interim measure: `$id` names this repo's GitHub-raw URL,
+#    which resolves today regardless of how #57 is decided. Once #57 lands and
+#    `contextgraphprotocol.org/schema/...` actually serves this file, `$id`
+#    should move there and this comment should say so.
+#
+#    The `site/public/schema/` mirror is kept byte-identical to the source
+#    below not because it is what makes `$id` dereferenceable — it isn't, per
+#    the above — but because it is the copy the (currently topology-broken)
+#    site would serve, and a stale copy sitting there would silently diverge
+#    from the source of truth the moment #57 does land and starts serving it.
 SCHEMA_SOURCE = ROOT / "schema" / "contextgraph-envelope.schema.json"
 SCHEMA_SERVED = ROOT / "site" / "public" / "schema" / "contextgraph-envelope.schema.json"
-expected_id = f"https://contextgraphprotocol.org/schema/{SCHEMA_SOURCE.name}"
+expected_id = f"https://raw.githubusercontent.com/macanderson/context-graph-protocol/main/schema/{SCHEMA_SOURCE.name}"
 
 check(f"$id is {expected_id}", SCHEMA.get("$id") == expected_id)
 

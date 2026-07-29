@@ -27,3 +27,9 @@ cargo build --workspace --bins
 The companion `conformance-red.sh` proves the *suite* catches cheaters using the
 Rust fixture, so an SDK provider only has to be honest, not reimplement the
 misbehaviour modes.
+
+Conformant is a separate axis from **published**: see
+[`PUBLISHING.md`](./PUBLISHING.md) for each SDK's registry status and the
+release checklist. As of this writing only the TypeScript SDK is on a real
+registry (npm); Python and Go are conformant but not yet installable outside
+a checkout.

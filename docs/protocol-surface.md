@@ -380,7 +380,7 @@ convenience.
 | - | ----------- | ---------------------- |
 | D1 | Frames sharing a `FrameId` **MUST** have identical content bytes; changing content **MUST** change `content_digest`. | provider contract; `verify` conformance check |
 | D2 | A host composing a frame set **MUST** emit frames in canonical `FrameId` order, independent of arrival order, and **MUST NOT** let `score`/`token_cost` affect the rendered bytes. | `contextgraph-host::compose_context` |
-| U1 | A host **MUST** be able to produce a usage report for any query it executed, whose consumed total equals the summed `token_cost` of the served frames it reports. | `contextgraph-host::FanOut::usage_report`; `usage-report` conformance check |
+| UR1 | A host **MUST** be able to produce a usage report for any query it executed, whose consumed total equals the summed `token_cost` of the served frames it reports. | `contextgraph-host::FanOut::usage_report`; `usage-report` conformance check |
 | C5 | A provider **MUST** declare its egress scopes (`egress_scopes`) truthfully and consistently with `data_flow.egress`; an off-machine scope alongside `egress: false` is a conformance failure. | `consent-scope` conformance check |
 | C6 | A host **MUST** reject a frame whose provider declares an egress scope with no live matching [consent receipt](./context-reuse.md#3-consent-scopes-and-receipts), with a typed error, before transmitting the query. | `ConsentStore` scope gate |
 | V1 | A provider advertising `verify` **MUST** answer honestly by comparing digests: `valid` when the presented digest matches what it currently serves, `stale` when it differs on a frame it still serves. It **MUST NOT** answer `valid` for content bytes it is not serving. | `verify-honesty` conformance check |
