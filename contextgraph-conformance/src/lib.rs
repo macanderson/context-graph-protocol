@@ -212,7 +212,7 @@ async fn build_host(
         }
         ProviderTarget::Http { url } => {
             let id = "provider-under-test".to_string();
-            host.add_http(id.clone(), url).await?;
+            host.add_http(id.clone(), url, None).await?;
             capture_identity(&host, &id)?
         }
         ProviderTarget::InProcess(provider) => {
