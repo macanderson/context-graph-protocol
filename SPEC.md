@@ -427,6 +427,26 @@ budget.
 refinement — an optional handshake tokenizer id plus an optional exact count. It
 does not disturb the floor established here.)*
 
+### 7.3 Usage reports
+
+Budget honesty (B1–B4) stops at the individual frame. A host that meters context
+into a billing system — the usage-events → warehouse → invoice loop platforms
+reselling agents run — needs the per-request roll-up, and every host inventing
+that shape independently leaves context cost unauditable one level up from the
+wire. A **usage report** is that roll-up: a host-side artifact, not a wire
+envelope, whose total is pinned to the same byte-exact `token_cost` (B3) the
+frames already carry, so the number a customer is billed is the number the
+frames actually cost.
+
+| # | Requirement | Verified by |
+| - | ----------- | ----------- |
+| **UR1** | A host **MUST** be able to produce a usage report for any query it executed, whose `budget_consumed` equals the summed `token_cost` of the served frames it reports. The report **MUST** reference those frames by their `FrameId` (§6.3), so a billed total is walkable back to the exact `(provider id, frame id, content_digest)` triples behind it. | `contextgraph-host::FanOut::usage_report` |
+
+The full report shape and its warehouse/billing metering path are described in
+the companion [`docs/context-reuse.md` §2](./docs/context-reuse.md). `UR1` is a
+distinct rule from the extensibility `U1` of §13 (ignore-unknown-members); the
+two share no anchor.
+
 ---
 
 ## 8. Graph
@@ -664,7 +684,7 @@ wrong one ("this frame was never cited" — it cost four).
 
 | # | Requirement | Verified by |
 | - | ----------- | ----------- |
-| **A1** | A frame's attribution handle **is** its `FrameId` (§6.3) — the same `(provider id, frame id, content_digest)` triple used for composition, dedup, usage reports (§U1), and `verify` (§9). An implementation **MUST NOT** mint a separate attribution id. | `contextgraph-types::attribution` |
+| **A1** | A frame's attribution handle **is** its `FrameId` (§6.3) — the same `(provider id, frame id, content_digest)` triple used for composition, dedup, usage reports (§7.3, UR1), and `verify` (§9). An implementation **MUST NOT** mint a separate attribution id. | `contextgraph-types::attribution` |
 | **A2** | A host reporting attribution **MUST** report `selected`, `rendered`, and `cited` as independent observations, not a single score. `cited` **MUST** mean the model's output referred to the frame, an observable fact — never an inference that the frame *influenced* the output. | `contextgraph-types::attribution` |
 | **A3** | An attribution record **MUST** be reconcilable: coherent (`cited` ⇒ `rendered` ⇒ `selected`) and naming a frame the paired usage report actually billed. | `AttributionReport::is_reconcilable` |
 

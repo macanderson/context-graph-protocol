@@ -577,7 +577,7 @@
         },
         "canonical_token_cost": {
           "$ref": "#/$defs/u32",
-          "$comment": "Token cost of the complete canonical source content. If token_cost or canonical_token_cost is present, tokenizer_ref should name the tokenizer."
+          "$comment": "Token cost of the complete canonical source content, produced by an actual tokenizer (unlike the byte-formula token_cost, §B3/§7.2). If canonical_token_cost is present, tokenizer_ref SHOULD name the tokenizer that produced it."
         },
         "tokenizer_ref": { "type": "string", "minLength": 1 },
         "valid_from": {
