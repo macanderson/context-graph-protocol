@@ -9,6 +9,8 @@
 //! its `egress` posture is decided by the URL host and gated through the same
 //! [`crate::consent`] store at the [`crate::host::Host`] layer.
 
+use std::fmt;
+use std::net::IpAddr;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -26,6 +28,96 @@ use crate::wire::{
 /// Total per-request budget for an HTTP exchange (handshake or query).
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// A bearer credential a host uses to authenticate to a remote provider.
+///
+/// The secret is **never** rendered: both [`Debug`](fmt::Debug) and
+/// [`Display`](fmt::Display) print the fixed placeholder `Credential(<redacted>)`,
+/// so a credential that reaches a log line, an `{:?}`/`{}` interpolation, or a
+/// panic payload cannot spill its bytes (`SPEC.md` §4.2, **C8**). The only way
+/// to read the raw value is [`Credential::expose`], a crate-private method used
+/// solely to attach the header on the wire — a leak is therefore greppable.
+#[derive(Clone)]
+pub struct Credential {
+    /// The bearer token / `Authorization` value. Deliberately unexposed to any
+    /// formatting impl.
+    token: String,
+}
+
+impl Credential {
+    /// Wrap a bearer token. It is attached as `Authorization: Bearer <token>`
+    /// on every request this provider sends and is never logged (C8).
+    pub fn bearer(token: impl Into<String>) -> Self {
+        Self {
+            token: token.into(),
+        }
+    }
+
+    /// The raw secret — the single, greppable exit point, used only to set the
+    /// `Authorization` header on the wire.
+    fn expose(&self) -> &str {
+        &self.token
+    }
+}
+
+/// C8: a credential in a `{:?}` rendering (a log line, a panic payload) prints a
+/// fixed placeholder, never its bytes.
+impl fmt::Debug for Credential {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Credential(<redacted>)")
+    }
+}
+
+/// C8: a credential in a `{}` rendering prints the same fixed placeholder — so
+/// even an accidental `Display` interpolation cannot leak the secret.
+impl fmt::Display for Credential {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Credential(<redacted>)")
+    }
+}
+
+/// Whether a URL host component names the loopback interface — the one case an
+/// unencrypted (`http://`) transport is allowed, because the bytes never leave
+/// the machine (`SPEC.md` §4.2, **C7**). Mirrors the `localhost` exception
+/// [`verify::file_uri_to_path`](crate::verify) makes for `file://`, widened to
+/// the loopback IP ranges: the literal name `localhost`, `127.0.0.0/8`, and
+/// `::1`. IPv6 hosts arrive bracketed (`[::1]`) from a URL, so the brackets are
+/// stripped before parsing.
+fn is_loopback_host(host: &str) -> bool {
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    let bare = host
+        .strip_prefix('[')
+        .and_then(|inner| inner.strip_suffix(']'))
+        .unwrap_or(host);
+    // `IpAddr::is_loopback` is exactly `127.0.0.0/8` for v4 and `::1` for v6.
+    matches!(bare.parse::<IpAddr>(), Ok(ip) if ip.is_loopback())
+}
+
+/// Refuse a plaintext transport to a non-loopback provider **before** any bytes
+/// leave the host (`SPEC.md` §4.2, **C7**): an `http://` (not `https://`) URL
+/// whose host is not loopback would carry the query payload — and any bearer
+/// credential — across the network in cleartext. A loopback `http://` target is
+/// allowed (the bytes never leave the machine); every `https://` target is
+/// allowed. Called before the client is built or DNS is resolved, so a refusal
+/// short-circuits with zero network activity.
+fn refuse_insecure_transport(id: &str, url: &str) -> Result<(), HostError> {
+    let parsed = reqwest::Url::parse(url).map_err(|e| HostError::Transport {
+        id: id.to_string(),
+        message: format!("invalid provider url: {e}"),
+    })?;
+    if parsed.scheme() == "http" {
+        let host = parsed.host_str().unwrap_or("");
+        if !is_loopback_host(host) {
+            return Err(HostError::InsecureTransport {
+                id: id.to_string(),
+                host: host.to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
 /// A [`ContextProvider`] backed by a remote HTTP endpoint. Handshakes once on
 /// [`HttpProvider::connect`] and caches the negotiated identity + capabilities.
 pub struct HttpProvider {
@@ -34,15 +126,36 @@ pub struct HttpProvider {
     client: reqwest::Client,
     info: ProviderInfo,
     capabilities: Capabilities,
+    /// Bearer credential attached to every request, if the provider requires
+    /// one. Redacted from every rendering (C8).
+    credential: Option<Credential>,
 }
 
 impl HttpProvider {
-    /// Connect to a remote provider: POST a `handshake`, expect a compatible
-    /// `handshake_ack`, and cache its identity + capabilities. `id` is the
-    /// host-facing routing/consent key.
+    /// Connect to a remote provider with no credential — a thin back-compat
+    /// wrapper over [`connect_with_auth`](Self::connect_with_auth). POST a
+    /// `handshake`, expect a compatible `handshake_ack`, and cache its identity
+    /// + capabilities. `id` is the host-facing routing/consent key.
     pub async fn connect(id: impl Into<String>, url: impl Into<String>) -> Result<Self, HostError> {
+        Self::connect_with_auth(id, url, None).await
+    }
+
+    /// Connect to a remote provider, optionally attaching a bearer
+    /// [`Credential`] to every request. Enforces transport security before any
+    /// bytes leave the host: a plaintext (`http://`) transport to a non-loopback
+    /// provider is refused with [`HostError::InsecureTransport`], so neither the
+    /// handshake nor a credential ever crosses the network in cleartext
+    /// (`SPEC.md` §4.2, **C7**).
+    pub async fn connect_with_auth(
+        id: impl Into<String>,
+        url: impl Into<String>,
+        credential: Option<Credential>,
+    ) -> Result<Self, HostError> {
         let id = id.into();
         let url = url.into();
+        // C7 first, before the client is built or DNS is resolved: a refusal
+        // must short-circuit with zero network activity so no payload leaks.
+        refuse_insecure_transport(&id, &url)?;
         let client = reqwest::Client::builder()
             .timeout(HTTP_TIMEOUT)
             .build()
@@ -58,6 +171,7 @@ impl HttpProvider {
                 protocol_version: PROTOCOL_VERSION.to_string(),
             },
             &id,
+            credential.as_ref(),
         )
         .await?;
 
@@ -89,6 +203,7 @@ impl HttpProvider {
                     client,
                     info,
                     capabilities,
+                    credential,
                 })
             }
             other => Err(HostError::UnexpectedEnvelope {
@@ -103,21 +218,32 @@ impl HttpProvider {
 /// POST one envelope to the provider URL and decode the response as one
 /// envelope. A non-2xx status or a non-envelope body is a clean named error,
 /// never a panic (task deliverable 5).
+///
+/// When `credential` is present it is attached as `Authorization: Bearer …` via
+/// reqwest's [`bearer_auth`](reqwest::RequestBuilder::bearer_auth) — never a
+/// format string that could leak the secret into a log (C8).
 async fn post_envelope(
     client: &reqwest::Client,
     url: &str,
     env: &Envelope,
     id: &str,
+    credential: Option<&Credential>,
 ) -> Result<Envelope, HostError> {
-    let response = client
-        .post(url)
-        .json(env)
-        .send()
-        .await
-        .map_err(|e| HostError::Transport {
-            id: id.to_string(),
-            message: e.to_string(),
-        })?;
+    let mut request = client.post(url).json(env);
+    if let Some(credential) = credential {
+        request = request.bearer_auth(credential.expose());
+    }
+    let response = request.send().await.map_err(|e| HostError::Transport {
+        id: id.to_string(),
+        message: e.to_string(),
+    })?;
+
+    // A rejected credential is its own named error, distinct from any other
+    // transport failure — and it names only the id + status, never the
+    // credential (C8).
+    if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+        return Err(HostError::Unauthorized { id: id.to_string() });
+    }
 
     if !response.status().is_success() {
         let status = response.status();
@@ -159,6 +285,7 @@ impl ContextProvider for HttpProvider {
                 query: query.clone(),
             },
             &self.id,
+            self.credential.as_ref(),
         )
         .await?;
         match reply {
@@ -187,6 +314,7 @@ impl ContextProvider for HttpProvider {
                 request: request.clone(),
             },
             &self.id,
+            self.credential.as_ref(),
         )
         .await?;
         match reply {
@@ -206,7 +334,14 @@ impl ContextProvider for HttpProvider {
 
     async fn shutdown(&self) -> Result<(), HostError> {
         // Best-effort teardown notice; a remote endpoint is not ours to reap.
-        let _ = post_envelope(&self.client, &self.url, &Envelope::Shutdown, &self.id).await;
+        let _ = post_envelope(
+            &self.client,
+            &self.url,
+            &Envelope::Shutdown,
+            &self.id,
+            self.credential.as_ref(),
+        )
+        .await;
         Ok(())
     }
 }
@@ -216,7 +351,7 @@ mod tests {
     use super::*;
     use contextgraph_types::capability::QueryCapability;
     use contextgraph_types::{ContextFrame, DataFlow, FrameKind};
-    use wiremock::matchers::method;
+    use wiremock::matchers::{header, method};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn ack_body(version: &str) -> serde_json::Value {
@@ -402,5 +537,128 @@ mod tests {
             crate::consent::ConsentStore::requires_consent(provider.info()),
             "an HTTP provider must always require consent, even claiming egress:false"
         );
+    }
+
+    // ---- transport security (§4.2, C7/C8) ----
+
+    #[tokio::test]
+    async fn a_plaintext_non_loopback_transport_is_refused_before_any_bytes_leave() {
+        // C7: an `http://` (not `https://`) URL whose host is not loopback is
+        // refused BEFORE a client is built or DNS is resolved — the query
+        // payload and any credential must never cross the network in cleartext.
+        // The proof it short-circuits is the error *kind*: a real network
+        // attempt to this host would surface as a `Transport` (connect) error,
+        // never `InsecureTransport`.
+        let err = match HttpProvider::connect("remote", "http://example.com:9/cgp").await {
+            Ok(_) => panic!("a plaintext non-loopback transport must be refused (C7)"),
+            Err(e) => e,
+        };
+        match err {
+            HostError::InsecureTransport { id, host } => {
+                assert_eq!(id, "remote");
+                assert_eq!(host, "example.com");
+            }
+            other => panic!("expected InsecureTransport, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_plaintext_loopback_transport_is_allowed() {
+        // The C7 loopback exception: wiremock serves plain `http://` on
+        // `127.0.0.1`, and the host must NOT refuse it — the bytes never leave
+        // the machine. This is also what keeps every other wiremock test in this
+        // module (all on 127.0.0.1) working.
+        let server = MockServer::start().await;
+        assert!(
+            server.uri().starts_with("http://"),
+            "wiremock serves plaintext http on loopback"
+        );
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(ack_body(PROTOCOL_VERSION)))
+            .mount(&server)
+            .await;
+        let provider = HttpProvider::connect("remote", server.uri())
+            .await
+            .expect("a plaintext loopback (127.0.0.1) transport is allowed");
+        assert_eq!(provider.info().name, "remote-docs");
+    }
+
+    #[tokio::test]
+    async fn a_supplied_credential_is_attached_as_a_bearer_header() {
+        const TOKEN: &str = "s3cr3t-bearer-token-value";
+        let server = MockServer::start().await;
+        let auth_value = format!("Bearer {TOKEN}");
+        // The mock only matches when the `Authorization` header is present and
+        // exact. If the header were missing (or mangled), no mock matches,
+        // wiremock 404s, and the handshake/query below fail — so a green test
+        // proves the bearer credential was attached on the wire.
+        Mock::given(method("POST"))
+            .and(header("authorization", auth_value.as_str()))
+            .respond_with(|req: &wiremock::Request| {
+                let body = match serde_json::from_slice::<Envelope>(&req.body) {
+                    Ok(Envelope::Handshake { .. }) => ack_body(PROTOCOL_VERSION),
+                    Ok(Envelope::Query { .. }) => frames_body(),
+                    _ => serde_json::to_value(Envelope::Error {
+                        id: None,
+                        code: None,
+                        message: "unexpected request".into(),
+                    })
+                    .unwrap(),
+                };
+                ResponseTemplate::new(200).set_body_json(body)
+            })
+            .mount(&server)
+            .await;
+
+        let provider = HttpProvider::connect_with_auth(
+            "remote",
+            server.uri(),
+            Some(Credential::bearer(TOKEN)),
+        )
+        .await
+        .expect("handshake carries the bearer credential");
+        // The query carries it too — the same header matcher gates its response.
+        let result = provider.query(&sample_query()).await.expect("query ok");
+        assert_eq!(result.frames.len(), 1);
+    }
+
+    #[test]
+    fn a_credential_is_redacted_in_every_rendering_and_never_in_an_error() {
+        // C8: the secret must not appear in any `{:?}`/`{}` rendering — a
+        // credential that reaches a log line or a panic payload prints a fixed
+        // placeholder, not its bytes.
+        const SECRET: &str = "ghp_this_must_never_appear_in_a_log_0xDEADBEEF";
+        let credential = Credential::bearer(SECRET);
+
+        let debug = format!("{credential:?}");
+        let display = format!("{credential}");
+        assert_eq!(debug, "Credential(<redacted>)");
+        assert_eq!(display, "Credential(<redacted>)");
+        assert!(
+            !debug.contains(SECRET),
+            "Debug must not leak the secret (C8)"
+        );
+        assert!(
+            !display.contains(SECRET),
+            "Display must not leak the secret (C8)"
+        );
+        // Cloning preserves redaction — a duplicated credential still can't leak.
+        assert_eq!(
+            format!("{:?}", credential.clone()),
+            "Credential(<redacted>)"
+        );
+
+        // No `HostError` carries credential material: the auth-related variants
+        // render only id/host/status, so a secret can never reach a surfaced
+        // error string (C8).
+        let insecure = HostError::InsecureTransport {
+            id: "remote".into(),
+            host: "example.com".into(),
+        };
+        let unauthorized = HostError::Unauthorized {
+            id: "remote".into(),
+        };
+        assert!(!insecure.to_string().contains(SECRET));
+        assert!(!unauthorized.to_string().contains(SECRET));
     }
 }

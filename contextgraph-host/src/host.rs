@@ -82,12 +82,19 @@ impl Host {
     }
 
     /// Connect and register a remote HTTP provider, completing the handshake.
+    ///
+    /// `credential` is an optional bearer [`Credential`](crate::http::Credential)
+    /// attached to every request; pass `None` for an unauthenticated provider.
+    /// A plaintext (`http://`) transport to a non-loopback provider is refused
+    /// before any bytes leave the host ([`HostError::InsecureTransport`], C7),
+    /// and the credential is never logged (C8).
     pub async fn add_http(
         &mut self,
         id: impl Into<String>,
         url: impl Into<String>,
+        credential: Option<crate::http::Credential>,
     ) -> Result<(), HostError> {
-        let provider = crate::http::HttpProvider::connect(id, url).await?;
+        let provider = crate::http::HttpProvider::connect_with_auth(id, url, credential).await?;
         self.providers.push(Box::new(provider));
         Ok(())
     }

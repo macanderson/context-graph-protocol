@@ -620,11 +620,20 @@ fence. Run it: `contextgraph-inspect host` (CI: `host-conformance.sh`).
 
 What remains genuinely unchecked:
 
-- **C4, C7, C8 — the HTTP transport rules.** Treating every non-loopback
-  provider as egress (C4), requiring TLS (C7), and never logging credentials
-  (C8) are properties of the host's HTTP client; exercising them needs a real
-  non-loopback, TLS network peer the in-process harness cannot stand up. They
-  remain the host-side harness's next increment.
+- **C4, C7, C8 — the HTTP transport rules.** These bind the host's HTTP client.
+  **C7 (TLS for non-loopback) and C8 (credentials never logged) are now enforced
+  and unit-tested in the reference host** (issue #13): the transport refuses a
+  plaintext `http://` connection to a non-loopback provider with a typed
+  `HostError::InsecureTransport` *before any bytes leave the host*, keeps the
+  loopback `http://` exception, attaches a bearer credential via reqwest's
+  `bearer_auth` rather than a format string, and renders every `Credential` as a
+  fixed `Credential(<redacted>)` placeholder in both `Debug` and `Display` so it
+  cannot spill into a log or a panic — each covered by a `contextgraph-host` unit
+  test. What remains genuinely unchecked is full *live-TLS-peer* conformance:
+  exercising the handshake, TLS negotiation, and credential exchange end-to-end
+  against a real non-loopback TLS peer — and witnessing C4's treat-as-egress
+  override over that same peer — needs a network peer the in-process harness
+  cannot stand up, and stays the host-side harness's next increment.
 - **R3 breakout-resistance is now escaping, not an unguessable fence.** The
   reference `compose_context` neutralizes a content-embedded `<frame`/`</frame>`
   token and escapes fence attributes, so content cannot terminate the block that
