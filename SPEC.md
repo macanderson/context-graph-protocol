@@ -491,6 +491,22 @@ inventing `calls` / `call` / `code.call`:
 Provider-specific edges belong under their own namespace (`myindex.owns`), which
 keeps the shared namespace meaningful.
 
+### 8.3 Multi-hop traversal is deferred
+
+**A wire operation for walking edges beyond one hop is not defined in
+`contextgraph/1.0`.** G4 pins the one traversal semantics a suite can witness —
+the zero-or-one-hop *anchored* predicate — and stops there. There is no
+`neighbors` request in 1.0: a host receives frames with their edges from a
+`query` and composes them; it never asks a provider to return a node's
+neighborhood to a given depth. Freezing that operation now, with no host
+emitting it, would reintroduce the dead-capability surface §8.2 and
+[ADR 0004](./docs/adr/0004-dead-capability-surface.md) work to avoid. When a
+concrete traversal consumer forces its design it can land as an additive minor,
+gated on a new `capabilities.neighbors`, with `depth: 1` defined to return
+exactly the G4 anchored set so nothing this freeze witnessed is invalidated. A
+design sketch lives under
+[`docs/sketches/context-neighbors.md`](./docs/sketches/context-neighbors.md).
+
 ---
 
 ## 9. Verification
