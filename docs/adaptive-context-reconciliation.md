@@ -134,5 +134,9 @@ used where they fit — see the disposition summary.
 The structural guarantee is that the normative frame text lives in exactly one
 place (`SPEC.md` + schema); downstream docs hold only a pinned pointer
 (`NORMATIVE-HOME:` header naming this repo + the pinned rev they consume). The
-downstream **canary CI** (issue #29) builds stella and the oxagen copy against
-this repo's HEAD, catching code-level drift before the freeze.
+downstream **canary CI** (issue #29, implemented as
+[`.github/workflows/downstream-canary.yml`](../.github/workflows/downstream-canary.yml))
+builds stella and the oxagen copy against this repo's HEAD, catching
+code-level drift before the freeze. It is advisory (`continue-on-error`), not
+a required check — a break there is a signal to act on, not a reason to block
+an unrelated PR to this repo.

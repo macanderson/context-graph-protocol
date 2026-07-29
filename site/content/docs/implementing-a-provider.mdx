@@ -175,3 +175,14 @@ optional test query, and shows you the frames it got back with their scores
 and token costs — a fast human-readable feedback loop before you run the
 scripted conformance suite. See
 [running-conformance.md](./running-conformance) for that next step.
+
+### Getting listed once you're green
+
+Once `contextgraph-inspect ... --json` reports every check `pass` (or `skip`,
+never `fail`), your provider is eligible for the
+[**conformance registry**](./registry) — a table of conformant providers with
+a reproducible report backing each claim, plus the
+`![CGP conformant](https://cgp.oxagen.sh/badges/conformant.svg)` badge you can
+put in your own README once listed. Listing is a pull request, not a
+self-attested form: see [registry.md](./registry#how-to-get-listed) for
+exactly what to include.

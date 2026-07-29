@@ -1,0 +1,65 @@
+{
+  "target": "stdio: ./target/debug/contextgraph-example-docs",
+  "checks": [
+    {
+      "name": "handshake",
+      "status": "pass",
+      "evidence": "provider 'contextgraph-example-docs' v0.1.0 — data-flow reads=true writes=false egress=false; query kinds=[\"doc\", \"snippet\"], graph=true"
+    },
+    {
+      "name": "consent-scope",
+      "status": "pass",
+      "evidence": "declared egress scopes [\"local-only\"] are well-formed and consistent with egress=false"
+    },
+    {
+      "name": "frame-validity",
+      "status": "pass",
+      "evidence": "2 frame(s) — scores in [0,1], titles, citation labels, honest representations, RFC 3339 timestamps, well-formed digests, labelled and targeted relations"
+    },
+    {
+      "name": "verify-honesty",
+      "status": "pass",
+      "evidence": "provider verified 2 unchanged frame(s) `valid` and all 2 mutated digest(s) `stale`, carrying no frame bodies"
+    },
+    {
+      "name": "budget-honesty",
+      "status": "pass",
+      "evidence": "2 frame(s), 41 tokens within the 4096 budget; every declared cost matches its canonical count"
+    },
+    {
+      "name": "as-of-temporal",
+      "status": "pass",
+      "evidence": "as_of=2026-07-01T00:00:00Z: none of the 1 returned frame(s) is dated after the pin"
+    },
+    {
+      "name": "kinds-filter",
+      "status": "pass",
+      "evidence": "kinds=[doc]: all 1 returned frame(s) are of the requested kind (§Q1)"
+    },
+    {
+      "name": "anchor-relevance",
+      "status": "pass",
+      "evidence": "anchored on `symbol:///docs/getting-started.md#overview`: provider returned 1 anchored frame(s) and ranked it first"
+    },
+    {
+      "name": "shutdown-clean",
+      "status": "pass",
+      "evidence": "provider acknowledged shutdown and tore down cleanly"
+    },
+    {
+      "name": "malformed-input-tolerance",
+      "status": "pass",
+      "evidence": "provider errored cleanly on malformed input and stayed alive: line was not a valid CGP envelope"
+    },
+    {
+      "name": "embedding-fingerprint",
+      "status": "pass",
+      "evidence": "provider declares bge-small-en-v1.5/384/l2 (384-dim) and rejected a 1-dim embedding with `bad_request` (§E1)"
+    },
+    {
+      "name": "correlation",
+      "status": "pass",
+      "evidence": "provider declares correlation and echoed the request id verbatim on its `frames` reply (§H4)"
+    }
+  ]
+}

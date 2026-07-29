@@ -10,6 +10,37 @@ crates are published independently of any downstream consumer (such as the
 `Cargo.toml`s). This file exists so the *first* real publish is a checklist,
 not an improvisation.
 
+## Preferred path: the tag-triggered workflow, not a laptop
+
+[`.github/workflows/release.yml`](./.github/workflows/release.yml) automates
+the exact sequence documented below, so a release is reproducible and doesn't
+depend on whoever's laptop has a `cargo login` token on it. Pushing a
+`contextgraph-vX.Y.Z` tag is what *starts* it — it does not publish anything
+by itself:
+
+1. The workflow's `publish` job targets the `crates-io` GitHub Environment. If
+   that environment has required reviewers configured (Settings →
+   Environments), the job pauses there until a human clicks "Approve and
+   deploy." No approval, no publish.
+2. It then runs `cargo publish` for each crate in dependency order, polling
+   the sparse index between publishes (`.github/scripts/wait-for-crate.sh`)
+   so the next crate's registry resolution never races the CDN — the same
+   "wait for the index" step called out by hand below, just automated.
+3. `CARGO_REGISTRY_TOKEN` must exist as a secret scoped to that same
+   environment, holding a crates.io API token as described in "One-time
+   prerequisites" below.
+
+Both the `crates-io` environment and its secret are one-time, human,
+repo-Settings setup — **neither exists yet** as of this writing. Until they
+do, the workflow exists but cannot run: a tag push just sits there with the
+job queued for an environment that has no approver configured, which is a
+safe failure mode, not a silent one.
+
+The manual sequence in "The publish sequence" below remains the documented
+reference for exactly what that workflow executes step-by-step, and is the
+fallback if a release needs manual intervention partway through (see "This is
+a one-way door").
+
 ## Why the order matters
 
 ```
@@ -51,6 +82,11 @@ This is also why local pre-publish verification is asymmetric:
 2. `cargo login <token>` locally, using a crates.io API token scoped to
    `publish-new` + `publish-update` (crates.io Account Settings → API
    Tokens). Do not commit this token; it's not an env var this repo reads.
+   For the tag-triggered workflow instead of a laptop, the same kind of
+   token is stored as the `CARGO_REGISTRY_TOKEN` secret on a `crates-io`
+   GitHub Environment (Settings → Environments → New environment → add
+   required reviewers, then add the secret scoped to it) rather than run
+   through `cargo login` anywhere.
 3. Confirm the crate names are still unclaimed: check
    `https://crates.io/crates/contextgraph-types`, `.../contextgraph-host`, `.../contextgraph-conformance`
    — a 404 on each means the name is free. (As of writing, all three are
@@ -121,7 +157,10 @@ on crates.io before the next goes up.
   *published* crates, not just the workspace.
 - Tag the release in this repo for traceability, e.g. `contextgraph-v0.1.0`. Use
   the `contextgraph-` tag prefix so the crate release train never collides with a
-  downstream consumer's own version tags in the tag namespace.
+  downstream consumer's own version tags in the tag namespace. **If publishing
+  by hand, this happens last** — after the fact, for traceability. If using
+  `release.yml` instead, the order inverts: pushing this same tag is what
+  starts the workflow, so it happens *first*, before any crate is live.
 
 ## This is a one-way door
 
