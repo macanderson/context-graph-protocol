@@ -12,8 +12,8 @@ which. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1
 ## [Unreleased]
 
 ### Added
-- **Conformance registry + provider badge** (`site/content/docs/registry.mdx`,
-  `docs/registry.md`, #20) — a page listing providers that are green on
+- **Conformance registry + provider badge** (`docs/registry.md`,
+  `assets/badges/conformant.svg`, #20) — a page listing providers that are green on
   `contextgraph-conformance`'s suite, each backed by a reproducible
   `contextgraph-inspect --json` report (not a self-attested claim), seeded with
   the bundled `contextgraph-example-docs` reference fixture and its captured
@@ -198,11 +198,46 @@ which. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1
 - Embedding fingerprint format and exact-match rule (E1) (#11).
 
 ### Removed
+- **The `site/` documentation app is retired** (#57,
+  [ADR 0008](./docs/adr/0008-deploy-topology-and-advertised-urls.md)). It was a
+  fumadocs/Next app built on every PR as a hard gate and deployed nowhere,
+  holding a second, hand-maintained copy of the prose in `docs/` — a copy that
+  had drifted **stale**: `protocol-surface.mdx` still documented
+  `capabilities.upsert`/`.subscribe`/`.filters`/`.writes`, removed below, and
+  `changelog.mdx` was 87 lines against this file's 353. The protocol's website
+  is `macanderson/cgp-website`; the protocol's prose is `docs/*.md`, and now
+  only that. Removes the `docs site builds` CI job and
+  `tests/docs_site_witness_test.py`. The two genuinely published artifacts move
+  out of `site/public/` to durable homes — `assets/badges/conformant.svg` and
+  `registry/contextgraph-example-docs.report.json`; the third was a
+  byte-identical mirror of `schema/contextgraph-envelope.schema.json` and is
+  simply gone, along with the copy-sync check that guarded it.
 - **Breaking:** `Capabilities.upsert`, `Capabilities.subscribe`, and
   `QueryCapability.filters` — negotiable at handshake but unreachable by any
   host. Wire-compatible; Rust API breaking (#5, #6, #11).
 
 ### Fixed
+- **The conformance badge this repo hands to providers now resolves** (#57,
+  [ADR 0008](./docs/adr/0008-deploy-topology-and-advertised-urls.md)).
+  `docs/registry.md` and `docs/implementing-a-provider.md` told every
+  conformant provider to paste `https://cgp.oxagen.sh/badges/conformant.svg`
+  into its README. That host is served by a different repository and carries
+  nothing under `/badges/`, so the badge 404ed for everyone who followed the
+  instruction — on a page whose own copy claims the badge "never depends on
+  this site's uptime." Both references now name this repo's GitHub-raw path,
+  which GitHub serves as `image/svg+xml`. The same wall #58 hit from the schema
+  side, in the places that fix did not reach.
+- **The rule behind it is written down and gated.** ADR 0008 records the deploy
+  topology — one Vercel project owns `contextgraphprotocol.org`,
+  `cgp.oxagen.sh`, and `context-graph-protocol.vercel.app`, and it is
+  Git-connected to `macanderson/cgp-website`, not here — and states the
+  boundary it implies: advertise an artifact URL only on a host this repo
+  serves, and never `vercel link` this checkout to the apex project (one
+  `vercel --prod` from a linked checkout replaces the public apex, which has
+  already happened in both directions).
+  `.github/scripts/check-deploy-hygiene.py` enforces both offline, as a
+  required CI check — nothing else in the build dereferences a URL, which is
+  why the dead badge shipped silently.
 - **`SPEC.md` §9's `verify` example no longer fails the schema `SPEC.md` ships.**
   Both envelopes carried `"id": "v1"`, but §3.2 grants an `id` only to
   `query`/`frames`/`error`, the reference `Envelope::Verify`/`Verified` have no

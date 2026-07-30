@@ -7,10 +7,10 @@ Usage:
 
 Exits 0 if every message in examples/, every reference-serialized vector, and
 every fenced example in SPEC.md is valid under schema/ — and the schema's `$id`
-resolves to a byte-identical served copy. Exits 1 otherwise.
+is the URL that actually serves it. Exits 1 otherwise.
 No third-party dependencies beyond `jsonschema` (pip install jsonschema).
 
-The four example surfaces are deliberately different in kind:
+The three example surfaces are deliberately different in kind:
 
   * `examples/` is hand-authored — it proves the schema accepts what a human
     writes, and is what a provider author diffs against.
@@ -23,8 +23,11 @@ The four example surfaces are deliberately different in kind:
     that the reference envelope has no field for, and that the schema's
     `additionalProperties: false` rejects. The spec's own examples are now held
     to the spec's own schema.
-  * the served `$id` copy is the schema's public identity — checked because a
-    stale schema that still resolves is worse than one that 404s.
+
+`$id` is checked separately (5, below): it is the schema's public identity, and
+a schema whose identity URL 404s is quoted by nobody. It is pinned to the one
+host that serves this repo's bytes, because this repo deploys no website of its
+own — see ADR 0008.
 """
 import json
 import re
@@ -215,36 +218,27 @@ for start, block in blocks:
 #    that was never registered and returned a DNS failure, so every consumer
 #    that tried to fetch it got nothing (issue #58). Swapping in the live
 #    apex, `contextgraphprotocol.org`, does not fix it either: the domain
-#    resolves, but `site/` does not currently own that Vercel project's Git
-#    deploy and does not serve anything under `/schema/` there — see #57,
-#    which is tracking the deploy-topology fix. Pointing `$id` at that host
-#    before #57 lands would trade one unreachable URL for another.
+#    resolves, but it is served by a different repository
+#    (macanderson/cgp-website) that carries nothing under `/schema/`. Pointing
+#    `$id` at that host would trade one unreachable URL for another.
 #
-#    So this is an interim measure: `$id` names this repo's GitHub-raw URL,
-#    which resolves today regardless of how #57 is decided. Once #57 lands and
-#    `contextgraphprotocol.org/schema/...` actually serves this file, `$id`
-#    should move there and this comment should say so.
+#    This is now permanent, not interim. #57 was settled by retiring this
+#    repo's undeployed `site/` app: the microsite is the protocol's single
+#    published website, and this repository deploys nothing. So `$id` names
+#    this repo's GitHub-raw URL — the one host that serves these bytes by
+#    construction — and there is no second copy to keep in sync any more.
 #
-#    The `site/public/schema/` mirror is kept byte-identical to the source
-#    below not because it is what makes `$id` dereferenceable — it isn't, per
-#    the above — but because it is the copy the (currently topology-broken)
-#    site would serve, and a stale copy sitting there would silently diverge
-#    from the source of truth the moment #57 does land and starts serving it.
+#    The rule generalises beyond the schema: the same wall was hit by the
+#    conformance badge and the registry report, so it is written down as ADR
+#    0008 (docs/adr/0008-deploy-topology-and-advertised-urls.md) — this repo
+#    may advertise an artifact URL only on a host it serves.
+#    `.github/scripts/check-deploy-hygiene.py` enforces that across the repo,
+#    including that each advertised artifact exists at the path its URL names;
+#    this check is the schema's half, pinning the exact `$id` string.
 SCHEMA_SOURCE = ROOT / "schema" / "contextgraph-envelope.schema.json"
-SCHEMA_SERVED = ROOT / "site" / "public" / "schema" / "contextgraph-envelope.schema.json"
 expected_id = f"https://raw.githubusercontent.com/macanderson/context-graph-protocol/main/schema/{SCHEMA_SOURCE.name}"
 
 check(f"$id is {expected_id}", SCHEMA.get("$id") == expected_id)
-
-if not SCHEMA_SERVED.exists():
-    check(f"site serves the schema at {SCHEMA_SERVED.relative_to(ROOT)}", False)
-    print(f"        missing — copy it: cp {SCHEMA_SOURCE.relative_to(ROOT)} {SCHEMA_SERVED.relative_to(ROOT)}")
-    failures += 1
-else:
-    identical = SCHEMA_SERVED.read_bytes() == SCHEMA_SOURCE.read_bytes()
-    check("the served schema copy is byte-identical to the source", identical)
-    if not identical:
-        print(f"        refresh it: cp {SCHEMA_SOURCE.relative_to(ROOT)} {SCHEMA_SERVED.relative_to(ROOT)}")
 
 print(f"\n{'OK — all examples validate' if failures == 0 else f'{failures} failure(s)'}")
 sys.exit(1 if failures else 0)

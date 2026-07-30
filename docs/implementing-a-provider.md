@@ -199,8 +199,8 @@ Once `contextgraph-inspect ... --json` reports every check `pass` (or `skip`,
 never `fail`), your provider is eligible for the
 [**conformance registry**](./registry.md) — a table of conformant providers
 with a reproducible report backing each claim, plus the
-`![CGP conformant](https://cgp.oxagen.sh/badges/conformant.svg)` badge you can
-put in your own README once listed. Listing is a pull request, not a
+`![CGP conformant](https://raw.githubusercontent.com/macanderson/context-graph-protocol/main/assets/badges/conformant.svg)`
+badge you can put in your own README once listed. Listing is a pull request, not a
 self-attested form: see [registry.md](./registry.md#how-to-get-listed) for
 exactly what to include.
 
