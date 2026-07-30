@@ -80,6 +80,20 @@ which. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1
   workflow running `contextgraph-inspect` in the generated project's own CI from
   the first commit. TS + Python quick-starts and an HTTP-transport section added
   to `docs/implementing-a-provider.md`.
+- **Pipelined the stdio transport** (ADR 0002, #4) — `StdioProvider` now
+  demultiplexes provider replies on their correlation `id` via a dedicated reader
+  task and shrinks the connection lock to the write half, so a provider that
+  negotiated `capabilities.correlation` can have concurrent queries in flight over
+  one connection instead of serializing behind a single mutex. Non-correlating
+  providers and `verify` stay strictly lock-step; a provider crash or malformed
+  line now fails every in-flight query rather than hanging any of them.
+- **Stale-digest conformance** (#12) — a new `stale-digest` provider misbehave
+  mode and a `provenance-fixture-consistency` check that re-reads the reference
+  fixture's on-disk backing files and re-hashes each `file` provenance digest,
+  catching a well-formed digest that does not match its bytes (provenance forgery
+  §F5's grammar check cannot see). The `example-docs` fixture now carries real
+  `getting-started.md`/`configuration.md` files with genuine sha256 digests; the
+  provider conformance suite is now 13 checks.
 - **`SPEC.md` normative completeness pass** — folds every shipped wire surface
   into the single normative home ahead of the freeze (#49, #50, #48, #13). Adds
   §9 **Verification** (`verify`/`verified`, V1–V4), §6.3 **Frame identity**
