@@ -40,6 +40,12 @@
 //!   contradicts its declared dimension with `bad_request` (SPEC.md §E1). A
 //!   SHOULD, gated on the provider declaring a fingerprint; wire-level, so like
 //!   the malformed probe it applies to stdio providers.
+//! - **provenance-fixture-consistency** — every `file` provenance digest the
+//!   provider serves matches the bytes on disk it names, re-read and re-hashed
+//!   by the host ([`contextgraph_host::verify_file_provenance`], §6.2/§F5). A
+//!   grammatically valid digest that hashes *wrong* — a stale or forged claim —
+//!   is caught here, where §F5's grammar check cannot see it. Host-local: a link
+//!   to files this host cannot read is skipped, not failed.
 //!
 //! The suite is deliberately adversarial: pointed at a provider that lies
 //! about costs, emits an out-of-range score, omits a citation label, or dies
@@ -54,8 +60,8 @@
 //! upholds them (`SPEC.md` §11.1; issue #14).
 
 use contextgraph_host::{
-    ConsentRecord, ContextProvider, DropReason, Host, HostError, RawStdioConnection,
-    frame_kind_name,
+    ConsentRecord, ContextProvider, DigestVerification, DropReason, Host, HostError,
+    RawStdioConnection, frame_kind_name, verify_file_provenance,
 };
 use contextgraph_types::capability::fingerprint_dimensions;
 use contextgraph_types::{
@@ -86,6 +92,7 @@ pub const CHECK_EMBEDDING_FINGERPRINT: &str = "embedding-fingerprint";
 pub const CHECK_CORRELATION: &str = "correlation";
 pub const CHECK_KINDS_FILTER: &str = "kinds-filter";
 pub const CHECK_ANCHOR_RELEVANCE: &str = "anchor-relevance";
+pub const CHECK_PROVENANCE_FIXTURE_CONSISTENCY: &str = "provenance-fixture-consistency";
 
 /// How to reach the provider under test. `contextgraph-inspect` builds one of these
 /// from its CLI arguments; tests build them directly.
@@ -162,6 +169,7 @@ pub async fn run_conformance(target: ProviderTarget) -> ConformanceReport {
                 CHECK_AS_OF,
                 CHECK_KINDS_FILTER,
                 CHECK_ANCHOR_RELEVANCE,
+                CHECK_PROVENANCE_FIXTURE_CONSISTENCY,
                 CHECK_SHUTDOWN,
             ] {
                 checks.push(CheckResult::skip(name, "handshake failed"));
@@ -297,6 +305,7 @@ async fn run_query_and_shutdown_checks(
     checks.push(check_as_of(&host, id).await);
     checks.push(check_kinds_filter(&host, id, caps).await);
     checks.push(check_anchor_relevance(&host, id, caps).await);
+    checks.push(check_provenance_fixture_consistency(&host, id).await);
 
     let results = host.shutdown().await;
     match results.iter().find(|(pid, _)| pid == id) {
@@ -975,6 +984,77 @@ async fn check_anchor_relevance(host: &Host, id: &str, caps: &Capabilities) -> C
 /// edge's `target_uri` (one hop) equals the anchor.
 fn frame_is_anchored(frame: &contextgraph_types::ContextFrame, anchor: &str) -> bool {
     frame.uri.as_deref() == Some(anchor) || frame.relations.iter().any(|r| r.target_uri == anchor)
+}
+
+/// **§6.2/§F5 (bytes)** — every `file` provenance digest a provider serves must
+/// match the bytes on disk it names.
+///
+/// The `frame-validity` §F5 check proves a provenance digest is *shaped* like a
+/// sha256; only re-reading the file it addresses proves it is the *right* one.
+/// This check re-reads each `file` provenance the provider serves and re-hashes
+/// it with [`contextgraph_host::verify_file_provenance`], the host's own
+/// byte-level verifier.
+///
+/// A definitive failure is a **`Mismatch`**: the bytes are here and hash to
+/// something else — provenance forgery, or a fixture that drifted out of sync
+/// with its own files. An **`Unreadable`** link (a `file://` this host cannot
+/// see — an out-of-tree or remote provider) is *not* a failure: byte
+/// verification is a host-local capability, and a provider is not broken because
+/// its files do not sit on this machine. A provider serving no locally-readable
+/// file provenance is therefore skipped, not failed — mirroring how
+/// `verify-honesty` skips a provider that does not advertise `verify`.
+async fn check_provenance_fixture_consistency(host: &Host, id: &str) -> CheckResult {
+    let result = match host.query_provider(id, &sample_query()).await {
+        Ok(result) => result,
+        Err(error) => {
+            return CheckResult::fail(
+                CHECK_PROVENANCE_FIXTURE_CONSISTENCY,
+                format!("query failed: {error}"),
+            );
+        }
+    };
+
+    let mut verified = 0usize;
+    let mut unreadable = 0usize;
+    let mut mismatches = Vec::new();
+    for frame in &result.frames {
+        for (index, outcome) in verify_file_provenance(frame) {
+            match outcome {
+                DigestVerification::Verified => verified += 1,
+                DigestVerification::Mismatch { expected, actual } => mismatches.push(format!(
+                    "{} provenance[{index}] declared {expected} but its bytes hash to {actual}",
+                    frame.id
+                )),
+                DigestVerification::Unreadable { .. } => unreadable += 1,
+                DigestVerification::NotFileProvenance => {}
+            }
+        }
+    }
+
+    if !mismatches.is_empty() {
+        return CheckResult::fail(
+            CHECK_PROVENANCE_FIXTURE_CONSISTENCY,
+            format!(
+                "{} file-provenance digest(s) do not match the bytes they name — a stale or forged digest that passes §F5's grammar but not its bytes (§6.2): {}",
+                mismatches.len(),
+                mismatches.join("; ")
+            ),
+        );
+    }
+    if verified == 0 {
+        return CheckResult::skip(
+            CHECK_PROVENANCE_FIXTURE_CONSISTENCY,
+            format!(
+                "no locally re-readable file provenance to verify ({unreadable} link(s) name files this host cannot see); §6.2 byte-verification is host-local"
+            ),
+        );
+    }
+    CheckResult::pass(
+        CHECK_PROVENANCE_FIXTURE_CONSISTENCY,
+        format!(
+            "re-read and re-hashed {verified} file-provenance digest(s) against the bytes on disk — all match (§6.2)"
+        ),
+    )
 }
 
 /// The [`sample_query`] pinned to [`AS_OF_PIN`] — the query the temporal probe

@@ -32,6 +32,10 @@ tokio.workspace = true
 async-trait.workspace = true
 clap.workspace = true
 colored.workspace = true
+# The reference fixture (`contextgraph-example-docs`) computes real sha256 digests
+# over its on-disk backing files, and the byte-consistency conformance check
+# re-hashes them — same version the host verifier uses, so digests agree.
+sha2.workspace = true
 
 [[bin]]
 name = "contextgraph-inspect"
@@ -45,4 +49,3 @@ path = "src/bin/contextgraph-example-docs.rs"
 
 [dev-dependencies]
 serde_json_canonicalizer = "0.3.2"
-sha2 = "0.11.0"

@@ -125,3 +125,10 @@ bundled reference provider, `contextgraph-example-docs`, including a `--misbehav
 what evidence string each failure mode produces, and doubles as proof that
 the suite genuinely catches a broken provider rather than rubber-stamping
 everything.
+
+The two digest-integrity modes are deliberately distinct: `malformed-digest`
+emits an ungrammatical stub that `frame-validity` (§F5 grammar) rejects before
+any bytes are read, while `stale-digest` emits a *well-formed* `sha256:` digest
+that simply does not match the backing file's bytes — caught only by
+`provenance-fixture-consistency`, which re-reads the fixture's own files and
+re-hashes them (§6.2).
