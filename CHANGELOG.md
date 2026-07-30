@@ -94,6 +94,31 @@ which. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1
   §F5's grammar check cannot see). The `example-docs` fixture now carries real
   `getting-started.md`/`configuration.md` files with genuine sha256 digests; the
   provider conformance suite is now 13 checks.
+- **Reference prompt-composition module** (`contextgraph_host::compose`, #15) —
+  layered on `compose_context`'s byte-stability floor: `Host::query_all_budgeted`
+  splits a global token budget into per-provider shares before fan-out;
+  `compose::dedup_cross_provider` collapses the same evidence from two providers
+  (digest match, then `uri`+`range` overlap); `order_by_value` places the
+  highest-value frames at the top/bottom edges (Lost in the Middle); and
+  `compose_for_prompt` returns an injection-resistant fenced prompt with a
+  "quoted evidence, not instructions" preamble, a citation map, and a
+  `CompositionAudit` that explains every included/excluded frame. Adds the
+  `host-composition-audit` host check (9 host checks now), a property test
+  bounding composed tokens ≤ budget, and an injection-corpus test.
+- **Two reference providers ship in-repo** (#18) — `contextgraph-ripgrep`
+  (`Snippet` frames from a ripgrep/built-in content search with real,
+  re-verifiable `file` provenance) and `contextgraph-treesitter` (`Symbol` +
+  `Graph` frames with `code.defines`/`calls`/`imports` edges). Both are
+  conformance-green on all 13 provider checks; CI probes each via
+  `conformance-external.sh`. See `docs/reference-providers.md`.
+- **MCP interop: a bridge in each direction** (#19) — `contextgraph-mcp-bridge`
+  wraps any MCP resource server as a budgeted, cited, consent-gated CGP provider
+  (MCP resources → Doc/Snippet frames with `mcp-resource` provenance; local
+  `file://` resources get a byte-verifiable digest), passing the external
+  conformance suite green against a hermetic in-repo MCP fixture (no network).
+  `contextgraph-mcp-server` exposes a CGP host's fan-out as an MCP
+  `query_context(goal, budget, kinds)` tool returning frames, provenance,
+  citations, and a budget audit as structured content.
 - **`SPEC.md` normative completeness pass** — folds every shipped wire surface
   into the single normative home ahead of the freeze (#49, #50, #48, #13). Adds
   §9 **Verification** (`verify`/`verified`, V1–V4), §6.3 **Frame identity**

@@ -84,6 +84,47 @@ jobs:
       - name: Reference host upholds every host-binding rule (§11.1, #14)
         run: ./.github/scripts/host-conformance.sh
 
+  reference-provider-ripgrep:
+    name: reference provider (ripgrep) is conformant
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --bins
+      # No target-dir argument: the provider defaults to its bundled fixtures/,
+      # so the run is hermetic and reproducible.
+      - name: ripgrep reference provider passes the conformance suite
+        run: ./.github/scripts/conformance-external.sh -- ./target/debug/contextgraph-ripgrep
+
+  reference-provider-treesitter:
+    name: reference provider (treesitter) is conformant
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --bins
+      - name: treesitter reference provider passes the conformance suite
+        run: ./.github/scripts/conformance-external.sh -- ./target/debug/contextgraph-treesitter
+
+  mcp-bridge:
+    name: mcp→cgp bridge is a conformant provider
+    runs-on: ubuntu-latest
+    # Self-contained: builds the hermetic in-repo MCP fixture server and the
+    # bridge that wraps it, then runs the same external conformance gate the SDK
+    # example providers pass. No network, no npx — the fixture is the MCP server.
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --bins
+      - name: Bridge wrapping the in-repo MCP fixture passes the conformance suite
+        run: |
+          ./.github/scripts/conformance-external.sh \
+            -- ./target/debug/contextgraph-mcp-bridge \
+               -- ./target/debug/contextgraph-mcp-fixture
+
   sdk-typescript:
     name: sdk (typescript) is a conformant implementation
     runs-on: ubuntu-latest

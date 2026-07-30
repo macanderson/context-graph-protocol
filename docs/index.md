@@ -30,6 +30,16 @@ Reference documentation for the **Context Graph Protocol** crates:
 - [**Implementing a provider**](./implementing-a-provider.md) — how a third
   party builds a CGP provider, in Rust (via `ContextProvider`) or any other
   language (via the wire protocol directly). Start here to *build* something.
+- [**Reference providers**](./reference-providers.md) — the two conformant
+  reference providers that ship in-repo (`contextgraph-ripgrep` for `Snippet`
+  frames, `contextgraph-treesitter` for `Symbol` + `Graph` frames), with a
+  worked fan-out query over this repo showing composed frames and their real
+  file-provenance citations.
+- [**Composing MCP and Context Graph Protocol**](./composition-walkthrough.md) —
+  a bridge in each direction: wrap an MCP resource server as a budgeted, cited
+  CGP provider, or expose a CGP host's fan-out as an MCP `query_context` tool.
+  One agent session using MCP tools for actions and CGP frames for context, with
+  a budget audit and citations.
 - [**Prompt ingestion**](./prompt-ingestion.md) — the paste treated as a local
   provider: intent and anchors extracted, the rest turned into
   content-addressed evidence frames that are compact by default and pulled at
