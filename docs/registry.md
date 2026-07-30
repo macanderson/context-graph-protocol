@@ -16,7 +16,7 @@ is where that count becomes checkable.
 
 | Provider | Author | Transport | Declared capabilities | Data flow | Protocol version | Last verified | Report |
 |---|---|---|---|---|---|---|---|
-| [`contextgraph-example-docs`](../contextgraph-conformance/src/bin/contextgraph-example-docs.rs) | Context Graph Protocol maintainers (bundled reference fixture) | stdio | `kinds=[doc, snippet]`, `graph`, `verify`, `correlation`, `embeddings_fingerprint=bge-small-en-v1.5/384/l2` | reads-only, `egress=false` (`local-only`) | `contextgraph/1.0-draft` | 2026-07-29 | 13/13 checks passed — [report](../site/public/registry/contextgraph-example-docs.report.json) |
+| [`contextgraph-example-docs`](../contextgraph-conformance/src/bin/contextgraph-example-docs.rs) | Context Graph Protocol maintainers (bundled reference fixture) | stdio | `kinds=[doc, snippet]`, `graph`, `verify`, `correlation`, `embeddings_fingerprint=bge-small-en-v1.5/384/l2` | reads-only, `egress=false` (`local-only`) | `contextgraph/1.0-draft` | 2026-07-29 | 13/13 checks passed — [report](../registry/contextgraph-example-docs.report.json) |
 
 This founding entry is the reference fixture bundled with
 `contextgraph-conformance` itself (`SPEC.md` §11 seed providers) — it exists to
@@ -63,23 +63,23 @@ Once your provider has a merged row in the table above, you can put this in
 your own README:
 
 ```md
-![CGP conformant](https://raw.githubusercontent.com/macanderson/context-graph-protocol/main/site/public/badges/conformant.svg)
+![CGP conformant](https://raw.githubusercontent.com/macanderson/context-graph-protocol/main/assets/badges/conformant.svg)
 ```
 
 which renders as:
 
-![CGP conformant](../site/public/badges/conformant.svg)
+![CGP conformant](../assets/badges/conformant.svg)
 
 The badge is a static, hand-authored asset — not a live third-party redirect —
-so it never depends on this site's uptime and never phones home. It names the
-protocol family the badge claims (`contextgraph/1.0-draft`), not a specific
+so it never depends on anyone's site being up, and never phones home. It names
+the protocol family the badge claims (`contextgraph/1.0-draft`), not a specific
 provider version; the row in this table is what backs the specific claim.
 
-The URL is this repository's GitHub-raw path rather than a
-`contextgraphprotocol.org` one because that apex is served by a different
-repository and carries nothing under `/badges/` — the previously advertised
+The URL is this repository's GitHub-raw path because this repository does not
+deploy a website: `contextgraphprotocol.org` is served by
+[`macanderson/cgp-website`](https://github.com/macanderson/cgp-website) and
+carries nothing under `/badges/`, which is why the previously advertised
 `cgp.oxagen.sh/badges/conformant.svg` 404ed for every author who pasted it.
 GitHub serves the file as `image/svg+xml`, so it renders anywhere a README
 does. See [ADR 0008](./adr/0008-deploy-topology-and-advertised-urls.md) for the
-host boundary and [#57](https://github.com/macanderson/context-graph-protocol/issues/57)
-for the deploy topology this depends on.
+host boundary and why it is permanent here.

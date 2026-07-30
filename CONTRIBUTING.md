@@ -34,13 +34,15 @@ normal part of the loop here, not a rejection.
 
 ## Sites and URLs (read before you `vercel` anything)
 
-**This repository deploys nothing.** `contextgraphprotocol.org`,
+**This repository deploys nothing, by decision.** `contextgraphprotocol.org`,
 `cgp.oxagen.sh`, and `context-graph-protocol.vercel.app` are all served by one
 Vercel project that is Git-connected to a *different* repository
-(`macanderson/cgp-website`). `site/` is built as a CI gate here and published
-nowhere. [ADR 0008](./docs/adr/0008-deploy-topology-and-advertised-urls.md) has
-the full topology and [#57](https://github.com/macanderson/context-graph-protocol/issues/57)
-tracks settling it.
+(`macanderson/cgp-website`), which is the protocol's single published website.
+This repo once carried a second, undeployed docs site under `site/`; it was
+retired in favour of the canonical Markdown in `docs/` (#57,
+[ADR 0008](./docs/adr/0008-deploy-topology-and-advertised-urls.md)). Don't add
+another one — publish prose to `docs/`, and published assets to `assets/`,
+`schema/`, or `registry/`.
 
 Two rules follow, both enforced by
 `python3 .github/scripts/check-deploy-hygiene.py` (a required CI check — run it

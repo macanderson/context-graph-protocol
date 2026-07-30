@@ -1,8 +1,8 @@
 # 0008 — Deploy topology: which host serves what, and the URLs this repo may advertise
 
-**Status:** Accepted for the mechanical half (the invariant and its guard);
-the site disposition in [Open decision](#open-decision-what-happens-to-site)
-awaits the maintainer's ratification. Tracking issue:
+**Status:** Accepted. Ratified 2026-07-30 — the maintainer's call on
+[the `site/` question](#the-site-question-retire) was **retire**, and this ADR
+records the topology that results. Tracking issue:
 [#57](https://github.com/macanderson/context-graph-protocol/issues/57).
 
 ## Context
@@ -33,14 +33,15 @@ repository. The changeover is visible in the project's deploy history:
 - Everything since is a `cgp-website` preview. Pushes to this repository
   produce no deployments on the project at all.
 
-So the apex is intentionally the microsite. This repo's `site/` — a fumadocs
-app with twelve MDX pages, built on every CI run as a **hard gate** since
-[#62](https://github.com/macanderson/context-graph-protocol/pull/62) — is
-deployed **nowhere**.
+So the apex is intentionally the microsite. This repo also carried `site/` — a
+fumadocs app with twelve MDX pages, built on every CI run as a **hard gate**
+since [#62](https://github.com/macanderson/context-graph-protocol/pull/62) —
+deployed **nowhere**. (It is retired by this ADR; the sections below describe
+the state that prompted the decision.)
 
 ### The consequence nobody wrote down
 
-`site/` is not only prose. `site/public/` carries three machine-readable
+`site/` was not only prose. `site/public/` carried three machine-readable
 artifacts that this repo hands to third parties by absolute URL:
 
 - `schema/contextgraph-envelope.schema.json` — the schema's public identity
@@ -49,7 +50,7 @@ artifacts that this repo hands to third parties by absolute URL:
 - `badges/conformant.svg` — the badge a conformant provider pastes into its
   own README
 
-Because `site/` deploys nowhere, every absolute URL pointing at those
+Because `site/` deployed nowhere, every absolute URL pointing at those
 artifacts 404s. Verified 2026-07-30:
 
 ```
@@ -95,50 +96,63 @@ matching `Cargo.toml`'s `homepage` and the README), not `cgp.oxagen.sh`.
 production and takes the apex down to a fumadocs site with no warning. That is
 precisely how the 2026-07-23 flip-flop happened, in both directions.
 
-**4. Guard, don't just document.** `scripts/check-deploy-hygiene.py` enforces
+**4. Guard, don't just document.** `.github/scripts/check-deploy-hygiene.py` enforces
 (1) and (3) offline, and runs in CI. A rule with no gate is decoration — the
 same reasoning that promoted the docs-site build to a hard gate in #62.
 
-## Open decision: what happens to `site/`
+## The `site/` question: retire
 
 `#57`'s third acceptance criterion — "decide whether `cgp-website` content is
-ported into `site/` or retired" — is a maintainer call, and this ADR does not
-pre-empt it. The relevant facts, so the call can be made on evidence:
+ported into `site/` or retired" — was put to the maintainer with the evidence
+below. **The decision is retire**, and this PR enacts it.
 
-- There are **three** copies of the protocol's prose docs: `docs/*.md`
+The evidence:
+
+- There were **three** copies of the protocol's prose: `docs/*.md`
   (canonical), `site/content/docs/*.mdx` (hand-maintained copies —
-  `source.config.ts` records the provenance as `../docs` but the collection is
-  local), and `cgp-website/app/docs/**` (hand-written React, the one the
-  public actually reads at the apex).
-- Three sources of truth for the same normative prose, in two repositories, is
-  the exact failure mode [ADR 0007](./0007-protocol-product-boundary.md) was
-  written to end.
-- `site/` is a CI hard gate with no deployment: the repo pays the build cost
-  and gets no serving surface.
+  `source.config.ts` recorded the provenance as `../docs` but the collection
+  was local), and `cgp-website/app/docs/**` (hand-written React, the one the
+  public actually reads at the apex). Three sources of truth for the same
+  normative prose, across two repositories, is the exact failure mode
+  [ADR 0007](./0007-protocol-product-boundary.md) was written to end.
+- The copies had already drifted, and drifted **stale**, not richer:
+  `site/content/docs/protocol-surface.mdx` still documented
+  `capabilities.upsert`, `.subscribe`, `.filters`, and `.writes` — the dead
+  surface [ADR 0004](./0004-dead-capability-surface.md) removed —
+  and `changelog.mdx` was 87 lines against `CHANGELOG.md`'s 353. Four more
+  pages (`changelog`, `contributing`, `governance`, `security`) were partial
+  copies of root files with no `docs/` counterpart at all. Deleting the app
+  therefore removed *wrong* documentation, not unique documentation.
+- `site/` was a CI **hard gate** with no deployment: every PR paid a
+  `pnpm install && next build` and got no serving surface in return.
 
-The two coherent resolutions:
+Enacting it meant relocating the two artifacts that were genuinely published
+out of `site/public/` before deleting the app — `assets/badges/conformant.svg`
+and `registry/contextgraph-example-docs.report.json`. The third,
+`site/public/schema/…`, was a byte-identical mirror of `schema/…` and simply
+went away, along with the copy-sync check that guarded it.
 
-- **Fold** — give `site/` its own Vercel project (Git-connected to this repo,
-  root directory `site/`) on a stable host, and have the microsite link to it
-  rather than restate it. This also restores an apex-family home for the three
-  artifacts, at which point rule (1)'s URLs move off GitHub-raw and the guard's
-  allowlist gains that host.
-- **Retire** — delete `site/`, drop the hard gate, and let the microsite be the
-  single published surface. The artifacts then need a home in `cgp-website`
-  (served, or rewritten to GitHub-raw), and this repo keeps rule (1) forever.
-
-Either is defensible; both are cheap to enact. What is *not* defensible is the
-status quo, in which `site/` is built on every PR, serves nobody, and its
-absence quietly breaks the URLs the spec hands out.
+The alternative was **fold** — give `site/` its own Vercel project on a stable
+host and have the microsite link out rather than restate. It was rejected as
+the more expensive way to end up with two websites and the same drift risk,
+when the microsite already serves the audience.
 
 ## Consequences
 
-- The badge and report URLs in `docs/` and `site/content/docs/` now resolve.
-- `scripts/check-deploy-hygiene.py` fails CI if a new `cgp.oxagen.sh/badges/…`
-  or `contextgraphprotocol.org/schema/…` style artifact URL is introduced, and
-  fails locally if the checkout is linked to the apex Vercel project.
-- The `$id` interim in `schema/validate-examples.py` (#58) is no longer a
-  one-off: it is the general rule, and that comment can point here.
-- When the open decision lands, exactly one place changes: the served-hosts
-  allowlist in `scripts/check-deploy-hygiene.py`, plus the URLs it then
-  permits.
+- The badge and report URLs in `docs/` resolve, and now point at paths
+  (`assets/`, `registry/`) that no longer depend on an app that might be
+  deleted.
+- `.github/scripts/check-deploy-hygiene.py` fails CI if a new
+  `cgp.oxagen.sh/badges/…` or `contextgraphprotocol.org/schema/…` style
+  artifact URL is introduced, or if an advertised artifact does not exist at
+  the path its URL names, and fails locally if the checkout is linked to the
+  apex Vercel project.
+- Rule (1) is **permanent**, not interim: this repository has decided not to
+  deploy a website, so GitHub-raw is the only host it can honestly advertise.
+  The `$id` note in `schema/validate-examples.py` (#58) says so rather than
+  promising a future move.
+- CI loses the `docs site builds` job and `tests/docs_site_witness_test.py`.
+  The protocol's prose is now single-sourced in `docs/*.md`, read on GitHub.
+- `cgp-website` is the protocol's only website. If it should ever serve the
+  schema, report, or badge from the apex, that is a change *there* — plus one
+  line here, `SERVED_HOSTS` in the hygiene check.

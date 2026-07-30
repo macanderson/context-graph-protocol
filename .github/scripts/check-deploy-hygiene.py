@@ -14,11 +14,13 @@ Why this exists (see docs/adr/0008-deploy-topology-and-advertised-urls.md):
 
   * The Vercel project that owns `contextgraphprotocol.org`, `cgp.oxagen.sh`,
     and `context-graph-protocol.vercel.app` is Git-connected to a *different*
-    repository (`macanderson/cgp-website`). This repo's `site/` deploys
-    nowhere, so every `…/schema/…`, `…/registry/…`, and `…/badges/…` URL on
-    those hosts 404s — including the badge that docs/registry.md tells
-    conformant providers to paste into their own READMEs. Nothing failed
-    loudly, because no build step dereferences a URL. This check is that step.
+    repository (`macanderson/cgp-website`), which is the protocol's single
+    published website. This repository deploys nothing — its own undeployed
+    `site/` app was retired for that reason (#57) — so every `…/schema/…`,
+    `…/registry/…`, and `…/badges/…` URL on those hosts 404s, including the
+    badge docs/registry.md tells conformant providers to paste into their own
+    READMEs. Nothing failed loudly, because no build step dereferences a URL.
+    This check is that step.
 
   * `.vercel/` is gitignored, so a stray local link is invisible to review —
     and `vercel --prod` from a linked checkout deploys this repo over the
