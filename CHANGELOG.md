@@ -52,6 +52,73 @@ which. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1
   Git-linked to this repo's `site/` (#57); it now names this repo's GitHub-raw
   URL, which resolves today regardless of how #57 is decided, as an interim
   measure until the domain can serve the file for real.
+- **Structured error codes now survive the transport boundary** (#9) —
+  `HostError::Provider` carries the provider's `ErrorCode`, the `ErrorCode`
+  vocabulary gains `unsupported_representation` (§P5) and `incompatible_version`
+  (§H3, non-retryable — a new `HostReaction::DropProvider`), and the
+  `malformed-input-tolerance` conformance check now requires a `bad_request` code
+  rather than passing on any error (with a `--misbehave mislabel-malformed` mode
+  that exercises it).
+- **Reference HTTP transport now enforces C7/C8** (#13) —
+  `HttpProvider::connect_with_auth` / `Host::add_http` accept an optional bearer
+  `Credential`; plaintext `http://` to a non-loopback host is refused with
+  `HostError::InsecureTransport` before any bytes leave (loopback exempt);
+  credentials attach via `bearer_auth` and render only as `Credential(<redacted>)`;
+  a 401 surfaces as `HostError::Unauthorized`.
+- **Host conformance: H3 version-rejection + crash-isolation scenarios** (#14) —
+  the host-side harness now drives the reference `Host` at a provider declaring a
+  mismatched major family (asserting a named `HostError::VersionMismatch` under an
+  explicit timeout, so "never a hang" is load-bearing) and at a `query_all`
+  fan-out where one provider dies mid-query (asserting the fan-out completes with
+  the healthy frames and the crash is reported + excluded). `run_host_conformance`
+  now exposes 8 checks.
+- **Provider SDK HTTP adapters + scaffold generator** (#17) — host a provider
+  behind one HTTP POST endpoint: `createHttpHandler` (TypeScript), `make_wsgi_app`
+  (Python), `Handler` (Go), each with a runnable `example-docs-http` that goes
+  green under `contextgraph-inspect http`. `create-contextgraph-provider`
+  scaffolds a provider (TypeScript + Python) wired to both transports plus a CI
+  workflow running `contextgraph-inspect` in the generated project's own CI from
+  the first commit. TS + Python quick-starts and an HTTP-transport section added
+  to `docs/implementing-a-provider.md`.
+- **Pipelined the stdio transport** (ADR 0002, #4) — `StdioProvider` now
+  demultiplexes provider replies on their correlation `id` via a dedicated reader
+  task and shrinks the connection lock to the write half, so a provider that
+  negotiated `capabilities.correlation` can have concurrent queries in flight over
+  one connection instead of serializing behind a single mutex. Non-correlating
+  providers and `verify` stay strictly lock-step; a provider crash or malformed
+  line now fails every in-flight query rather than hanging any of them.
+- **Stale-digest conformance** (#12) — a new `stale-digest` provider misbehave
+  mode and a `provenance-fixture-consistency` check that re-reads the reference
+  fixture's on-disk backing files and re-hashes each `file` provenance digest,
+  catching a well-formed digest that does not match its bytes (provenance forgery
+  §F5's grammar check cannot see). The `example-docs` fixture now carries real
+  `getting-started.md`/`configuration.md` files with genuine sha256 digests; the
+  provider conformance suite is now 13 checks.
+- **Reference prompt-composition module** (`contextgraph_host::compose`, #15) —
+  layered on `compose_context`'s byte-stability floor: `Host::query_all_budgeted`
+  splits a global token budget into per-provider shares before fan-out;
+  `compose::dedup_cross_provider` collapses the same evidence from two providers
+  (digest match, then `uri`+`range` overlap); `order_by_value` places the
+  highest-value frames at the top/bottom edges (Lost in the Middle); and
+  `compose_for_prompt` returns an injection-resistant fenced prompt with a
+  "quoted evidence, not instructions" preamble, a citation map, and a
+  `CompositionAudit` that explains every included/excluded frame. Adds the
+  `host-composition-audit` host check (9 host checks now), a property test
+  bounding composed tokens ≤ budget, and an injection-corpus test.
+- **Two reference providers ship in-repo** (#18) — `contextgraph-ripgrep`
+  (`Snippet` frames from a ripgrep/built-in content search with real,
+  re-verifiable `file` provenance) and `contextgraph-treesitter` (`Symbol` +
+  `Graph` frames with `code.defines`/`calls`/`imports` edges). Both are
+  conformance-green on all 13 provider checks; CI probes each via
+  `conformance-external.sh`. See `docs/reference-providers.md`.
+- **MCP interop: a bridge in each direction** (#19) — `contextgraph-mcp-bridge`
+  wraps any MCP resource server as a budgeted, cited, consent-gated CGP provider
+  (MCP resources → Doc/Snippet frames with `mcp-resource` provenance; local
+  `file://` resources get a byte-verifiable digest), passing the external
+  conformance suite green against a hermetic in-repo MCP fixture (no network).
+  `contextgraph-mcp-server` exposes a CGP host's fan-out as an MCP
+  `query_context(goal, budget, kinds)` tool returning frames, provenance,
+  citations, and a budget audit as structured content.
 - **`SPEC.md` normative completeness pass** — folds every shipped wire surface
   into the single normative home ahead of the freeze (#49, #50, #48, #13). Adds
   §9 **Verification** (`verify`/`verified`, V1–V4), §6.3 **Frame identity**

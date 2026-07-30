@@ -5,6 +5,11 @@ members = [
   "contextgraph-host",
   "contextgraph-conformance",
   "contextgraph-trace",
+  "contextgraph-refprov",
+  "contextgraph-ripgrep",
+  "contextgraph-treesitter",
+  "contextgraph-mcp-bridge",
+  "contextgraph-mcp-server",
 ]
 
 [workspace.package]

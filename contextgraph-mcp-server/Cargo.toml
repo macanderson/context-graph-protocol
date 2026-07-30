@@ -1,0 +1,23 @@
+[package]
+name = "contextgraph-mcp-server"
+description = "Context Graph Protocol → MCP server: exposes a CGP host's fan-out as an MCP `query_context` tool with frames, provenance, and citations intact (issue #19, direction 2)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+# A demonstration/interop artifact, not part of the published protocol crates.
+publish = false
+
+[dependencies]
+contextgraph-types = { path = "../contextgraph-types", version = ">=0.1.0" }
+contextgraph-host = { path = "../contextgraph-host", version = ">=0.1.0" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+
+[[bin]]
+name = "contextgraph-mcp-server"
+path = "src/bin/contextgraph-mcp-server.rs"

@@ -22,6 +22,10 @@
 //!   in-process, a stdio child, or a remote HTTP endpoint (SPEC.md §3, SPEC.md §5).
 //! - [`StdioProvider`] / [`RawStdioConnection`] — child-process transport
 //!   with scrubbed-environment isolation and process-group teardown.
+//!   `StdioProvider` demultiplexes correlated replies on their `id` via a
+//!   dedicated reader task, so a provider that negotiated `correlation` can have
+//!   concurrent queries in flight over one connection while a non-correlating
+//!   provider stays lock-step (ADR 0002).
 //! - [`HttpProvider`] — remote streamable-HTTP transport (SPEC.md §3).
 //! - [`ConsentStore`] — the gate that keeps an egress provider un-queried
 //!   until the user consents, naming what leaves (SPEC.md §4).
@@ -68,7 +72,11 @@ pub mod stdio;
 pub mod verify;
 pub mod wire;
 
-pub use compose::compose_context;
+pub use compose::{
+    AuditEntry, Citation, ComposedPrompt, CompositionAudit, DedupDrop, Deduped, ExclusionReason,
+    FrameDisposition, VerificationState, budget_split, compose_context, compose_for_prompt,
+    dedup_cross_provider, order_by_value,
+};
 pub use consent::{ConsentDecision, ConsentRecord, ConsentStore};
 pub use error::HostError;
 pub use host::{

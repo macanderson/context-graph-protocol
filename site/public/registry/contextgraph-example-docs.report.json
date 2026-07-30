@@ -42,6 +42,11 @@
       "evidence": "anchored on `symbol:///docs/getting-started.md#overview`: provider returned 1 anchored frame(s) and ranked it first"
     },
     {
+      "name": "provenance-fixture-consistency",
+      "status": "pass",
+      "evidence": "re-read and re-hashed 2 file-provenance digest(s) against the bytes on disk — all match (§6.2)"
+    },
+    {
       "name": "shutdown-clean",
       "status": "pass",
       "evidence": "provider acknowledged shutdown and tore down cleanly"
@@ -49,7 +54,7 @@
     {
       "name": "malformed-input-tolerance",
       "status": "pass",
-      "evidence": "provider errored cleanly on malformed input and stayed alive: line was not a valid CGP envelope"
+      "evidence": "provider errored cleanly on malformed input with `bad_request` and stayed alive: line was not a valid CGP envelope"
     },
     {
       "name": "embedding-fingerprint",

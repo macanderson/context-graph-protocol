@@ -14,6 +14,8 @@
 use std::io::{BufRead, Write};
 
 use clap::{Parser, ValueEnum};
+use sha2::{Digest, Sha256};
+
 use contextgraph_host::wire::Envelope;
 use contextgraph_types::capability::{QueryCapability, fingerprint_dimensions};
 use contextgraph_types::frame::rel;
@@ -66,6 +68,15 @@ enum Misbehave {
     /// Emit file provenance whose digest does not match the `sha256:<64 hex>`
     /// grammar (trips `frame-validity` §F5).
     MalformedDigest,
+    /// Emit a WELL-FORMED `sha256:<64 hex>` file-provenance digest that passes
+    /// §F5's grammar but does not match the backing file's real bytes — one hex
+    /// digit of the real digest flipped (trips `provenance-fixture-consistency`).
+    ///
+    /// DISTINCT from `MalformedDigest`: that stub is caught by `frame-validity`
+    /// because it is not *shaped* like a digest; this one is shaped correctly and
+    /// is self-consistent over the wire, so only a host re-reading the bytes the
+    /// digest claims to cover catches it (`SPEC.md` §6.2).
+    StaleDigest,
     /// Return far more frames than the query's `max_frames` allows, each
     /// individually cheap so the token budget is respected (trips
     /// `budget-honesty` §B4).
@@ -261,7 +272,7 @@ fn main() {
                     Some(Misbehave::HollowVerify) => {
                         VerifyResponse::uniform(&request, Verdict::Unknown)
                     }
-                    _ => verify_honestly(&request),
+                    _ => verify_honestly(&request, args.misbehave),
                 };
                 write_envelope(&mut stdout, &Envelope::Verified { response });
             }
@@ -352,25 +363,74 @@ fn embedding_dimension_error(query: &ContextQuery, id: Option<String>) -> Option
     })
 }
 
-/// A syntactically valid `sha256:` digest for a fixture whose bytes are canned
-/// rather than read from disk.
+/// The directory holding this reference provider's on-disk backing files,
+/// resolved at compile time so a digest is computed over the same bytes no
+/// matter where the fixture is spawned from (`SPEC.md` §6.2).
+const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/example-docs");
+
+/// The absolute `file://` URI a host re-reads to verify a frame's provenance
+/// digest (`contextgraph_host::verify::verify_file_provenance`). Absolute and
+/// cwd-independent, so verification never depends on the host's working
+/// directory.
+fn fixture_uri(file: &str) -> String {
+    format!("file://{FIXTURE_DIR}/{file}")
+}
+
+/// The real `sha256:<64 lowercase hex>` digest over a backing file's exact
+/// on-disk bytes — byte-for-byte what `contextgraph_host::verify` recomputes when
+/// it re-reads the file, so an unmutated frame verifies end to end (§6.2, §F5).
 ///
-/// The value is stable but not a real hash of anything: this fixture serves
-/// string literals, not files, so there are no on-disk bytes to digest. The
-/// `frame-validity` check it feeds asserts the *grammar* (`SPEC.md` §F5), which
-/// is what catches the `sha256:abc` placeholders that were previously
-/// conformant. Verifying a digest against real bytes is a host-side concern.
-fn fixture_digest(seed: u8) -> String {
-    format!("sha256:{}", format!("{seed:02x}").repeat(32))
+/// A name the fixture does not actually ship (the synthetic `flood.md`) hashes
+/// as the empty input, which is still a *well-formed* sha256 — enough for §F5's
+/// grammar, since the flood mode's violation is its frame count, not its digest.
+fn fixture_digest(file: &str) -> String {
+    let bytes = std::fs::read(format!("{FIXTURE_DIR}/{file}")).unwrap_or_default();
+    let hex: String = Sha256::digest(&bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    format!("sha256:{hex}")
+}
+
+/// Flip the last hex digit of a well-formed digest, yielding one that still
+/// passes §F5's `sha256:<64 hex>` grammar but no longer matches the bytes it
+/// names — the `stale-digest` forgery. The nibble is moved to a
+/// guaranteed-different lowercase hex digit, so the result can never coincide
+/// with the real digest.
+fn stale_digest(real: &str) -> String {
+    let mut digest = real.to_string();
+    if let Some(last) = digest.pop() {
+        digest.push(if last == '0' { '1' } else { '0' });
+    }
+    digest
+}
+
+/// The digest a frame declares for `file`, honoring the two DISTINCT
+/// digest-integrity misbehave modes:
+///
+///   * [`Misbehave::MalformedDigest`] emits `sha256:abc`, which fails §F5's
+///     *grammar* — `frame-validity` rejects it before any bytes are read;
+///   * [`Misbehave::StaleDigest`] emits a *well-formed* digest that passes the
+///     grammar but does not match the file's bytes — only re-reading the file
+///     (`provenance-fixture-consistency`) catches it.
+fn declared_digest(file: &str, misbehave: Option<Misbehave>) -> String {
+    match misbehave {
+        Some(Misbehave::MalformedDigest) => "sha256:abc".to_string(),
+        Some(Misbehave::StaleDigest) => stale_digest(&fixture_digest(file)),
+        _ => fixture_digest(file),
+    }
 }
 
 /// The digest this fixture serves for a frame id *right now*, or `None` if it
-/// does not serve that frame at all. Uses the same `fixture_digest` seeds the
-/// served frames declare, so an unmutated frame verifies `valid`.
-fn current_digest(frame_id: &str) -> Option<String> {
+/// does not serve that frame at all. Threaded through `misbehave` so
+/// `stale-digest` stays internally *consistent* over the wire: the provider
+/// vouches for the very (forged) digest it served, so `verify-honesty` still
+/// passes and the forgery is left for `provenance-fixture-consistency` alone to
+/// catch by re-reading the file.
+fn current_digest(frame_id: &str, misbehave: Option<Misbehave>) -> Option<String> {
     match frame_id {
-        "frm_getting_started" => Some(fixture_digest(1)),
-        "frm_configuration" => Some(fixture_digest(2)),
+        "frm_getting_started" => Some(declared_digest("getting-started.md", misbehave)),
+        "frm_configuration" => Some(declared_digest("configuration.md", misbehave)),
         _ => None,
     }
 }
@@ -382,13 +442,13 @@ fn current_digest(frame_id: &str) -> Option<String> {
 /// and opaque, so only the provider can say whether the bytes behind an
 /// identity still match. A digest that differs from the current one is exactly
 /// what a mutated source looks like from here.
-fn verify_honestly(request: &VerifyRequest) -> VerifyResponse {
+fn verify_honestly(request: &VerifyRequest, misbehave: Option<Misbehave>) -> VerifyResponse {
     VerifyResponse::new(
         request
             .frames
             .iter()
             .map(|frame| {
-                let verdict = match current_digest(&frame.frame_id) {
+                let verdict = match current_digest(&frame.frame_id, misbehave) {
                     // Never served, or no longer served: nothing to revalidate.
                     None => Verdict::Gone,
                     Some(current) => match frame.content_digest.as_deref() {
@@ -452,7 +512,6 @@ fn canned_frames(misbehave: Option<Misbehave>) -> Vec<ContextFrame> {
             "L1-40",
             "2026-01-01T00:00:00Z",
             0.82,
-            1,
             misbehave,
         ),
         // Became true only in the autumn — *after* the `as_of` probe's pin, so
@@ -474,7 +533,6 @@ fn canned_frames(misbehave: Option<Misbehave>) -> Vec<ContextFrame> {
                 "L1-25",
                 "2026-09-01T00:00:00Z",
                 0.61,
-                2,
                 misbehave,
             );
             frame.kind = FrameKind::Snippet;
@@ -521,7 +579,6 @@ fn doc_frame(
     range: &str,
     valid_from: &str,
     score: f32,
-    digest_seed: u8,
     misbehave: Option<Misbehave>,
 ) -> ContextFrame {
     let honest_cost = budget_tokens(content);
@@ -530,14 +587,12 @@ fn doc_frame(
         kind: FrameKind::Doc,
         title: title.into(),
         content: Some(content.into()),
-        // The digest of the content bytes, matching this frame's file
-        // provenance digest — a well-formed digest keeps the frame's identity
-        // verifiable (`docs/context-reuse.md` §1) and satisfies §F5's grammar.
-        content_digest: Some(match misbehave {
-            Some(Misbehave::MalformedDigest) => "sha256:abc".into(),
-            _ => fixture_digest(digest_seed),
-        }),
-        uri: Some(format!("file:///docs/{file}")),
+        // The real sha256 over the backing file's bytes — identical to this
+        // frame's file-provenance digest, so a host re-reading the file confirms
+        // both (§6.2, §F5). `stale-digest` flips one hex digit (well-formed but
+        // wrong bytes); `malformed-digest` replaces it with an ungrammatical stub.
+        content_digest: Some(declared_digest(file, misbehave)),
+        uri: Some(fixture_uri(file)),
         // This fixture serves inline `full` frames only.
         representation: Representation::Full,
         content_fidelity: None,
@@ -565,14 +620,12 @@ fn doc_frame(
         recorded_at: Some("2026-07-20T18:00:00Z".into()),
         provenance: vec![Provenance {
             kind: "file".into(),
-            uri: Some(format!("file:///docs/{file}")),
+            uri: Some(fixture_uri(file)),
             range: Some(range.into()),
-            digest: Some(match misbehave {
-                // The placeholder shape the pre-spec fixtures used, which is
-                // not a digest and no longer passes for one.
-                Some(Misbehave::MalformedDigest) => "sha256:abc".into(),
-                _ => fixture_digest(digest_seed),
-            }),
+            // The same declared digest as `content_digest`, so a host that
+            // re-reads `uri` over `range` and re-hashes gets a match for an
+            // honest frame — and a `Mismatch` under `stale-digest` (§6.2).
+            digest: Some(declared_digest(file, misbehave)),
             method: None,
             by: Some("contextgraph-example-docs".into()),
         }],
@@ -605,7 +658,6 @@ fn base_frame(
         "L1",
         "2026-01-01T00:00:00Z",
         0.5,
-        3,
         misbehave.filter(|m| !matches!(m, Misbehave::FloodFrames)),
     )
 }

@@ -13,6 +13,24 @@ fn fixture() -> String {
     env!("CARGO_BIN_EXE_contextgraph-example-docs").to_string()
 }
 
+/// The real `sha256:<64 hex>` digest the fixture serves for a backing file,
+/// computed here from the same on-disk bytes so the two never drift. The fixture
+/// digests its files at runtime (`SPEC.md` §6.2), so this reads them the same way
+/// rather than hardcoding a value that a fixture edit would silently invalidate.
+fn fixture_digest(file: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let path = format!(
+        "{}/fixtures/example-docs/{file}",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let bytes = std::fs::read(&path).unwrap_or_else(|error| panic!("read fixture {path}: {error}"));
+    let hex: String = Sha256::digest(&bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    format!("sha256:{hex}")
+}
+
 /// Every published reference message must still parse as an `Envelope`, and
 /// the verify exchange must round-trip byte-for-byte — the examples are the
 /// cross-language contract, so drift between them and the types is a defect.
@@ -77,12 +95,12 @@ async fn a_real_stdio_provider_answers_a_verify_exchange_honestly() {
         .await
         .expect("fixture handshakes");
 
-    // The fixture derives each frame's digest from `fixture_digest(seed)`:
-    // frm_getting_started uses seed 1, frm_configuration uses seed 2.
+    // The fixture derives each frame's digest from the real bytes of its backing
+    // file, so the served identity carries the on-disk hash of getting-started.md.
     let served = FrameId::new(
         "docs",
         "frm_getting_started",
-        Some("sha256:0101010101010101010101010101010101010101010101010101010101010101".into()),
+        Some(fixture_digest("getting-started.md")),
     );
     let mutated = FrameId::new(
         "docs",
@@ -105,9 +123,7 @@ async fn a_real_stdio_provider_answers_a_verify_exchange_honestly() {
     assert_eq!(
         outcome.drop_reason(&mutated),
         Some(&DropReason::Stale {
-            replacement_digest: Some(
-                "sha256:0202020202020202020202020202020202020202020202020202020202020202".into()
-            )
+            replacement_digest: Some(fixture_digest("configuration.md"))
         }),
         "a mutated digest must come back stale, carrying the current digest"
     );
