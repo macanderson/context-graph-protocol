@@ -136,6 +136,119 @@ jobs:
       - name: Go example provider passes the conformance suite
         run: ./.github/scripts/conformance-external.sh -- ./cg-go-example
 
+  sdk-typescript-http:
+    name: sdk (typescript) HTTP adapter is conformant
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --bins
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build the TypeScript SDK
+        working-directory: sdk/typescript
+        run: |
+          npm install
+          npm run build
+      - name: TS HTTP example passes the conformance suite
+        run: |
+          PORT=8787 node sdk/typescript/dist/examples/example-docs-http.js &
+          SERVER=$!
+          for _ in $(seq 1 40); do
+            curl -sf -X POST http://127.0.0.1:8787 \
+              -d '{"type":"handshake","protocol_version":"contextgraph/1.0-draft"}' >/dev/null && break
+            sleep 0.25
+          done
+          ./target/debug/contextgraph-inspect http http://127.0.0.1:8787
+          code=$?
+          kill $SERVER 2>/dev/null || true
+          exit $code
+
+  sdk-python-http:
+    name: sdk (python) HTTP adapter is conformant
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --bins
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Python HTTP example passes the conformance suite
+        run: |
+          PORT=8788 python3 sdk/python/examples/example_docs_http.py &
+          SERVER=$!
+          for _ in $(seq 1 40); do
+            curl -sf -X POST http://127.0.0.1:8788 \
+              -d '{"type":"handshake","protocol_version":"contextgraph/1.0-draft"}' >/dev/null && break
+            sleep 0.25
+          done
+          ./target/debug/contextgraph-inspect http http://127.0.0.1:8788
+          code=$?
+          kill $SERVER 2>/dev/null || true
+          exit $code
+
+  sdk-go-http:
+    name: sdk (go) HTTP adapter is conformant
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --bins
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: Build the Go HTTP example
+        working-directory: sdk/go
+        run: go build -o "$GITHUB_WORKSPACE/cg-go-http" ./examples/example-docs-http
+      - name: Go HTTP example passes the conformance suite
+        run: |
+          PORT=8789 ./cg-go-http &
+          SERVER=$!
+          for _ in $(seq 1 40); do
+            curl -sf -X POST http://127.0.0.1:8789 \
+              -d '{"type":"handshake","protocol_version":"contextgraph/1.0-draft"}' >/dev/null && break
+            sleep 0.25
+          done
+          ./target/debug/contextgraph-inspect http http://127.0.0.1:8789
+          code=$?
+          kill $SERVER 2>/dev/null || true
+          exit $code
+
+  sdk-scaffold:
+    name: create-contextgraph-provider scaffolds a conformant project
+    runs-on: ubuntu-latest
+    env:
+      CONTEXTGRAPH_INSPECT: ${{ github.workspace }}/target/debug/contextgraph-inspect
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --bins
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: "Build the TypeScript SDK (for the file: dependency)"
+        working-directory: sdk/typescript
+        run: npm install && npm run build
+      - name: Scaffolded TypeScript project is conformant
+        run: |
+          node sdk/create-contextgraph-provider/index.js /tmp/scaffold-ts \
+            --lang typescript --name scaffold-ts --sdk "file:$GITHUB_WORKSPACE/sdk/typescript"
+          cd /tmp/scaffold-ts && npm install && npm run build && node scripts/check-conformance.mjs
+      - name: Scaffolded Python project is conformant
+        run: |
+          pip install ./sdk/python
+          node sdk/create-contextgraph-provider/index.js /tmp/scaffold-py --lang python --name scaffold_py
+          cd /tmp/scaffold-py && python scripts/check_conformance.py
+
   schema:
     name: schema validates the examples
     runs-on: ubuntu-latest

@@ -52,6 +52,34 @@ which. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1
   Git-linked to this repo's `site/` (#57); it now names this repo's GitHub-raw
   URL, which resolves today regardless of how #57 is decided, as an interim
   measure until the domain can serve the file for real.
+- **Structured error codes now survive the transport boundary** (#9) —
+  `HostError::Provider` carries the provider's `ErrorCode`, the `ErrorCode`
+  vocabulary gains `unsupported_representation` (§P5) and `incompatible_version`
+  (§H3, non-retryable — a new `HostReaction::DropProvider`), and the
+  `malformed-input-tolerance` conformance check now requires a `bad_request` code
+  rather than passing on any error (with a `--misbehave mislabel-malformed` mode
+  that exercises it).
+- **Reference HTTP transport now enforces C7/C8** (#13) —
+  `HttpProvider::connect_with_auth` / `Host::add_http` accept an optional bearer
+  `Credential`; plaintext `http://` to a non-loopback host is refused with
+  `HostError::InsecureTransport` before any bytes leave (loopback exempt);
+  credentials attach via `bearer_auth` and render only as `Credential(<redacted>)`;
+  a 401 surfaces as `HostError::Unauthorized`.
+- **Host conformance: H3 version-rejection + crash-isolation scenarios** (#14) —
+  the host-side harness now drives the reference `Host` at a provider declaring a
+  mismatched major family (asserting a named `HostError::VersionMismatch` under an
+  explicit timeout, so "never a hang" is load-bearing) and at a `query_all`
+  fan-out where one provider dies mid-query (asserting the fan-out completes with
+  the healthy frames and the crash is reported + excluded). `run_host_conformance`
+  now exposes 8 checks.
+- **Provider SDK HTTP adapters + scaffold generator** (#17) — host a provider
+  behind one HTTP POST endpoint: `createHttpHandler` (TypeScript), `make_wsgi_app`
+  (Python), `Handler` (Go), each with a runnable `example-docs-http` that goes
+  green under `contextgraph-inspect http`. `create-contextgraph-provider`
+  scaffolds a provider (TypeScript + Python) wired to both transports plus a CI
+  workflow running `contextgraph-inspect` in the generated project's own CI from
+  the first commit. TS + Python quick-starts and an HTTP-transport section added
+  to `docs/implementing-a-provider.md`.
 - **`SPEC.md` normative completeness pass** — folds every shipped wire surface
   into the single normative home ahead of the freeze (#49, #50, #48, #13). Adds
   §9 **Verification** (`verify`/`verified`, V1–V4), §6.3 **Frame identity**
