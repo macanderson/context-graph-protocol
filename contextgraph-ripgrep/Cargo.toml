@@ -1,0 +1,19 @@
+[package]
+name = "contextgraph-ripgrep"
+description = "Reference Context Graph Protocol provider: ripgrep-backed content search serving Snippet frames with real file provenance over stdio."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+# A reference provider binary, not part of the published crate set.
+publish = false
+
+[dependencies]
+contextgraph-refprov = { path = "../contextgraph-refprov" }
+contextgraph-types = { path = "../contextgraph-types" }
+
+[[bin]]
+name = "contextgraph-ripgrep"
+path = "src/main.rs"

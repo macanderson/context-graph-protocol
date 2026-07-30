@@ -243,6 +243,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "contextgraph-mcp-bridge"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "contextgraph-host",
+ "contextgraph-types",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+]
+
+[[package]]
+name = "contextgraph-mcp-server"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "contextgraph-host",
+ "contextgraph-types",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "contextgraph-refprov"
+version = "0.1.0"
+dependencies = [
+ "contextgraph-host",
+ "contextgraph-types",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "contextgraph-ripgrep"
+version = "0.1.0"
+dependencies = [
+ "contextgraph-refprov",
+ "contextgraph-types",
+]
+
+[[package]]
 name = "contextgraph-trace"
 version = "0.1.0"
 dependencies = [
@@ -250,6 +293,14 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "contextgraph-treesitter"
+version = "0.1.0"
+dependencies = [
+ "contextgraph-refprov",
+ "contextgraph-types",
 ]
 
 [[package]]
