@@ -1,0 +1,32 @@
+{
+  "schema_version": "contextgraph/lifecycle/1.0-draft",
+  "record_id": "rec_contract_0001",
+  "lineage_id": "lin_contract_0001",
+  "record_status": "active",
+  "scope": {
+    "repository_id": "repo_stella",
+    "environment_id": "env_ci"
+  },
+  "sharing_scope": "repository",
+  "observed_at": "2026-07-29T14:00:00Z",
+  "origin": "declared",
+  "record_hash": "sha256:4d6690fdd5347dfa14b8b5f3875b2487d09e18d70d4aa9401a4a1f5f3b527d40",
+  "provenance": {
+    "origin_provider_id": "provider_example",
+    "producer_kind": "human",
+    "producer_ref": "user_mac"
+  },
+  "record_kind": "artifact_contract",
+  "contract_name": "api-handler-acceptance",
+  "requirements": [
+    {
+      "requirement_kind": "file_exists",
+      "description": "src/api/handler.rs is present"
+    },
+    {
+      "requirement_kind": "command",
+      "description": "cargo test -p api passes",
+      "execution_approval_ref": "approval_ci_2026_07"
+    }
+  ]
+}

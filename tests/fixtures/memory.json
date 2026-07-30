@@ -1,0 +1,23 @@
+{
+  "schema_version": "contextgraph/lifecycle/1.0-draft",
+  "record_id": "rec_mem_0001",
+  "lineage_id": "lin_mem_0001",
+  "record_status": "active",
+  "scope": {
+    "user_id": "user_mac",
+    "workspace_id": "ws_main"
+  },
+  "sharing_scope": "user",
+  "observed_at": "2026-07-29T14:00:00Z",
+  "origin": "observed",
+  "record_hash": "sha256:5870e397da8c76a8273b76b136a67b6b8ddff5c9aaaa13dc5b85800a98bbd161",
+  "provenance": {
+    "origin_provider_id": "provider_example",
+    "producer_kind": "agent",
+    "producer_ref": "agent://coder"
+  },
+  "confidence": 0.7,
+  "record_kind": "memory",
+  "statement": "the user prefers terse, review-ready diffs over verbose explanations",
+  "salience": 0.7
+}

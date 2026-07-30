@@ -1,0 +1,26 @@
+{
+  "schema_version": "contextgraph/lifecycle/1.0-draft",
+  "record_id": "rec_obs_0001",
+  "lineage_id": "lin_obs_0001",
+  "record_status": "active",
+  "scope": {
+    "repository_id": "repo_stella",
+    "workspace_id": "ws_main",
+    "session_id": "sess_412"
+  },
+  "sharing_scope": "repository",
+  "observed_at": "2026-07-29T14:00:00Z",
+  "origin": "observed",
+  "record_hash": "sha256:b45eebfdfe7e6e5056bf25d84864cf9acd731eef120a1f6de129fb788c3b34dc",
+  "provenance": {
+    "origin_provider_id": "provider_example",
+    "producer_kind": "agent",
+    "origin_authority_id": "authority_acme",
+    "producer_ref": "agent://trace-miner"
+  },
+  "sensitivity": "internal",
+  "confidence": 0.82,
+  "record_kind": "observation",
+  "statement": "the api handler retries three times before surfacing a 502",
+  "subject_ref": "trace_run_991"
+}

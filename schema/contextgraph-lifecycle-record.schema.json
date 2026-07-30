@@ -1,0 +1,630 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/macanderson/context-graph-protocol/main/schema/contextgraph-lifecycle-record.schema.json",
+  "title": "Context Graph Protocol lifecycle record",
+  "description": "One immutable, content-addressed ContextRecord of the Context Exchange Provider profile (contextgraph/lifecycle/1.0-draft, issue #28). A common envelope plus a flat, record_kind-discriminated body \u2014 the append/get/resolve exchange unit, layered on the contextgraph/1 base family, NOT part of the frozen 1.0 core (ADR 0007 \u00a74). See docs/profiles/context-exchange-provider.md.",
+  "$comment": "AUTHORING-STRICT profile: unevaluatedProperties:false closes the discriminated union so a fixture typo or a field on the wrong record_kind is caught. This strictness is a lint on what you author, NOT the interop contract \u2014 per SPEC.md \u00a713 U1 a receiver on the wire MUST ignore unrecognised members. Detached RecordAttestation ($defs/RecordAttestation) is validated separately; it is never part of a record or its record_hash preimage.",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "#/$defs/envelopeCommon"
+    }
+  ],
+  "oneOf": [
+    {
+      "properties": {
+        "record_kind": {
+          "const": "observation"
+        },
+        "statement": {
+          "type": "string",
+          "minLength": 1
+        },
+        "subject_ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_kind",
+        "statement"
+      ]
+    },
+    {
+      "properties": {
+        "record_kind": {
+          "const": "knowledge"
+        },
+        "knowledge_kind": {
+          "enum": [
+            "fact",
+            "assumption",
+            "decision"
+          ]
+        },
+        "statement": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "record_kind",
+        "knowledge_kind",
+        "statement"
+      ]
+    },
+    {
+      "properties": {
+        "record_kind": {
+          "const": "memory"
+        },
+        "statement": {
+          "type": "string",
+          "minLength": 1
+        },
+        "salience": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "record_kind",
+        "statement"
+      ]
+    },
+    {
+      "properties": {
+        "record_kind": {
+          "const": "directive"
+        },
+        "directive_kind": {
+          "enum": [
+            "preference",
+            "rule",
+            "constraint",
+            "procedure"
+          ]
+        },
+        "statement": {
+          "type": "string",
+          "minLength": 1
+        },
+        "constraint_effect": {
+          "enum": [
+            "require",
+            "forbid"
+          ],
+          "description": "What a constraint does. Only require/forbid \u2014 never allow: authorization stays host-side (ADR 0007 \u00a73)."
+        },
+        "enforcement": {
+          "enum": [
+            "advisory",
+            "blocking"
+          ],
+          "description": "Recorded intent, not an enforcement grant. Absent \u21d2 advisory."
+        },
+        "procedure_steps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Ordered steps for a procedure directive."
+        }
+      },
+      "required": [
+        "record_kind",
+        "directive_kind",
+        "statement"
+      ],
+      "allOf": [
+        {
+          "$comment": "A constraint directive MUST state its effect (reconciliation row B3).",
+          "if": {
+            "properties": {
+              "directive_kind": {
+                "const": "constraint"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "constraint_effect"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "properties": {
+        "record_kind": {
+          "const": "record_proposal"
+        },
+        "proposed_kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rationale": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_kind",
+        "proposed_kind",
+        "rationale"
+      ]
+    },
+    {
+      "properties": {
+        "record_kind": {
+          "const": "evidence"
+        },
+        "statement": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence_kind": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_kind",
+        "statement"
+      ]
+    },
+    {
+      "properties": {
+        "record_kind": {
+          "const": "artifact_contract"
+        },
+        "contract_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requirements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ContractRequirement"
+          }
+        }
+      },
+      "required": [
+        "record_kind",
+        "contract_name"
+      ]
+    },
+    {
+      "properties": {
+        "record_kind": {
+          "const": "contract_validation"
+        },
+        "contract_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "outcome": {
+          "$ref": "#/$defs/validationOutcome"
+        },
+        "requirement_results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RequirementResult"
+          }
+        }
+      },
+      "required": [
+        "record_kind",
+        "contract_ref",
+        "outcome"
+      ]
+    },
+    {
+      "properties": {
+        "record_kind": {
+          "const": "outcome_assessment"
+        },
+        "subject_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "assessment": {
+          "type": "string"
+        },
+        "rating": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "record_kind",
+        "subject_ref",
+        "assessment"
+      ]
+    },
+    {
+      "properties": {
+        "record_kind": {
+          "const": "promotion_event"
+        },
+        "subject_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "to_status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "from_status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_kind",
+        "subject_ref",
+        "to_status"
+      ]
+    },
+    {
+      "properties": {
+        "record_kind": {
+          "const": "context_use"
+        },
+        "used_record_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "selected": {
+          "type": "boolean"
+        },
+        "rendered": {
+          "type": "boolean"
+        },
+        "cited": {
+          "type": "boolean"
+        },
+        "task_ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_kind",
+        "used_record_ref",
+        "selected",
+        "rendered",
+        "cited"
+      ]
+    },
+    {
+      "properties": {
+        "record_kind": {
+          "const": "context_use_feedback"
+        },
+        "context_use_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "feedback": {
+          "type": "string"
+        },
+        "rating": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "record_kind",
+        "context_use_ref",
+        "feedback"
+      ]
+    }
+  ],
+  "unevaluatedProperties": false,
+  "$defs": {
+    "recordKind": {
+      "type": "string",
+      "enum": [
+        "observation",
+        "knowledge",
+        "memory",
+        "directive",
+        "record_proposal",
+        "evidence",
+        "artifact_contract",
+        "contract_validation",
+        "outcome_assessment",
+        "promotion_event",
+        "context_use",
+        "context_use_feedback"
+      ],
+      "description": "The 12 portable record kinds (reconciliation row D1). Closed within this profile version; a new kind is a lifecycle/1.x addition."
+    },
+    "recordStatus": {
+      "type": "string",
+      "enum": [
+        "active",
+        "retracted",
+        "archived"
+      ],
+      "description": "Three-value lifecycle status (reconciliation row B5). 'superseded' is NOT here \u2014 it is derived from a later record on the same lineage_id, never stored."
+    },
+    "sharingScope": {
+      "type": "string",
+      "enum": [
+        "user",
+        "repository",
+        "workspace",
+        "organization"
+      ],
+      "description": "Who the record is shared with (reconciliation row E3). Conjunctive with scope."
+    },
+    "originClass": {
+      "type": "string",
+      "enum": [
+        "observed",
+        "derived",
+        "declared",
+        "imported"
+      ],
+      "description": "Coarse origin class keyed by the origin\u2192derivation validity matrix (reconciliation row C5): observed/declared carry no provenance.derivation_kind; derived requires one."
+    },
+    "validationOutcome": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "fail",
+        "inconclusive"
+      ]
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$",
+      "description": "Protocol timestamp: a strict UTC subset of RFC 3339, uppercase T and Z (SPEC.md \u00a76.1/F4)."
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "sha256:<64 lowercase hex> (SPEC.md \u00a76.2/F5)."
+    },
+    "RecordScope": {
+      "type": "object",
+      "description": "The 7-key portable scope (reconciliation row E3). Every key optional; present keys are conjunctive (AND). tenant_id and project_id are deliberately absent from the portable core (rows E2/E3).",
+      "properties": {
+        "user_id": {
+          "type": "string"
+        },
+        "organization_id": {
+          "type": "string"
+        },
+        "repository_id": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        },
+        "environment_id": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RecordProvenance": {
+      "type": "object",
+      "description": "Structured record provenance (reconciliation row C5). Distinct from the frame-layer file/range digest chain.",
+      "properties": {
+        "origin_provider_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "origin_authority_id": {
+          "type": "string"
+        },
+        "producer_kind": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Open vocabulary; recommended human|agent|tool|system."
+        },
+        "producer_ref": {
+          "type": "string"
+        },
+        "derivation_kind": {
+          "type": "string",
+          "description": "Open vocabulary; recommended summarization|inference|transformation|import. Required for origin=derived; absent for observed/declared."
+        },
+        "source_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "origin_provider_id",
+        "producer_kind"
+      ],
+      "additionalProperties": false
+    },
+    "RecordLink": {
+      "type": "object",
+      "description": "A typed link to another record. rel is an open, namespaced (SPEC.md \u00a713 U3) vocabulary.",
+      "properties": {
+        "rel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target_record_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "rel",
+        "target_record_id"
+      ],
+      "additionalProperties": false
+    },
+    "ContractRequirement": {
+      "type": "object",
+      "description": "One requirement of an artifact contract (reconciliation row D6). requirement_kind is open; a 'command' requirement carries execution_approval_ref \u2014 a pointer to an approval, NEVER an authorization to execute (ADR 0007 \u00a73).",
+      "properties": {
+        "requirement_kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "execution_approval_ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requirement_kind"
+      ],
+      "additionalProperties": false
+    },
+    "RequirementResult": {
+      "type": "object",
+      "properties": {
+        "requirement_kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "outcome": {
+          "$ref": "#/$defs/validationOutcome"
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requirement_kind",
+        "outcome"
+      ],
+      "additionalProperties": false
+    },
+    "RecordAttestation": {
+      "type": "object",
+      "description": "A DETACHED attestation over a record's record_hash (reconciliation row C5, shared with issue #12). Never part of a record or its record_hash preimage \u2014 it travels as ledger metadata, so re-signing / key rotation never perturbs the content-addressed identity.",
+      "properties": {
+        "signed_record_hash": {
+          "$ref": "#/$defs/digest"
+        },
+        "key_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "algorithm": {
+          "type": "string",
+          "minLength": 1
+        },
+        "attester_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "signature": {
+          "type": "string",
+          "minLength": 1
+        },
+        "issued_at": {
+          "$ref": "#/$defs/timestamp"
+        }
+      },
+      "required": [
+        "signed_record_hash",
+        "key_id",
+        "algorithm",
+        "attester_id",
+        "signature",
+        "issued_at"
+      ],
+      "additionalProperties": false
+    },
+    "envelopeCommon": {
+      "type": "object",
+      "description": "The common record envelope shared by every record_kind.",
+      "properties": {
+        "schema_version": {
+          "const": "contextgraph/lifecycle/1.0-draft",
+          "description": "The profile version (ADR 0007 \u00a75, reconciliation row D4)."
+        },
+        "record_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lineage_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Groups revisions of the same logical item; supersession is derived from this."
+        },
+        "record_kind": {
+          "$ref": "#/$defs/recordKind"
+        },
+        "record_status": {
+          "$ref": "#/$defs/recordStatus"
+        },
+        "scope": {
+          "$ref": "#/$defs/RecordScope"
+        },
+        "sharing_scope": {
+          "$ref": "#/$defs/sharingScope"
+        },
+        "sensitivity": {
+          "type": "string",
+          "description": "Open vocabulary; recommended public|internal|confidential|restricted."
+        },
+        "observed_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "valid_from": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "origin": {
+          "$ref": "#/$defs/originClass"
+        },
+        "evidence_links": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "record_links": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RecordLink"
+          }
+        },
+        "record_hash": {
+          "$ref": "#/$defs/digest",
+          "description": "sha256:<hex> over the RFC 8785 (JCS) canonicalization of this record with record_hash omitted from the preimage (reconciliation row C5)."
+        },
+        "provenance": {
+          "$ref": "#/$defs/RecordProvenance"
+        },
+        "extensions": {
+          "type": "object",
+          "description": "Namespaced extension members (SPEC.md \u00a713 U3). Open object.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "schema_version",
+        "record_id",
+        "lineage_id",
+        "record_kind",
+        "record_status",
+        "scope",
+        "sharing_scope",
+        "observed_at",
+        "origin",
+        "record_hash",
+        "provenance"
+      ]
+    }
+  }
+}

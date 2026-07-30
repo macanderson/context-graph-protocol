@@ -17,6 +17,7 @@ pub mod error_code;
 pub mod frame;
 pub mod identity;
 pub mod query;
+pub mod record;
 pub mod scope;
 pub mod token;
 pub mod usage;
@@ -36,6 +37,12 @@ pub use frame::{
 };
 pub use identity::{FrameId, canonical_order};
 pub use query::{ContextQuery, ContextQueryResult};
+pub use record::{
+    ConstraintEffect, ContextRecord, ContractRequirement, DirectiveKind, Enforcement,
+    KnowledgeKind, LIFECYCLE_SCHEMA_VERSION, OriginClass, RecordAttestation, RecordBody,
+    RecordLink, RecordProvenance, RecordScope, RecordStatus, RequirementResult, SharingScope,
+    ValidationOutcome,
+};
 pub use scope::EgressScope;
 pub use token::{
     BYTES_PER_BUDGET_TOKEN, SUGGESTED_HOST_SAFETY_FACTOR, budget_from_model_tokens, budget_tokens,
