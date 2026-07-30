@@ -7,7 +7,7 @@
 > disagreement is a bug worth filing.
 
 
-This is the normative shape of the Context Graph Protocol as bound to
+This is the normative shape of the Context Graph Protocol (CGP) as bound to
 Rust types by [`contextgraph-types`](https://crates.io/crates/contextgraph-types). Every type
 below lives in that crate, round-trips through `serde_json`, and *is* the
 protocol — there is no separate IDL. Field-level doc comments in the crate

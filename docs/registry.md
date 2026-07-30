@@ -1,6 +1,6 @@
 # Conformance registry
 
-This page lists providers that are **Context Graph Protocol conformant** — green on
+This page lists providers that are **Context Graph Protocol (CGP) conformant** — green on
 `contextgraph-conformance`'s suite for their declared capability set (see
 [running-conformance.md](./running-conformance.md)) — with a reproducible,
 checkable report backing the claim. It exists so "conformant" stays a
@@ -16,7 +16,7 @@ is where that count becomes checkable.
 
 | Provider | Author | Transport | Declared capabilities | Data flow | Protocol version | Last verified | Report |
 |---|---|---|---|---|---|---|---|
-| [`contextgraph-example-docs`](../contextgraph-conformance/src/bin/contextgraph-example-docs.rs) | Context Graph Protocol maintainers (bundled reference fixture) | stdio | `kinds=[doc, snippet]`, `graph`, `verify`, `correlation`, `embeddings_fingerprint=bge-small-en-v1.5/384/l2` | reads-only, `egress=false` (`local-only`) | `contextgraph/1.0-draft` | 2026-07-29 | 13/13 checks passed — [report](../site/public/registry/contextgraph-example-docs.report.json) |
+| [`contextgraph-example-docs`](../contextgraph-conformance/src/bin/contextgraph-example-docs.rs) | CGP maintainers (bundled reference fixture) | stdio | `kinds=[doc, snippet]`, `graph`, `verify`, `correlation`, `embeddings_fingerprint=bge-small-en-v1.5/384/l2` | reads-only, `egress=false` (`local-only`) | `contextgraph/1.0-draft` | 2026-07-29 | 13/13 checks passed — [report](../site/public/registry/contextgraph-example-docs.report.json) |
 
 This founding entry is the reference fixture bundled with
 `contextgraph-conformance` itself (`SPEC.md` §11 seed providers) — it exists to

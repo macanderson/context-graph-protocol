@@ -1,6 +1,6 @@
 # Implementing a CGP provider
 
-There are two ways to implement a CGP provider, depending on whether you're
+There are two ways to implement a Context Graph Protocol (CGP) provider, depending on whether you're
 writing Rust that runs inside the same process as the host, or a standalone
 program (in any language) that the host talks to as a child process or a
 remote HTTP endpoint.
@@ -45,7 +45,7 @@ with `host.register(Box::new(my_provider))` and it participates in
 ## Option B: out-of-process, via the wire protocol (any language)
 
 A provider written in any language — the common case for a third-party
-integration — implements the Context Graph Protocol wire protocol directly. `contextgraph-host` speaks
+integration — implements the CGP wire protocol directly. `contextgraph-host` speaks
 this protocol over two transports; you only need to implement one:
 
 - **stdio** — the host spawns your program as a child process and exchanges
@@ -132,7 +132,7 @@ do:
 
 - `reads: true` — you can see workspace content via query payloads.
 - `writes: true` — you persist `context/upsert`-style writes (not yet part
-  of the query/frames exchange in this crate; reserved for a future Context Graph Protocol
+  of the query/frames exchange in this crate; reserved for a future CGP
   method).
 - `egress: true` — **anything you do sends data off the local machine.**
 

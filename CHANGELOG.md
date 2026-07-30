@@ -130,6 +130,11 @@ which. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1
   round-trip + hash suite. `context/resolve` is scoped to the profile (taking up
   SPEC §6.4.1's reservation); reconciliation rows D1/D4/D5/D6/D7/B3/B5/C5/E3 are
   resolved.
+- **Docs: CGP abbreviation convention + a CI badge** (#21, buildable half of #2)
+  — README, CONTRIBUTING, `docs/`, and the site mirrors now expand
+  "Context Graph Protocol (CGP)" on first mention and use "CGP" in body prose
+  (titles, link text, version strings, and crate names left intact); the
+  bug-report template grammar is fixed; and the README gains a CI status badge.
 - **`SPEC.md` normative completeness pass** — folds every shipped wire surface
   into the single normative home ahead of the freeze (#49, #50, #48, #13). Adds
   §9 **Verification** (`verify`/`verified`, V1–V4), §6.3 **Frame identity**

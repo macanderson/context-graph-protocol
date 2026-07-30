@@ -3,14 +3,14 @@ title: "Version and stability"
 description: "The relationship between Context Graph Protocol crate versions, protocol versions, draft status, and the eventual 1.0 stability guarantee."
 ---
 
-Context Graph Protocol has **two independent version axes**, and it's important not to conflate
+Context Graph Protocol (CGP) has **two independent version axes**, and it's important not to conflate
 them:
 
 - **The crate version** — `0.1.0` today, `[workspace.package].version` in the
   workspace root `Cargo.toml`, inherited by `contextgraph-types`, `contextgraph-host`, and
   `contextgraph-conformance` alike. This is ordinary Rust/Cargo semver.
 - **The protocol version** — `contextgraph/1.0-draft`, the `PROTOCOL_VERSION` constant
-  in `contextgraph-types::lib`. This is the wire-format identity two Context Graph Protocol
+  in `contextgraph-types::lib`. This is the wire-format identity two CGP
   implementations negotiate at handshake time, independent of what language
   or crate version either side is written in.
 
@@ -64,7 +64,7 @@ reserved for a genuinely breaking protocol redesign.
   that point on, the crates follow ordinary semver — a `1.x → 1.y` minor is
   additive-only, and a wire-breaking protocol change requires both a new
   protocol major (`contextgraph/2.0`) and a new crate major (`2.0.0`).
-- **Conformance is the enforcement mechanism.** "Context Graph Protocol conformant" is defined
+- **Conformance is the enforcement mechanism.** "CGP conformant" is defined
   as green on `contextgraph-conformance`'s suite for your declared capability set
   (see [running-conformance.md](./running-conformance)) — that suite, not
   a hand-audited checklist, is what a third party checks their implementation
