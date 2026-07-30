@@ -82,7 +82,7 @@ before this exchange completes.**
 | - | ----------- | ----------- |
 | **H1** | A provider **MUST** reply to `handshake` with a `handshake_ack` whose `protocol_version` is in the same major family as the host's. | `handshake` check |
 | **H2** | `provider.name` and `provider.version` **MUST NOT** be empty. | `handshake` check |
-| **H3** | A version-family mismatch **MUST** be reported as a named error, never left to hang. | `versions_compatible`; `handshake` check |
+| **H3** | A version-family mismatch **MUST** be reported as a named error, never left to hang. | `versions_compatible`; `handshake` check (provider-facing); `host-version-reject` host-side scenario (§11.1) |
 | **H4** | A provider declaring `capabilities.correlation` **MUST** echo a request's `id` verbatim on the corresponding `frames` or `error`. | `CorrelationMismatch`; `drop-correlation-id` witness |
 
 ### 3.1 Version strings
@@ -608,15 +608,24 @@ it cannot check would be exactly the self-attestation this project rejects.
 
 The **host-side harness** (`contextgraph-conformance`'s `host_conformance`
 module, issue #14) closes most of the host-binding gaps that once lived here. It
-drives the reference host against adversarial in-process providers — the
-host-side equivalent of the provider fixture's `--misbehave` modes — and asserts
-the host: **B2** drops an over-budget provider with a report; **B4** drops a
-frame-flooding one; **C1/C2** never queries, nor transmits a payload to, an
-unconsented egress provider; **C6** refuses an unreceipted off-machine scope with
-a typed error; **F5-bytes** verifies a `file`-provenance digest against the
-re-read source over a trusted local fixture (via `contextgraph_host::verify`,
-issue #12); and **R3** delimits frame `content` as quoted material inside a
-fence. Run it: `contextgraph-inspect host` (CI: `host-conformance.sh`).
+drives the reference host against adversarial providers — in-process ones, plus
+short-lived stdio child fixtures for the transport-level scenarios — the
+host-side equivalent of the provider fixture's `--misbehave` modes, and asserts
+the host: **H3** rejects a `handshake_ack` from a mismatched major family with a
+named `VersionMismatch`, never a hang (the host-side dual of §3's provider-facing
+`handshake` check — that check asserts a provider *replies* with a well-formed
+ack; this asserts the *host* *refuses* a wrong-family one, and promptly, driving
+the handshake under an explicit timeout so a stall is a distinct failure);
+**B2** drops an over-budget provider with a report; **B4** drops a frame-flooding
+one; **C1/C2** never queries, nor transmits a payload to, an unconsented egress
+provider; **C6** refuses an unreceipted off-machine scope with a typed error;
+**F5-bytes** verifies a `file`-provenance digest against the re-read source over a
+trusted local fixture (via `contextgraph_host::verify`, issue #12); **R3**
+delimits frame `content` as quoted material inside a fence; and **crash
+isolation** — a provider that dies mid-query surfaces as `ProviderCrashed` and is
+excluded while a healthy provider fanned out concurrently beside it still returns
+its frames, so one leg's crash never poisons a `query_all`. Run it:
+`contextgraph-inspect host` (CI: `host-conformance.sh`).
 
 What remains genuinely unchecked:
 
