@@ -9,10 +9,23 @@ name: Downstream Canary
 # downstream consumer (stella) against THIS repo's HEAD so that break is
 # visible before the freeze, not after.
 #
-# Deliberately advisory, not a required check: this repo's own gate must stay
-# green on this repo's own guarantees, not on a downstream project's
-# unrelated churn. `continue-on-error` + an explicit ::warning:: keeps the
-# signal visible without letting a foreign repo block a merge here.
+# Advisory on a pull request, and NOT advisory on the schedule. This repo's own
+# gate must stay green on this repo's own guarantees, so a downstream project's
+# unrelated churn must never block a merge here — hence `continue-on-error` on
+# `pull_request`.
+#
+# But "advisory" was originally implemented as advisory *everywhere*, and that
+# made the canary useless in exactly the case it was built for. On 2026-07-29 it
+# caught a real break — stella's `Host::add_http` call had not been updated for
+# the C7/C8 credential parameter — emitted its `::warning::`, wrote its step
+# summary, and reported the run as **success**. Nobody saw it. stella stayed
+# thirteen commits behind for as long as it took a human to go looking.
+#
+# A warning on a green run is not a signal; it is a note in a file nobody opens.
+# So the scheduled run now *fails* on a downstream break. It gates no PR and
+# blocks no merge — it has nothing to block — so failing costs nothing and buys
+# a red run in the Actions list plus GitHub's scheduled-failure notification.
+# The PR path is untouched and still cannot block a merge here.
 
 on:
   schedule:
@@ -41,7 +54,7 @@ env:
 
 jobs:
   stella-canary:
-    name: stella builds against CGP HEAD (advisory)
+    name: stella builds against CGP HEAD (advisory on PR, gating on schedule)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout context-graph-protocol (this repo, HEAD)
@@ -70,7 +83,10 @@ jobs:
           STELLA_DIR: ${{ github.workspace }}/stella
         run: ./cgp/.github/scripts/downstream-canary-stella.sh
 
-      - name: Flag the break (advisory — does not fail the job)
+      # `continue-on-error` above is unconditional so that this step always runs
+      # and always records what happened. Whether the *job* then goes red is
+      # decided here, by event: a scheduled run fails, a pull request does not.
+      - name: Flag the break (fails the scheduled run; advisory on a PR)
         if: steps.build.outcome == 'failure'
         run: |
           echo "::warning title=downstream canary::stella no longer builds against context-graph-protocol HEAD (${{ github.sha }}) — a breaking change to contextgraph-types::ContextFrame or another wire type likely needs a coordinated stella update before the next freeze/tag."
@@ -79,6 +95,17 @@ jobs:
             echo
             echo "stella (macanderson/stella) no longer builds/tests against this repo's HEAD (\`${{ github.sha }}\`). See the \`build\` step log above for the compiler error."
           } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "Advisory on a pull request: a downstream repo does not block a merge here."
+            echo "_Advisory on a PR — this does not block the merge._" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # Scheduled or manually dispatched: gate nothing, block nothing, so
+          # failing is free — and a red run is the only form of this signal that
+          # actually reaches a human.
+          echo "Scheduled run: failing so the break is visible rather than a warning on a green run."
+          echo "_Scheduled run — failed deliberately so this reaches a human._" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
 
   oxagen-canary:
     name: oxagen conformance fixtures pinned to CGP HEAD (advisory, deferred)

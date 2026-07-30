@@ -58,6 +58,17 @@
 //! [`host_conformance`], the dual suite: [`run_host_conformance`] drives the
 //! reference [`Host`] against adversarial in-process providers and asserts it
 //! upholds them (`SPEC.md` §11.1; issue #14).
+//!
+//! Both of those suites certify code in *this* repository. A third,
+//! [`composition_conformance`], is for code that is not: it takes a
+//! [`ComposingHost`] and certifies **someone else's** composition layer — the step
+//! above [`Host::query_all`] that turns a fan-out across several providers into
+//! the one frame set that reaches a prompt. That step is where a downstream host
+//! makes its own calls about a shared budget, and neither suite above can see it:
+//! three providers each returning one honest 400-token frame against a
+//! 1000-token query are individually conformant and jointly 200 over. Run
+//! [`run_composition_conformance`] against your own host;
+//! [`ReferenceComposingHost`] is the worked example that passes it.
 
 use contextgraph_host::{
     ConsentRecord, ContextProvider, DigestVerification, DropReason, Host, HostError,
@@ -69,9 +80,14 @@ use contextgraph_types::{
     Grantor, ProviderInfo,
 };
 
+pub mod composition_conformance;
 pub mod host_conformance;
 mod report;
 
+pub use composition_conformance::{
+    CCHECK_BUDGET_BOUND, CCHECK_DETERMINISM, CCHECK_QUARANTINE, CCHECK_TOTAL_PARTITION,
+    ComposingHost, Composition, ExcludedFrame, ReferenceComposingHost, run_composition_conformance,
+};
 pub use host_conformance::{
     HCHECK_BUDGET_DROP, HCHECK_COMPOSITION_AUDIT, HCHECK_CONSENT_GATE, HCHECK_CONTENT_QUOTING,
     HCHECK_CRASH_ISOLATION, HCHECK_FRAME_LIMIT, HCHECK_PROVENANCE_BYTES, HCHECK_SCOPE_RECEIPT,
