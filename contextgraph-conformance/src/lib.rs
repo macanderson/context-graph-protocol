@@ -67,8 +67,9 @@ pub mod host_conformance;
 mod report;
 
 pub use host_conformance::{
-    HCHECK_BUDGET_DROP, HCHECK_CONSENT_GATE, HCHECK_CONTENT_QUOTING, HCHECK_FRAME_LIMIT,
-    HCHECK_PROVENANCE_BYTES, HCHECK_SCOPE_RECEIPT, run_host_conformance,
+    HCHECK_BUDGET_DROP, HCHECK_CONSENT_GATE, HCHECK_CONTENT_QUOTING, HCHECK_CRASH_ISOLATION,
+    HCHECK_FRAME_LIMIT, HCHECK_PROVENANCE_BYTES, HCHECK_SCOPE_RECEIPT, HCHECK_VERSION_REJECT,
+    run_host_conformance,
 };
 pub use report::{CheckResult, CheckStatus, ConformanceReport};
 
