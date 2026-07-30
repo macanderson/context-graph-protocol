@@ -40,6 +40,11 @@
 //!   caught.
 //! - **R3** (§11) — the compose/render path delimits frame `content` as quoted
 //!   material inside a `<frame>` fence, never spliced as instructions.
+//! - **Composition audit** (§11 R3; issue #15) — the reference composer
+//!   ([`compose_for_prompt`]) packs a multi-provider, over-budget,
+//!   duplicate-content frame set into a within-budget prompt and emits an audit
+//!   that explains every included and excluded frame (budget, dedup), while a
+//!   within-budget duplicate-free set drops nothing.
 //! - **Crash isolation** (§11 robustness; the crash-consistency contract that
 //!   one provider's failure never poisons a `query_all`) — a provider that dies
 //!   mid-query surfaces as [`HostError::ProviderCrashed`] and is excluded, while
@@ -53,10 +58,12 @@
 //! **C4, C7, C8** bind the host's HTTP transport — treating every non-loopback
 //! provider as egress, requiring TLS, and never logging credentials. Exercising
 //! them needs a real (non-loopback, TLS) network peer the in-process harness
-//! cannot stand up, so they stay in §11.1's residual list. **R3** is checked for
-//! its delimiting contract only; breakout-resistant delimiting (escaping a
-//! content-embedded `</frame>`, an unguessable fence) is the hardened
-//! composition module's job (issue #15).
+//! cannot stand up, so they stay in §11.1's residual list. **R3** is now checked
+//! on two fronts: `HCHECK_CONTENT_QUOTING` for the delimiting-and-escaping
+//! contract (a content-embedded `</frame>` cannot break out), and
+//! `HCHECK_COMPOSITION_AUDIT` for the full reference composition module — global
+//! budget packing, cross-provider dedup, and an audit that explains every drop
+//! (issue #15).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -64,13 +71,14 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use contextgraph_host::{
-    ConsentRecord, ContextProvider, DigestVerification, Envelope, Host, HostError,
-    PROTOCOL_VERSION, ProviderResult, StdioProvider, compose_context, verify_file_provenance,
+    ConsentRecord, ContextProvider, DigestVerification, Envelope, ExclusionReason,
+    FrameDisposition, Host, HostError, PROTOCOL_VERSION, ProviderResult, StdioProvider,
+    compose_context, compose_for_prompt, verify_file_provenance,
 };
 use contextgraph_types::capability::QueryCapability;
 use contextgraph_types::{
     Capabilities, ConsentReceipt, ContextFrame, ContextQuery, ContextQueryResult, DataFlow,
-    EgressScope, FrameKind, Grantor, Provenance, ProviderInfo,
+    EgressScope, FrameKind, Grantor, Provenance, ProviderInfo, budget_tokens,
 };
 
 use crate::report::{CheckResult, ConformanceReport};
@@ -84,6 +92,7 @@ pub const HCHECK_SCOPE_RECEIPT: &str = "host-scope-receipt"; // §4 C6
 pub const HCHECK_PROVENANCE_BYTES: &str = "host-provenance-bytes"; // §6.2 F5
 pub const HCHECK_CONTENT_QUOTING: &str = "host-content-quoting"; // §11 R3
 pub const HCHECK_CRASH_ISOLATION: &str = "host-crash-isolation"; // §11 crash-consistency
+pub const HCHECK_COMPOSITION_AUDIT: &str = "host-composition-audit"; // §11 R3 / issue #15
 
 /// Run every host-binding check against the reference host, returning a typed
 /// [`ConformanceReport`] — the host-side analogue of
@@ -98,6 +107,7 @@ pub async fn run_host_conformance() -> ConformanceReport {
         check_scope_receipt().await,
         check_provenance_bytes(),
         check_content_quoting(),
+        check_composition_audit(),
         check_crash_isolation().await,
     ];
     ConformanceReport {
@@ -431,6 +441,121 @@ fn check_content_quoting() -> CheckResult {
             "§11 R3: injection-shaped content delimited as quoted material inside a <frame> fence={injection_fenced}, benign content fenced identically={benign_fenced}, content carrying `</frame>` cannot close the fence that quotes it={breakout_contained}"
         ),
     )
+}
+
+/// **Composition audit (§11 R3 / issue #15)** — the reference composer
+/// ([`compose_for_prompt`]) packs a multi-provider, over-budget, duplicate-content
+/// frame set into a prompt whose token cost stays within the budget, and emits a
+/// [`CompositionAudit`](contextgraph_host::CompositionAudit) that **explains
+/// every drop** and accounts for every offered frame — the audit turns "why is
+/// this evidence not in the prompt, and why is the prompt within budget?" from a
+/// host's private decision into a checkable record.
+///
+/// Adversarial-by-construction like every check here: an over-budget +
+/// duplicate fixture the composer must drop-with-reason (a cross-provider
+/// duplicate collapsed into the higher-scored copy, and a frame too large for
+/// the budget), plus a within-budget, duplicate-free counterpart it must pass
+/// **without** dropping anything — so the check passes only if the audit
+/// **discriminates**, never by dropping everything or nothing.
+fn check_composition_audit() -> CheckResult {
+    // A 5-token composition budget. Costs are canonical (`budget_tokens`):
+    // "abcd" is 1 token, "shared evidence" (15 bytes) is 4, the 400-byte block
+    // is 100 — far over the budget.
+    let budget = 5u32;
+    let dup_low = audit_frame("dup_low", "shared evidence", 0.30, "sha256:dup");
+    let dup_high = audit_frame("dup_high", "shared evidence", 0.80, "sha256:dup");
+    let cheap = audit_frame("cheap", "abcd", 0.95, "sha256:cheap");
+    let huge = audit_frame("huge", &"x".repeat(400), 0.70, "sha256:huge");
+
+    // dup_low and dup_high are the *same evidence* (shared digest) from two
+    // providers; huge is honestly costed but far over the budget.
+    let composed = compose_for_prompt(
+        [
+            ("alpha", &dup_low),
+            ("beta", &dup_high),
+            ("alpha", &cheap),
+            ("beta", &huge),
+        ],
+        budget,
+    );
+    let audit = &composed.audit;
+
+    // Total partition: one entry per offered frame (4), nothing lost.
+    let total_partition = audit.entries.len() == 4;
+    // Every excluded frame carries a concrete reason.
+    let explained = audit.explains_every_drop();
+    // The composed prompt honestly fits the budget it was packed against.
+    let within_budget = audit.tokens_used <= budget;
+    // The lower-scored cross-provider duplicate was dropped and attributed to the
+    // higher-scored survivor that absorbed it.
+    let duplicate_dropped = audit.excluded().any(|entry| {
+        entry.frame == dup_low.identity("alpha")
+            && matches!(
+                &entry.disposition,
+                FrameDisposition::Excluded {
+                    reason: ExclusionReason::Duplicate { kept },
+                } if *kept == dup_high.identity("beta")
+            )
+    });
+    // The over-budget frame was dropped for budget, not silently.
+    let over_budget_dropped = audit.excluded().any(|entry| {
+        entry.frame == huge.identity("beta")
+            && matches!(
+                entry.disposition,
+                FrameDisposition::Excluded {
+                    reason: ExclusionReason::OverBudget { .. },
+                }
+            )
+    });
+    // The cheap, high-value frame made it into the prompt, fenced.
+    let cheap_included = audit.included().any(|id| *id == cheap.identity("alpha"));
+    let rendered_fenced =
+        composed.prompt.contains("<frame ") && composed.prompt.trim_end().ends_with("</frame>");
+
+    // Well-behaved counterpart: two distinct frames under a generous budget —
+    // nothing to dedup, nothing over budget, so the audit must drop *nothing*.
+    // This is what proves the drops above are discrimination, not a composer that
+    // simply always sheds frames.
+    let solo_a = audit_frame("solo_a", "abcd", 0.90, "sha256:sa");
+    let solo_b = audit_frame("solo_b", "efgh", 0.80, "sha256:sb");
+    let clean = compose_for_prompt([("p", &solo_a), ("p", &solo_b)], 1000);
+    let nothing_spuriously_dropped = clean.audit.excluded().count() == 0
+        && clean.audit.included().count() == 2
+        && clean.audit.tokens_used <= 1000
+        && clean.audit.explains_every_drop();
+
+    CheckResult::from_bool(
+        HCHECK_COMPOSITION_AUDIT,
+        total_partition
+            && explained
+            && within_budget
+            && duplicate_dropped
+            && over_budget_dropped
+            && cheap_included
+            && rendered_fenced
+            && nothing_spuriously_dropped,
+        format!(
+            "§11 R3/#15: audit is a total partition of the offered frames={total_partition} and explains every drop={explained}; the composed prompt fits the {budget}-token budget (used {})={within_budget}; the cross-provider duplicate is dropped-and-attributed={duplicate_dropped}, the over-budget frame is dropped-for-budget={over_budget_dropped}, the high-value frame is included and fenced={cheap_included}/{rendered_fenced}; a within-budget duplicate-free set drops nothing={nothing_spuriously_dropped}",
+            audit.tokens_used
+        ),
+    )
+}
+
+/// A `full` frame for the composition-audit fixture: the given content (its
+/// `token_cost` the canonical count, so it is honest), score, and digest, with a
+/// citation label so it renders a proper `cite`.
+fn audit_frame(id: &str, content: &str, score: f32, digest: &str) -> ContextFrame {
+    let mut frame = ContextFrame::full(
+        id,
+        FrameKind::Doc,
+        id,
+        content,
+        score,
+        budget_tokens(content),
+    );
+    frame.content_digest = Some(digest.into());
+    frame.citation_label = Some(format!("{id} cite"));
+    frame
 }
 
 /// **Crash isolation (§11 crash-consistency)** — a provider that dies mid-query

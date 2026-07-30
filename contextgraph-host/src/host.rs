@@ -313,6 +313,62 @@ impl Host {
         }
     }
 
+    /// Fan a query out under a **global** token budget, splitting it into a
+    /// per-provider `max_tokens` share *before* building each provider's query
+    /// (issue #15). Where [`query_all`](Self::query_all) hands the same
+    /// `max_tokens` to every provider — so N honest providers can each spend the
+    /// whole budget and the honest total is N× the intended prompt budget — this
+    /// gives each capability-matching provider a slice of `global_budget`, so the
+    /// honest legs sum to `<= global_budget`.
+    ///
+    /// `template` supplies every field of the query *except* `max_tokens`, which
+    /// is overwritten per provider with its share from
+    /// [`compose::budget_split`](crate::compose::budget_split) — an equal split
+    /// by default, documented there as swappable for a weighted one. Only
+    /// capability-matching providers (the same filter `query_all` applies) count
+    /// toward the split and receive a query. Each leg is still consent-gated,
+    /// timed out, and budget-audited exactly as in `query_all`, so a provider
+    /// that overspends *its share* is dropped with a report by the existing B2
+    /// audit — the split composes with per-leg honesty rather than replacing it.
+    ///
+    /// [`query_all`](Self::query_all) stays the un-budgeted legacy path.
+    pub async fn query_all_budgeted(&self, template: &ContextQuery, global_budget: u32) -> FanOut {
+        use futures_util::future::join_all;
+
+        // The providers this query would reach — the same capability filter
+        // `query_all` uses, so the split is over exactly the legs that run.
+        let matching: Vec<&dyn ContextProvider> = self
+            .providers
+            .iter()
+            .map(|provider| provider.as_ref())
+            .filter(|provider| capability_matches(provider.capabilities(), template))
+            .collect();
+
+        // Shares are computed once, up front, from the count of matching
+        // providers — before any provider's query is built.
+        let shares = crate::compose::budget_split(global_budget, matching.len());
+
+        // Materialize each provider's query so it outlives the borrowed fan-out
+        // futures below; only `max_tokens` differs from the template.
+        let queries: Vec<ContextQuery> = shares
+            .iter()
+            .map(|&share| ContextQuery {
+                max_tokens: share,
+                ..template.clone()
+            })
+            .collect();
+
+        let futures: Vec<_> = matching
+            .iter()
+            .zip(queries.iter())
+            .map(|(provider, query)| self.query_one_isolated(*provider, query))
+            .collect();
+
+        FanOut {
+            outcomes: join_all(futures).await,
+        }
+    }
+
     /// Run one provider's leg of a fan-out, converting every failure mode into
     /// a value — never a propagated error that could abort sibling legs.
     async fn query_one_isolated(
@@ -463,6 +519,18 @@ impl FanOut {
     /// provider's prompt cache instead of busting it.
     pub fn compose(&self) -> String {
         crate::compose::compose_context(self.accepted_with_provider())
+    }
+
+    /// Compose every accepted frame into a prompt-ready block via the reference
+    /// composer (issue #15): the R3 evidence preamble, cross-provider-deduped and
+    /// value-ordered fenced frames packed under `global_budget`, a citation map,
+    /// and a [`CompositionAudit`](crate::compose::CompositionAudit) explaining
+    /// every included and excluded frame. Pair with
+    /// [`Host::query_all_budgeted`](crate::Host::query_all_budgeted): the fan-out
+    /// splits the budget across providers, and this packs the survivors under the
+    /// same whole so `audit.tokens_used <= global_budget`.
+    pub fn compose_for_prompt(&self, global_budget: u32) -> crate::compose::ComposedPrompt {
+        crate::compose::compose_for_prompt(self.accepted_with_provider(), global_budget)
     }
 
     /// Roll this fan-out up into a per-request [`UsageReport`] for metering
@@ -882,6 +950,77 @@ mod tests {
         assert_eq!(fanout.outcomes.len(), 2);
         assert_eq!(fanout.accepted_frames().count(), 3);
         assert_eq!(fanout.total_accepted_tokens(), 250);
+    }
+
+    #[tokio::test]
+    async fn a_budgeted_fan_out_keeps_honest_legs_under_the_global_budget() {
+        // Four honest providers, each returning a frame that fits its equal share
+        // of a 1000-token global budget (250 each). Under the budgeted fan-out
+        // every leg is accepted and the honest total stays under the whole — the
+        // overrun `query_all` allows (each provider spending the full budget) is
+        // closed by allocating shares before fan-out.
+        let mut host = Host::new();
+        for id in ["a", "b", "c", "d"] {
+            host.register(Box::new(FakeProvider::new(
+                id,
+                false,
+                Behavior::Frames(vec![frame(&format!("{id}1"), 200)]),
+            )));
+        }
+        let template = query(); // max_tokens on the template is ignored by the split
+        let fanout = host.query_all_budgeted(&template, 1000).await;
+        assert_eq!(
+            fanout.accepted_frames().count(),
+            4,
+            "each share fits its leg"
+        );
+        assert!(
+            fanout.total_accepted_tokens() <= 1000,
+            "honest legs must sum to <= the global budget, got {}",
+            fanout.total_accepted_tokens()
+        );
+        assert_eq!(fanout.budget_liars().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn the_budget_split_enforces_a_per_leg_ceiling_the_flat_fan_out_does_not() {
+        // A provider returning a 300-token frame against a 1000-token whole split
+        // four ways gets a 250-token share — so its frame is a budget lie against
+        // *its share* and is dropped, even though 300 <= the 1000 global. The
+        // same frame sails through the un-budgeted `query_all` (300 <= 1000),
+        // which is exactly the global overrun the split exists to prevent.
+        let mut host = Host::new();
+        host.register(Box::new(FakeProvider::new(
+            "greedy",
+            false,
+            Behavior::Frames(vec![frame("g", 300)]),
+        )));
+        for id in ["b", "c", "d"] {
+            host.register(Box::new(FakeProvider::new(
+                id,
+                false,
+                Behavior::Frames(vec![frame(&format!("{id}1"), 100)]),
+            )));
+        }
+
+        let budgeted = host.query_all_budgeted(&query(), 1000).await;
+        assert!(
+            budgeted
+                .budget_liars()
+                .any(|outcome| outcome.provider_id == "greedy"),
+            "a leg overspending its share is dropped by the existing B2 audit"
+        );
+        assert!(
+            budgeted
+                .accepted_with_provider()
+                .all(|(id, _)| id != "greedy"),
+            "the greedy leg contributes nothing under the split"
+        );
+
+        // Un-budgeted, the same 300-cost frame is within the flat 1000 budget and
+        // is accepted — the overrun the split closes.
+        let flat = host.query_all(&query()).await;
+        assert!(flat.accepted_with_provider().any(|(id, _)| id == "greedy"));
     }
 
     #[tokio::test]

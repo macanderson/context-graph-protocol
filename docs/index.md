@@ -22,6 +22,11 @@ Reference documentation for the **Context Graph Protocol** crates:
   that make reusing context across turns cache-friendly, auditable, and safe:
   deterministic composition (stable frame identity + canonical ordering), usage
   reports, consent scopes + receipts, and pull-based `context/verify`.
+- [**Composing frames into a prompt**](./composing-frames-into-a-prompt.md) —
+  the reference host-side composer that turns accepted frames into a prompt: a
+  global-budget split across providers, cross-provider dedup, value-aware
+  (Lost-in-the-Middle) placement, injection-resistant fenced rendering, plus a
+  citation map and an audit record explaining every included and excluded frame.
 - [**Implementing a provider**](./implementing-a-provider.md) — how a third
   party builds a CGP provider, in Rust (via `ContextProvider`) or any other
   language (via the wire protocol directly). Start here to *build* something.
