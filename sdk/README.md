@@ -28,6 +28,24 @@ The companion `conformance-red.sh` proves the *suite* catches cheaters using the
 Rust fixture, so an SDK provider only has to be honest, not reimplement the
 misbehaviour modes.
 
+Every SDK also ships an **HTTP adapter** — the same provider behind one POST
+endpoint (the streamable-HTTP transport, SPEC.md §3): `createHttpHandler`
+(TypeScript), `make_wsgi_app` (Python), `Handler` (Go), each with a runnable
+`example-docs-http` provider that goes green under
+`contextgraph-inspect http <url>`.
+
+## Scaffold a new provider
+
+[`create-contextgraph-provider`](./create-contextgraph-provider) generates a
+conformant provider project (TypeScript or Python) wired to both transports,
+**with a GitHub Actions workflow that runs `contextgraph-inspect` against it on
+every push** — so it's conformant from the first commit:
+
+```sh
+npm create contextgraph-provider@latest my-provider              # TypeScript
+npm create contextgraph-provider@latest my-provider -- --lang python
+```
+
 Conformant is a separate axis from **published**: see
 [`PUBLISHING.md`](./PUBLISHING.md) for each SDK's registry status and the
 release checklist. As of this writing only the TypeScript SDK is on a real

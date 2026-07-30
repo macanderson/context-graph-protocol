@@ -17,6 +17,7 @@ Context Graph Protocol providers.
 """
 
 from .budget import BYTES_PER_BUDGET_TOKEN, budget_tokens
+from .http import handle_envelope, make_wsgi_app, respond_to_body
 from .provider import Provider, ProviderError, run_stdio_provider
 from .types import PROTOCOL_VERSION
 
@@ -27,4 +28,7 @@ __all__ = [
     "Provider",
     "ProviderError",
     "run_stdio_provider",
+    "handle_envelope",
+    "respond_to_body",
+    "make_wsgi_app",
 ]

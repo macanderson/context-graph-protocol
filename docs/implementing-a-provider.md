@@ -54,6 +54,12 @@ this protocol over two transports; you only need to implement one:
 - **streamable HTTP** — the host POSTs one JSON envelope per exchange to your
   URL and expects one JSON envelope back as the response body.
 
+> **Writing TypeScript, Python, or Go?** You don't have to hand-roll any of the
+> wire below — the official provider SDKs implement the whole state machine over
+> both transports, and you implement one small interface. See **Provider SDKs:
+> TypeScript, Python, and Go** at the end of this page. The raw protocol here is
+> what those SDKs are built on, and all you need for any other language.
+
 Both transports carry the same message vocabulary, `contextgraph-host::wire::Envelope`
 (a `serde` externally-tagged enum, `#[serde(tag = "type", rename_all =
 "snake_case")]`):
@@ -197,3 +203,172 @@ with a reproducible report backing each claim, plus the
 put in your own README once listed. Listing is a pull request, not a
 self-attested form: see [registry.md](./registry.md#how-to-get-listed) for
 exactly what to include.
+
+## Provider SDKs: TypeScript, Python, and Go
+
+The wire protocol above is small on purpose — small enough to hand-roll in any
+language. But if you're writing **TypeScript, Python, or Go**, you don't have
+to: the official zero-dependency SDKs implement the whole lifecycle (handshake,
+correlation-id echo, verify, shutdown, malformed-input tolerance) over both
+transports. You implement one small interface; the SDK is the conformant
+machinery around it.
+
+The SDKs live under `sdk/typescript`, `sdk/python`, and `sdk/go`, each with a
+runnable example provider that passes the same conformance suite that judges the
+Rust reference. (Publishing to npm / PyPI is tracked in #59; until then, install
+from a checkout as shown.)
+
+### TypeScript quick-start
+
+```sh
+npm install @contextgraphprotocol/typescript-sdk   # or, from a checkout: npm install ./sdk/typescript
+```
+
+```ts
+import { runStdioProvider, budgetTokens, type Provider } from "@contextgraphprotocol/typescript-sdk";
+
+const provider: Provider = {
+  info: () => ({
+    name: "my-docs-provider",
+    version: "0.1.0",
+    // Nothing leaves the machine ⇒ declare the honest local-only egress scope.
+    data_flow: { reads: true, writes: false, egress: false, egress_scopes: ["local-only"] },
+  }),
+  capabilities: () => ({ query: { kinds: ["doc"] }, correlation: true, verify: true }),
+  query: () => {
+    const content = "Install the binding, then implement the required methods.";
+    return {
+      frames: [{
+        id: "doc:1", kind: "doc", title: "Getting started", content,
+        content_digest: `sha256:${"11".repeat(32)}`, score: 0.9,
+        // token_cost MUST equal ceil(utf8_len(content)/4) — let the SDK compute it.
+        token_cost: budgetTokens(content),
+        valid_from: "2026-01-01T00:00:00Z",
+        provenance: [{ type: "file", uri: "file:///docs/start.md", range: "L1-10", digest: `sha256:${"11".repeat(32)}` }],
+        citation_label: "start.md L1-10", relations: [],
+      }],
+      truncated: false,
+    };
+  },
+};
+
+runStdioProvider(provider);
+```
+
+Build it, then prove it conformant with the same suite that judges the reference
+provider:
+
+```sh
+npm run build
+contextgraph-inspect stdio --json -- node dist/provider.js
+```
+
+### Python quick-start
+
+```sh
+pip install contextgraph-sdk   # or, from a checkout: pip install -e ./sdk/python
+```
+
+```python
+from contextgraph_sdk import run_stdio_provider, budget_tokens
+
+
+class MyDocsProvider:
+    def info(self):
+        # Nothing leaves the machine -> declare the honest local-only egress scope.
+        return {"name": "my-docs-provider", "version": "0.1.0",
+                "data_flow": {"reads": True, "writes": False, "egress": False,
+                              "egress_scopes": ["local-only"]}}
+
+    def capabilities(self):
+        return {"query": {"kinds": ["doc"]}, "correlation": True, "verify": True}
+
+    def query(self, query):
+        content = "Install the binding, then implement the required methods."
+        return {"frames": [{
+            "id": "doc:1", "kind": "doc", "title": "Getting started", "content": content,
+            "content_digest": "sha256:" + ("11" * 32), "score": 0.9,
+            "token_cost": budget_tokens(content),   # ceil(utf8_len(content)/4)
+            "valid_from": "2026-01-01T00:00:00Z",
+            "provenance": [{"type": "file", "uri": "file:///docs/start.md",
+                            "range": "L1-10", "digest": "sha256:" + ("11" * 32)}],
+            "citation_label": "start.md L1-10", "relations": [],
+        }], "truncated": False}
+
+
+run_stdio_provider(MyDocsProvider())
+```
+
+```sh
+contextgraph-inspect stdio --json -- python3 my_provider.py
+```
+
+`verify` is optional in every SDK — omit it and the host falls back to
+re-querying your frames. The runtime handles the whole lifecycle and stays alive
+with a typed error on a malformed line rather than crashing. (Go's SDK is the
+same shape: implement the `Provider` interface and hand it to
+`contextgraph.RunStdioProvider`; see `sdk/go`.)
+
+### Hosting a provider over HTTP
+
+Each SDK ships an HTTP adapter that runs the *same* provider behind one POST
+endpoint (the streamable-HTTP transport). You write the provider once; the
+transport is a one-line change.
+
+TypeScript — a framework-agnostic handler, here on a plain `node:http` server:
+
+```ts
+import { createServer } from "node:http";
+import { createHttpHandler } from "@contextgraphprotocol/typescript-sdk";
+
+createServer(createHttpHandler(provider)).listen(8787);
+// Under Express: app.post("/contextgraph", createHttpHandler(provider))  — no JSON body-parser on that route.
+// Under Fastify:  reply with respondToEnvelopeBody(provider, request.body).
+```
+
+Python — a WSGI app, runnable on the stdlib server or any WSGI host (gunicorn,
+Flask):
+
+```python
+from wsgiref.simple_server import make_server
+from contextgraph_sdk import make_wsgi_app
+
+make_server("127.0.0.1", 8788, make_wsgi_app(provider)).serve_forever()
+# Under Flask:            app.wsgi_app = make_wsgi_app(provider)
+# Under FastAPI (ASGI):   reply with respond_to_body(provider, await request.body()) in your route.
+```
+
+Go — a `net/http` handler:
+
+```go
+http.ListenAndServe("127.0.0.1:8789", contextgraph.Handler(provider))
+```
+
+Point the prober at the running server to confirm it's green:
+
+```sh
+contextgraph-inspect http http://127.0.0.1:8787
+```
+
+The three wire-level probes (`malformed-input-tolerance`, `embedding-fingerprint`,
+`correlation`) report as **skipped** over HTTP — they inspect raw framing the
+request/response transport doesn't expose — so a fully conformant HTTP provider
+shows those three skipped and every other check green. Runnable examples:
+`example-docs-http.ts`, `example_docs_http.py`, and
+`examples/example-docs-http/main.go` in each SDK.
+
+### Scaffolding a new provider
+
+To start from a green project rather than a blank file, use the scaffold
+generator in `sdk/create-contextgraph-provider`:
+
+```sh
+npm create contextgraph-provider@latest my-provider              # TypeScript
+npm create contextgraph-provider@latest my-provider -- --lang python
+```
+
+It generates a provider wired to both transports **plus a GitHub Actions
+workflow that runs `contextgraph-inspect` against it on every push** — so the
+generated project is conformant from its first commit, and stays honest as you
+replace the example frames with your real retrieval. `npm run conformance` (or
+`python scripts/check_conformance.py`) runs the same check locally.

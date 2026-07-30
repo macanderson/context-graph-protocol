@@ -6,8 +6,8 @@
 use contextgraph_conformance::{
     CHECK_ANCHOR_RELEVANCE, CHECK_AS_OF, CHECK_BUDGET_HONESTY, CHECK_CONSENT_SCOPE,
     CHECK_CORRELATION, CHECK_EMBEDDING_FINGERPRINT, CHECK_FRAME_VALIDITY, CHECK_HANDSHAKE,
-    CHECK_KINDS_FILTER, CHECK_MALFORMED, CHECK_SHUTDOWN, CHECK_VERIFY_HONESTY, CheckStatus,
-    ProviderTarget, run_conformance,
+    CHECK_KINDS_FILTER, CHECK_MALFORMED, CHECK_PROVENANCE_FIXTURE_CONSISTENCY, CHECK_SHUTDOWN,
+    CHECK_VERIFY_HONESTY, CheckStatus, ProviderTarget, run_conformance,
 };
 
 /// Path to the fixture binary, built automatically for integration tests.
@@ -40,7 +40,7 @@ async fn a_well_behaved_provider_is_fully_conformant() {
         report.failures().collect::<Vec<_>>()
     );
     // Every check ran and passed (none skipped for a stdio provider).
-    assert_eq!(report.checks.len(), 12);
+    assert_eq!(report.checks.len(), 13);
     for name in [
         CHECK_HANDSHAKE,
         CHECK_CONSENT_SCOPE,
@@ -50,10 +50,37 @@ async fn a_well_behaved_provider_is_fully_conformant() {
         CHECK_AS_OF,
         CHECK_KINDS_FILTER,
         CHECK_ANCHOR_RELEVANCE,
+        CHECK_PROVENANCE_FIXTURE_CONSISTENCY,
         CHECK_SHUTDOWN,
         CHECK_MALFORMED,
         CHECK_EMBEDDING_FINGERPRINT,
         CHECK_CORRELATION,
+    ] {
+        assert_eq!(status_of(&report, name), CheckStatus::Pass, "{name}");
+    }
+}
+
+#[tokio::test]
+async fn a_stale_provenance_digest_fails_provenance_fixture_consistency() {
+    // §6.2/§F5-bytes. A well-formed `sha256:` digest that does NOT match the
+    // backing file's bytes: it passes §F5's grammar (frame-validity) and, because
+    // the provider vouches for the same forged digest it served, verify-honesty
+    // too — so only a host re-reading the file catches it. This is the negative
+    // case for provenance forgery the red suite previously lacked.
+    let report = run_conformance(target(&["--misbehave", "stale-digest"])).await;
+    assert!(!report.passed());
+    assert_eq!(
+        status_of(&report, CHECK_PROVENANCE_FIXTURE_CONSISTENCY),
+        CheckStatus::Fail
+    );
+    // The forgery is well-formed and self-consistent over the wire, so the
+    // grammar, budget, and verify checks do NOT catch it — the whole point of
+    // keeping the mode DISTINCT from `malformed-digest`.
+    for name in [
+        CHECK_HANDSHAKE,
+        CHECK_FRAME_VALIDITY,
+        CHECK_VERIFY_HONESTY,
+        CHECK_BUDGET_HONESTY,
     ] {
         assert_eq!(status_of(&report, name), CheckStatus::Pass, "{name}");
     }

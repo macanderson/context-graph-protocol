@@ -82,7 +82,7 @@ before this exchange completes.**
 | - | ----------- | ----------- |
 | **H1** | A provider **MUST** reply to `handshake` with a `handshake_ack` whose `protocol_version` is in the same major family as the host's. | `handshake` check |
 | **H2** | `provider.name` and `provider.version` **MUST NOT** be empty. | `handshake` check |
-| **H3** | A version-family mismatch **MUST** be reported as a named error, never left to hang. | `versions_compatible`; `handshake` check |
+| **H3** | A version-family mismatch **MUST** be reported as a named error, never left to hang. | `versions_compatible`; `handshake` check (provider-facing); `host-version-reject` host-side scenario (§11.1) |
 | **H4** | A provider declaring `capabilities.correlation` **MUST** echo a request's `id` verbatim on the corresponding `frames` or `error`. | `CorrelationMismatch`; `drop-correlation-id` witness |
 
 ### 3.1 Version strings
@@ -599,7 +599,12 @@ hosts.
 | - | ----------- | ----------- |
 | **R1** | A provider **MUST NOT** crash on a malformed line or bad request. It **SHOULD** reply `error` with code `bad_request`. | `malformed-input-tolerance` |
 | **R2** | A provider **MUST** tear down cleanly on `shutdown`. | `shutdown-clean` |
-| **R3** | A host **MUST** treat frame `content` as untrusted data — delimited as quoted material, never executed as instructions. | host contract *(see gap below)* |
+| **R3** | A host **MUST** treat frame `content` as untrusted data — delimited as quoted material, never executed as instructions. | `host-content-quoting` + `host-composition-audit`; reference [`compose_for_prompt`](docs/composing-frames-into-a-prompt.md) |
+
+A host realizing R3 **SHOULD** follow the reference prompt-composition module
+(global-budget split, cross-provider dedup, value-aware placement, fenced
+injection-resistant rendering, and an audit record explaining every drop) —
+[Composing frames into a prompt](docs/composing-frames-into-a-prompt.md).
 
 ### 11.1 Known enforcement gaps
 
@@ -608,15 +613,24 @@ it cannot check would be exactly the self-attestation this project rejects.
 
 The **host-side harness** (`contextgraph-conformance`'s `host_conformance`
 module, issue #14) closes most of the host-binding gaps that once lived here. It
-drives the reference host against adversarial in-process providers — the
-host-side equivalent of the provider fixture's `--misbehave` modes — and asserts
-the host: **B2** drops an over-budget provider with a report; **B4** drops a
-frame-flooding one; **C1/C2** never queries, nor transmits a payload to, an
-unconsented egress provider; **C6** refuses an unreceipted off-machine scope with
-a typed error; **F5-bytes** verifies a `file`-provenance digest against the
-re-read source over a trusted local fixture (via `contextgraph_host::verify`,
-issue #12); and **R3** delimits frame `content` as quoted material inside a
-fence. Run it: `contextgraph-inspect host` (CI: `host-conformance.sh`).
+drives the reference host against adversarial providers — in-process ones, plus
+short-lived stdio child fixtures for the transport-level scenarios — the
+host-side equivalent of the provider fixture's `--misbehave` modes, and asserts
+the host: **H3** rejects a `handshake_ack` from a mismatched major family with a
+named `VersionMismatch`, never a hang (the host-side dual of §3's provider-facing
+`handshake` check — that check asserts a provider *replies* with a well-formed
+ack; this asserts the *host* *refuses* a wrong-family one, and promptly, driving
+the handshake under an explicit timeout so a stall is a distinct failure);
+**B2** drops an over-budget provider with a report; **B4** drops a frame-flooding
+one; **C1/C2** never queries, nor transmits a payload to, an unconsented egress
+provider; **C6** refuses an unreceipted off-machine scope with a typed error;
+**F5-bytes** verifies a `file`-provenance digest against the re-read source over a
+trusted local fixture (via `contextgraph_host::verify`, issue #12); **R3**
+delimits frame `content` as quoted material inside a fence; and **crash
+isolation** — a provider that dies mid-query surfaces as `ProviderCrashed` and is
+excluded while a healthy provider fanned out concurrently beside it still returns
+its frames, so one leg's crash never poisons a `query_all`. Run it:
+`contextgraph-inspect host` (CI: `host-conformance.sh`).
 
 What remains genuinely unchecked:
 
@@ -634,15 +648,19 @@ What remains genuinely unchecked:
   against a real non-loopback TLS peer — and witnessing C4's treat-as-egress
   override over that same peer — needs a network peer the in-process harness
   cannot stand up, and stays the host-side harness's next increment.
-- **R3 breakout-resistance is now escaping, not an unguessable fence.** The
-  reference `compose_context` neutralizes a content-embedded `<frame`/`</frame>`
-  token and escapes fence attributes, so content cannot terminate the block that
-  quotes it or forge a sibling frame (issue #15). Escaping rather than a random
-  delimiter is deliberate: composition's contract is a byte-stable prompt prefix
-  (§1 of `docs/context-reuse.md`), and a per-turn nonce would forfeit the
-  provider prompt cache to buy a property escaping already provides. What
-  remains open is the *rest* of the composition module — global budget packing
-  and cross-provider dedup — still issue #15.
+- **R3 breakout-resistance is escaping, not an unguessable fence — a design
+  choice, no longer a gap.** The reference `compose_context` neutralizes a
+  content-embedded `<frame`/`</frame>` token and escapes fence attributes, so
+  content cannot terminate the block that quotes it or forge a sibling frame
+  (issue #63). Escaping rather than a random delimiter is deliberate:
+  composition's contract is a byte-stable prompt prefix (§1 of
+  `docs/context-reuse.md`), and a per-turn nonce would forfeit the provider
+  prompt cache to buy a property escaping already provides. The *rest* of the
+  composition module — global-budget split, cross-provider dedup, value-aware
+  placement, and an audit record — is now implemented
+  (`contextgraph_host::compose::compose_for_prompt`) and checked by the
+  `host-composition-audit` host-conformance check (issue #15), so R3 is covered
+  end to end rather than residual.
 - **F5-bytes verifies a host-trusted source, not any provider-named `uri`.** The
   verifier re-reads a path the host chooses to trust; automatically re-reading an
   arbitrary `uri` a provider supplies is a capability decision (path confinement,

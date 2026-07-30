@@ -1,0 +1,37 @@
+[package]
+name = "contextgraph-mcp-bridge"
+description = "MCP-to-Context Graph Protocol bridge: wrap any MCP resource server as a budgeted, cited, consent-gated CGP provider (issue #19, direction 1)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+# A demonstration/interop artifact, not part of the published protocol crates.
+publish = false
+
+[dependencies]
+contextgraph-types = { path = "../contextgraph-types", version = ">=0.1.0" }
+# Reused only for the wire `Envelope` enum + its NDJSON codec, so the bridge's
+# CGP side stays byte-for-byte the reference wire rather than a re-spelling.
+contextgraph-host = { path = "../contextgraph-host", version = ">=0.1.0" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+clap.workspace = true
+
+# The bridge itself: an MCP client wrapped as a CGP stdio provider.
+[[bin]]
+name = "contextgraph-mcp-bridge"
+path = "src/bin/contextgraph-mcp-bridge.rs"
+
+# A hermetic in-repo MCP server the bridge (and its CI job) wrap, so the
+# conformance run needs no network and no npx. Speaks just enough MCP:
+# initialize + resources/list + resources/read.
+[[bin]]
+name = "contextgraph-mcp-fixture"
+path = "src/bin/contextgraph-mcp-fixture.rs"
+
+[dev-dependencies]
+# The end-to-end test drives the bridge through the real host's fan-out.
+tokio = { workspace = true }

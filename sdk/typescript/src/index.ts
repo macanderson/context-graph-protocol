@@ -17,3 +17,9 @@
 export * from "./types.js";
 export { budgetTokens, BYTES_PER_BUDGET_TOKEN } from "./budget.js";
 export { runStdioProvider, ProviderError, type Provider } from "./provider.js";
+export {
+  handleEnvelope,
+  respondToEnvelopeBody,
+  createHttpHandler,
+  type EnvelopeHttpResponse,
+} from "./http.js";

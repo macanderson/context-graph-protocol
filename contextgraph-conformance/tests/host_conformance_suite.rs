@@ -9,8 +9,9 @@
 //! provider was caught.
 
 use contextgraph_conformance::{
-    CheckStatus, HCHECK_BUDGET_DROP, HCHECK_CONSENT_GATE, HCHECK_CONTENT_QUOTING,
-    HCHECK_FRAME_LIMIT, HCHECK_PROVENANCE_BYTES, HCHECK_SCOPE_RECEIPT, run_host_conformance,
+    CheckStatus, HCHECK_BUDGET_DROP, HCHECK_COMPOSITION_AUDIT, HCHECK_CONSENT_GATE,
+    HCHECK_CONTENT_QUOTING, HCHECK_CRASH_ISOLATION, HCHECK_FRAME_LIMIT, HCHECK_PROVENANCE_BYTES,
+    HCHECK_SCOPE_RECEIPT, HCHECK_VERSION_REJECT, run_host_conformance,
 };
 
 #[tokio::test]
@@ -22,14 +23,17 @@ async fn the_reference_host_upholds_every_host_binding_rule() {
         report.failures().collect::<Vec<_>>()
     );
     // Every host-binding check ran and passed — none skipped, none vacuous.
-    assert_eq!(report.checks.len(), 6);
+    assert_eq!(report.checks.len(), 9);
     for name in [
+        HCHECK_VERSION_REJECT,
         HCHECK_BUDGET_DROP,
         HCHECK_FRAME_LIMIT,
         HCHECK_CONSENT_GATE,
         HCHECK_SCOPE_RECEIPT,
         HCHECK_PROVENANCE_BYTES,
         HCHECK_CONTENT_QUOTING,
+        HCHECK_COMPOSITION_AUDIT,
+        HCHECK_CRASH_ISOLATION,
     ] {
         let status = report
             .checks
