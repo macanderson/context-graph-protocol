@@ -1,0 +1,23 @@
+{
+  "name": "{{PROJECT_NAME}}",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A Context Graph Protocol provider.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "stdio": "node dist/stdio.js",
+    "serve": "node dist/server.js",
+    "conformance": "npm run build && node scripts/check-conformance.mjs"
+  },
+  "dependencies": {
+    "@contextgraphprotocol/typescript-sdk": "{{SDK_SPEC}}"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

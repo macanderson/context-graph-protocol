@@ -62,9 +62,31 @@ error on a malformed line rather than crashing.
 - **Wire types** (`ContextFrame`, `ContextQuery`, `Capabilities`, `Envelope`, …)
   mirrored from the JSON Schema — the language-neutral source of truth.
 - **`runStdioProvider(provider)`** — the stdio lifecycle loop.
+- **`createHttpHandler(provider)`** — the same lifecycle behind one HTTP POST
+  endpoint (see below).
 - **`budgetTokens(content)`** — the canonical B3 cost, `ceil(utf8_len/4)`.
-- A runnable **example provider** (`examples/example-docs.ts`) that passes all
-  seven conformance checks.
+- Runnable **example providers** — `examples/example-docs.ts` (stdio) and
+  `examples/example-docs-http.ts` (HTTP) — that pass the conformance suite.
+
+## Host it over HTTP
+
+The same `provider` runs behind a single POST endpoint (the streamable-HTTP
+transport, SPEC.md §3) — write the provider once, change only the transport:
+
+```ts
+import { createServer } from "node:http";
+import { createHttpHandler } from "@contextgraphprotocol/typescript-sdk";
+
+createServer(createHttpHandler(provider)).listen(8787);
+// Express:  app.post("/contextgraph", createHttpHandler(provider))  // no JSON body-parser on that route
+// Fastify:  reply with respondToEnvelopeBody(provider, request.body)
+```
+
+`handleEnvelope(provider, envelope)` is the transport-free state machine if you
+want to wire it into a framework yourself. Confirm it green with
+`contextgraph-inspect http http://127.0.0.1:8787` (the `malformed-input-tolerance`,
+`embedding-fingerprint`, and `correlation` probes report *skipped* over HTTP —
+they inspect raw framing this transport doesn't expose).
 
 ## Prove it conformant
 
