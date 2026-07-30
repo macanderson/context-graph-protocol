@@ -1,6 +1,6 @@
 # create-contextgraph-provider
 
-Scaffold a **conformant** [Context Graph Protocol](https://cgp.oxagen.sh)
+Scaffold a **conformant** [Context Graph Protocol](https://contextgraphprotocol.org)
 provider — in TypeScript or Python — with `contextgraph-inspect` wired into its
 CI from the first commit. The generated project passes the conformance suite out
 of the box, so you start from green and stay honest as you edit.
