@@ -32,6 +32,30 @@ your copyright; no assignment, ever.
 Maintainers aim for a first response within a few days. "Needs work" is a
 normal part of the loop here, not a rejection.
 
+## Sites and URLs (read before you `vercel` anything)
+
+**This repository deploys nothing.** `contextgraphprotocol.org`,
+`cgp.oxagen.sh`, and `context-graph-protocol.vercel.app` are all served by one
+Vercel project that is Git-connected to a *different* repository
+(`macanderson/cgp-website`). `site/` is built as a CI gate here and published
+nowhere. [ADR 0008](./docs/adr/0008-deploy-topology-and-advertised-urls.md) has
+the full topology and [#57](https://github.com/macanderson/context-graph-protocol/issues/57)
+tracks settling it.
+
+Two rules follow, both enforced by
+`python3 .github/scripts/check-deploy-hygiene.py` (a required CI check — run it
+locally before you push):
+
+1. **Never `vercel link` this checkout to the apex project.** `.vercel/` is
+   gitignored, so a stray link is invisible in review — and one `vercel --prod`
+   from a linked checkout replaces the public apex with this repo's docs site.
+   That has already happened, in both directions.
+2. **Advertise artifact URLs only on a host this repo serves.** Today that is
+   `raw.githubusercontent.com/macanderson/context-graph-protocol/main/…` and
+   nothing else. A `contextgraphprotocol.org/schema/…` or
+   `cgp.oxagen.sh/badges/…` URL looks canonical and 404s. Prose links to the
+   protocol homepage are fine on the apex — it serves those.
+
 ## Issues and labels
 
 - **[Bug report](https://github.com/macanderson/context-graph-protocol/issues/new?template=bug_report.yml)** — include the Context Graph Protocol crate name and version, OS, and a repro.

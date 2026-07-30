@@ -63,7 +63,7 @@ Once your provider has a merged row in the table above, you can put this in
 your own README:
 
 ```md
-![CGP conformant](https://cgp.oxagen.sh/badges/conformant.svg)
+![CGP conformant](https://raw.githubusercontent.com/macanderson/context-graph-protocol/main/site/public/badges/conformant.svg)
 ```
 
 which renders as:
@@ -74,3 +74,12 @@ The badge is a static, hand-authored asset — not a live third-party redirect �
 so it never depends on this site's uptime and never phones home. It names the
 protocol family the badge claims (`contextgraph/1.0-draft`), not a specific
 provider version; the row in this table is what backs the specific claim.
+
+The URL is this repository's GitHub-raw path rather than a
+`contextgraphprotocol.org` one because that apex is served by a different
+repository and carries nothing under `/badges/` — the previously advertised
+`cgp.oxagen.sh/badges/conformant.svg` 404ed for every author who pasted it.
+GitHub serves the file as `image/svg+xml`, so it renders anywhere a README
+does. See [ADR 0008](./adr/0008-deploy-topology-and-advertised-urls.md) for the
+host boundary and [#57](https://github.com/macanderson/context-graph-protocol/issues/57)
+for the deploy topology this depends on.

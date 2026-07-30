@@ -203,6 +203,28 @@ which. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1
   host. Wire-compatible; Rust API breaking (#5, #6, #11).
 
 ### Fixed
+- **The conformance badge this repo hands to providers now resolves** (#57,
+  [ADR 0008](./docs/adr/0008-deploy-topology-and-advertised-urls.md)).
+  `docs/registry.md` and `docs/implementing-a-provider.md` (and their
+  `site/content/docs/` mirrors) told every conformant provider to paste
+  `https://cgp.oxagen.sh/badges/conformant.svg` into its README. That host is
+  served by a different repository and carries nothing under `/badges/`, so the
+  badge 404ed for everyone who followed the instruction — on a page whose own
+  copy claims the badge "never depends on this site's uptime." All four
+  references now name this repo's GitHub-raw path, which GitHub serves as
+  `image/svg+xml`. The same wall #58 hit from the schema side, in the two
+  places that fix did not reach.
+- **The rule behind it is written down and gated.** ADR 0008 records the deploy
+  topology — one Vercel project owns `contextgraphprotocol.org`,
+  `cgp.oxagen.sh`, and `context-graph-protocol.vercel.app`, and it is
+  Git-connected to `macanderson/cgp-website`, not here, so this repo's `site/`
+  is a CI hard gate that publishes nowhere — and states the boundary it
+  implies: advertise an artifact URL only on a host this repo serves, and never
+  `vercel link` this checkout to the apex project (one `vercel --prod` from a
+  linked checkout replaces the public apex, which has already happened in both
+  directions). `.github/scripts/check-deploy-hygiene.py` enforces both offline,
+  as a required CI check — nothing else in the build dereferences a URL, which
+  is why the dead badge shipped silently.
 - **`SPEC.md` §9's `verify` example no longer fails the schema `SPEC.md` ships.**
   Both envelopes carried `"id": "v1"`, but §3.2 grants an `id` only to
   `query`/`frames`/`error`, the reference `Envelope::Verify`/`Verified` have no

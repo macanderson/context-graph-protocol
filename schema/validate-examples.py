@@ -225,6 +225,13 @@ for start, block in blocks:
 #    `contextgraphprotocol.org/schema/...` actually serves this file, `$id`
 #    should move there and this comment should say so.
 #
+#    This is no longer a one-off. The same wall was hit by the conformance
+#    badge and the registry report, so the rule was generalised and written
+#    down as ADR 0008 (docs/adr/0008-deploy-topology-and-advertised-urls.md):
+#    this repo may advertise an artifact URL only on a host it serves, which
+#    today means GitHub-raw and nothing else. `.github/scripts/check-deploy-
+#    hygiene.py` enforces it across the repo; this check is the schema's half.
+#
 #    The `site/public/schema/` mirror is kept byte-identical to the source
 #    below not because it is what makes `$id` dereferenceable — it isn't, per
 #    the above — but because it is the copy the (currently topology-broken)

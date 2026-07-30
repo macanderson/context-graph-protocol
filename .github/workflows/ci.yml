@@ -301,6 +301,24 @@ jobs:
       - run: pip install jsonschema
       - run: python3 schema/validate-examples.py
 
+  deploy-hygiene:
+    name: advertised artifact URLs point at a host we serve
+    runs-on: ubuntu-latest
+    # This repo deploys none of the hosts in the CGP domain family: the Vercel
+    # project that owns contextgraphprotocol.org and cgp.oxagen.sh is
+    # Git-connected to macanderson/cgp-website, and `site/` deploys nowhere
+    # (ADR 0008). So every absolute URL this repo hands third parties for one of
+    # its own artifacts — schema, conformance report, badge — has to resolve
+    # through GitHub-raw. No build step dereferences a URL, so without this job
+    # a dead link ships silently. It already had: the badge docs/registry.md
+    # told providers to paste into their READMEs 404ed (#57).
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 .github/scripts/check-deploy-hygiene.py
+
   publish-dry-run:
     name: contextgraph-types packages cleanly (crates.io dry run)
     runs-on: ubuntu-latest

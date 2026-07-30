@@ -1,6 +1,6 @@
 # {{PROJECT_NAME}}
 
-A [Context Graph Protocol](https://cgp.oxagen.sh) provider, scaffolded with
+A [Context Graph Protocol](https://contextgraphprotocol.org) provider, scaffolded with
 `create-contextgraph-provider`. It ships **conformant from the first commit** —
 `.github/workflows/conformance.yml` runs `contextgraph-inspect` against it in CI
 on every push.
