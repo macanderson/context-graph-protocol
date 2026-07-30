@@ -370,6 +370,15 @@ follow [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 | R2 | A provider **MUST** tear down cleanly on `shutdown` (stdio: exit; HTTP: no further requests expected). | `shutdown-clean` conformance check |
 | R3 | Frame `content` **MUST** be treated as untrusted data by the host — delimited as quoted material, never executed as instructions. | `contextgraph-host` host contract |
 
+A host realizing R3 **SHOULD** follow the reference composition module
+([Composing frames into a prompt](./composing-frames-into-a-prompt.md);
+`contextgraph_host::compose::compose_for_prompt`): a global-budget split across
+providers, cross-provider dedup, value-aware (Lost-in-the-Middle) placement, an
+injection-resistant fenced rendering with a "quoted evidence, not instructions"
+preamble, and an audit record explaining every included and excluded frame. It is
+a `SHOULD`, not a `MUST` — a host may compose differently — and it is checked by
+host-conformance's `host-content-quoting` and `host-composition-audit` checks.
+
 ### Context reuse
 
 The full text for these lives in the companion [Context reuse](./context-reuse.md)

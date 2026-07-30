@@ -599,7 +599,12 @@ hosts.
 | - | ----------- | ----------- |
 | **R1** | A provider **MUST NOT** crash on a malformed line or bad request. It **SHOULD** reply `error` with code `bad_request`. | `malformed-input-tolerance` |
 | **R2** | A provider **MUST** tear down cleanly on `shutdown`. | `shutdown-clean` |
-| **R3** | A host **MUST** treat frame `content` as untrusted data — delimited as quoted material, never executed as instructions. | host contract *(see gap below)* |
+| **R3** | A host **MUST** treat frame `content` as untrusted data — delimited as quoted material, never executed as instructions. | `host-content-quoting` + `host-composition-audit`; reference [`compose_for_prompt`](docs/composing-frames-into-a-prompt.md) |
+
+A host realizing R3 **SHOULD** follow the reference prompt-composition module
+(global-budget split, cross-provider dedup, value-aware placement, fenced
+injection-resistant rendering, and an audit record explaining every drop) —
+[Composing frames into a prompt](docs/composing-frames-into-a-prompt.md).
 
 ### 11.1 Known enforcement gaps
 
@@ -643,15 +648,19 @@ What remains genuinely unchecked:
   against a real non-loopback TLS peer — and witnessing C4's treat-as-egress
   override over that same peer — needs a network peer the in-process harness
   cannot stand up, and stays the host-side harness's next increment.
-- **R3 breakout-resistance is now escaping, not an unguessable fence.** The
-  reference `compose_context` neutralizes a content-embedded `<frame`/`</frame>`
-  token and escapes fence attributes, so content cannot terminate the block that
-  quotes it or forge a sibling frame (issue #15). Escaping rather than a random
-  delimiter is deliberate: composition's contract is a byte-stable prompt prefix
-  (§1 of `docs/context-reuse.md`), and a per-turn nonce would forfeit the
-  provider prompt cache to buy a property escaping already provides. What
-  remains open is the *rest* of the composition module — global budget packing
-  and cross-provider dedup — still issue #15.
+- **R3 breakout-resistance is escaping, not an unguessable fence — a design
+  choice, no longer a gap.** The reference `compose_context` neutralizes a
+  content-embedded `<frame`/`</frame>` token and escapes fence attributes, so
+  content cannot terminate the block that quotes it or forge a sibling frame
+  (issue #63). Escaping rather than a random delimiter is deliberate:
+  composition's contract is a byte-stable prompt prefix (§1 of
+  `docs/context-reuse.md`), and a per-turn nonce would forfeit the provider
+  prompt cache to buy a property escaping already provides. The *rest* of the
+  composition module — global-budget split, cross-provider dedup, value-aware
+  placement, and an audit record — is now implemented
+  (`contextgraph_host::compose::compose_for_prompt`) and checked by the
+  `host-composition-audit` host-conformance check (issue #15), so R3 is covered
+  end to end rather than residual.
 - **F5-bytes verifies a host-trusted source, not any provider-named `uri`.** The
   verifier re-reads a path the host chooses to trust; automatically re-reading an
   arbitrary `uri` a provider supplies is a capability decision (path confinement,
