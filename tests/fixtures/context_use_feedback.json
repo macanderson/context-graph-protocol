@@ -1,0 +1,27 @@
+{
+  "schema_version": "contextgraph/lifecycle/1.0-draft",
+  "record_id": "rec_fb_0001",
+  "lineage_id": "lin_fb_0001",
+  "record_status": "active",
+  "scope": {
+    "repository_id": "repo_stella",
+    "task_id": "task_deploy_fix"
+  },
+  "sharing_scope": "repository",
+  "observed_at": "2026-07-29T14:00:00Z",
+  "origin": "declared",
+  "record_hash": "sha256:96681a4b5b2712ed37c4c72362b008ca6b16535602a72d20fb9045ffde94e915",
+  "provenance": {
+    "origin_provider_id": "provider_example",
+    "producer_kind": "human",
+    "producer_ref": "user_mac"
+  },
+  "confidence": 0.4,
+  "extensions": {
+    "acme:review_channel": "slack:#context-review"
+  },
+  "record_kind": "context_use_feedback",
+  "context_use_ref": "rec_use_0001",
+  "feedback": "the fact was selected and rendered but never cited in the final answer",
+  "rating": 0.2
+}

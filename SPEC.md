@@ -359,8 +359,15 @@ to obtain the full source of a `compact` or `reference` frame.
 **`context/resolve` is not defined in `contextgraph/1.0`.** There is no resolve
 envelope, and a host has no protocol-defined operation that turns a `content_ref`
 into bytes. Resolution is reserved for a `1.x` additive minor (§13); a design
-sketch lives under [`docs/sketches/`](./docs/sketches/). This has three
-consequences a 1.0 implementer **MUST** understand:
+sketch lives under [`docs/sketches/`](./docs/sketches/). The **Context Exchange
+Provider profile** (issue #28,
+[`docs/profiles/context-exchange-provider.md`](docs/profiles/context-exchange-provider.md))
+takes that reservation up: it defines `context/resolve` as a **profile-scoped**
+operation layered on the `contextgraph/1` family — *outside* the frozen `1.0`
+core, which still ships no resolve operation — turning `capabilities.resolve`
+from a forward-declaration into a callable contract within that profile's
+capability envelope. This has three consequences a 1.0 implementer **MUST**
+understand:
 
 - A provider communicating over a transport binding (stdio, HTTP) **SHOULD NOT**
   return `reference` frames, because the host cannot rehydrate them over the wire
@@ -632,6 +639,25 @@ excluded while a healthy provider fanned out concurrently beside it still return
 its frames, so one leg's crash never poisons a `query_all`. Run it:
 `contextgraph-inspect host` (CI: `host-conformance.sh`).
 
+That harness drives *this* repository's host. A **composition harness**
+(`contextgraph-conformance`'s `composition_conformance` module) covers the step
+above it, in whatever host implements it: given a `ComposingHost` — anything that
+answers "with these providers and this query, what reaches the prompt, and what
+did you drop getting there?" — it checks the rules binding a host's merge across
+providers. `Host::query_all` audits budget honesty **per provider**, so a set of
+individually conformant providers can still overflow a shared budget in
+aggregate: three providers each returning one honest 400-token frame against a
+1000-token query are each within budget and jointly 200 over. The checks are the
+cross-provider **token bound** (§7); the **total partition** — every offered frame
+is admitted or reported dropped, never silently truncated (issue #15); the
+**quarantine** (§7 B2/B4) — a provider the audit rejected contributes nothing,
+checked with a *frame flooder* whose frames are individually cheap, so only having
+consulted the audit keeps them out; and **determinism** — an unchanged frame set
+composes to the same render order, the prompt-cache guarantee of
+`docs/context-reuse.md` §1. `ReferenceComposingHost` (`query_all` plus
+`compose_for_prompt`) is the worked example that passes it. A host with its own
+merge implements the trait and gets the same audit instead of an assurance.
+
 What remains genuinely unchecked:
 
 - **C4, C7, C8 — the HTTP transport rules.** These bind the host's HTTP client.
@@ -714,6 +740,15 @@ Together U1–U4 are the mechanism behind the one-line promise that the freeze
 "drops `-draft` without a flag day": a `1.0` peer and a `1.5` peer interoperate
 because the `1.0` peer ignores what it does not know, the vocabularies it does
 know only ever grew, and nothing it relied on was moved out from under it.
+
+The **Context Exchange Provider profile** (issue #28,
+[`docs/profiles/context-exchange-provider.md`](docs/profiles/context-exchange-provider.md))
+applies these same rules to its record layer:
+[`schema/contextgraph-lifecycle-record.schema.json`](schema/contextgraph-lifecycle-record.schema.json)
+is a second authoring-strict schema (`unevaluatedProperties: false`) that is a
+lint, not the interop contract; `record_kind` is closed within `lifecycle/1.0`
+(a new kind is a `lifecycle/1.x` addition, the U2 discipline); and record
+`extensions` and `record_links.rel` follow the U3 namespacing rule.
 
 ---
 

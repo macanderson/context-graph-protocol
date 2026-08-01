@@ -1,6 +1,6 @@
 # Composing MCP and Context Graph Protocol
 
-The README says Context Graph Protocol is "complementary to MCP — compose them."
+The README says Context Graph Protocol (CGP) is "complementary to MCP — compose them."
 This is that composition, made concrete: one agent session that uses **MCP tools
 for actions** and **CGP frames for context**, with a budget audit and citations
 that MCP alone does not carry.

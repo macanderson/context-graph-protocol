@@ -652,7 +652,7 @@ fn fenced_between(rendered: &str, needle: &str) -> bool {
 
 /// The query every host-side check probes with — a modest budget so an
 /// over-budget or flooding provider is unambiguously over the line.
-fn probe_query() -> ContextQuery {
+pub(crate) fn probe_query() -> ContextQuery {
     ContextQuery {
         goal: "host-conformance probe".into(),
         query_text: None,
@@ -668,7 +668,7 @@ fn probe_query() -> ContextQuery {
 
 /// A minimal well-formed frame declaring `token_cost` — the unit the host's B1/B2
 /// budget audit sums.
-fn frame(id: &str, token_cost: u32) -> ContextFrame {
+pub(crate) fn frame(id: &str, token_cost: u32) -> ContextFrame {
     let mut frame = ContextFrame::full(id, FrameKind::Doc, id, "c", 0.5, token_cost);
     frame.citation_label = Some(id.into());
     frame
@@ -766,7 +766,7 @@ fn frames_line() -> String {
 /// host-side equivalent of a `--misbehave` mode. It records whether its `query`
 /// was ever invoked, so a check can prove the host never transmitted a payload
 /// it was required to gate (§4 C2).
-struct ProbeProvider {
+pub(crate) struct ProbeProvider {
     id: String,
     info: ProviderInfo,
     capabilities: Capabilities,
@@ -775,7 +775,7 @@ struct ProbeProvider {
 }
 
 impl ProbeProvider {
-    fn with_data_flow(id: &str, data_flow: DataFlow, frames: Vec<ContextFrame>) -> Self {
+    pub(crate) fn with_data_flow(id: &str, data_flow: DataFlow, frames: Vec<ContextFrame>) -> Self {
         Self {
             id: id.into(),
             info: ProviderInfo {
@@ -795,7 +795,7 @@ impl ProbeProvider {
     }
 
     /// A local, egress-free provider — always queryable without consent.
-    fn local(id: &str, frames: Vec<ContextFrame>) -> Self {
+    pub(crate) fn local(id: &str, frames: Vec<ContextFrame>) -> Self {
         Self::with_data_flow(id, local_flow(), frames)
     }
 
@@ -825,7 +825,7 @@ impl ProbeProvider {
     }
 }
 
-fn local_flow() -> DataFlow {
+pub(crate) fn local_flow() -> DataFlow {
     DataFlow {
         reads: true,
         writes: false,

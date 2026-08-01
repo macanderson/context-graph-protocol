@@ -240,5 +240,60 @@ expected_id = f"https://raw.githubusercontent.com/macanderson/context-graph-prot
 
 check(f"$id is {expected_id}", SCHEMA.get("$id") == expected_id)
 
+# 6. The Context Exchange Provider lifecycle-record profile (issue #28).
+#
+#    A second schema, a second wire surface: the discriminated `ContextRecord`
+#    union of `schema/contextgraph-lifecycle-record.schema.json`. It is held to
+#    the same discipline as the envelope schema — every hand-authored example
+#    record under `tests/fixtures/` (the canonical fixture home) validates, and
+#    the `$id` names this repo's GitHub-raw URL — the only host that serves
+#    these bytes, per ADR 0008. The record fixtures' `record_hash`
+#    values are not checked here (that is the JCS-sha256 job of
+#    `contextgraph-conformance`'s `lifecycle_profile_examples` suite); this
+#    checks STRUCTURE against the schema, the class of error the envelope schema
+#    also guards.
+print("\nValidating lifecycle records against "
+      "schema/contextgraph-lifecycle-record.schema.json\n")
+
+RECORD_SCHEMA_SOURCE = ROOT / "schema" / "contextgraph-lifecycle-record.schema.json"
+RECORD_SCHEMA = json.loads(RECORD_SCHEMA_SOURCE.read_text())
+ATTESTATION_FIXTURE = "record-attestation.json"
+
+fixtures_dir = ROOT / "tests" / "fixtures"
+record_fixtures = sorted(
+    p for p in fixtures_dir.glob("*.json") if p.name != ATTESTATION_FIXTURE
+)
+if not record_fixtures:
+    check("tests/fixtures holds lifecycle record examples", False)
+    print("        no record fixtures found — did the fixture home move?")
+
+for path in record_fixtures:
+    try:
+        jsonschema.validate(json.loads(path.read_text()), RECORD_SCHEMA)
+    except (json.JSONDecodeError, jsonschema.ValidationError) as e:
+        check(f"tests/fixtures/{path.name}", False)
+        print(f"        {getattr(e, 'message', e)}")
+        continue
+    kind = json.loads(path.read_text()).get("record_kind")
+    check(f"tests/fixtures/{path.name} ({kind})", True)
+
+# The detached attestation validates against its own $def, never the root record
+# schema — it is ledger metadata beside a record, not a record kind.
+attestation_path = fixtures_dir / ATTESTATION_FIXTURE
+attestation_schema = {
+    "$schema": RECORD_SCHEMA["$schema"],
+    "$ref": "#/$defs/RecordAttestation",
+    "$defs": RECORD_SCHEMA["$defs"],
+}
+try:
+    jsonschema.validate(json.loads(attestation_path.read_text()), attestation_schema)
+    check(f"tests/fixtures/{ATTESTATION_FIXTURE} (RecordAttestation)", True)
+except (json.JSONDecodeError, jsonschema.ValidationError) as e:
+    check(f"tests/fixtures/{ATTESTATION_FIXTURE} (RecordAttestation)", False)
+    print(f"        {getattr(e, 'message', e)}")
+
+record_expected_id = f"https://raw.githubusercontent.com/macanderson/context-graph-protocol/main/schema/{RECORD_SCHEMA_SOURCE.name}"
+check(f"$id is {record_expected_id}", RECORD_SCHEMA.get("$id") == record_expected_id)
+
 print(f"\n{'OK — all examples validate' if failures == 0 else f'{failures} failure(s)'}")
 sys.exit(1 if failures else 0)

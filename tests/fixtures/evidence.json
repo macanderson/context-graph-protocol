@@ -1,0 +1,22 @@
+{
+  "schema_version": "contextgraph/lifecycle/1.0-draft",
+  "record_id": "rec_evid_0001",
+  "lineage_id": "lin_evid_0001",
+  "record_status": "active",
+  "scope": {
+    "repository_id": "repo_stella",
+    "session_id": "sess_412"
+  },
+  "sharing_scope": "repository",
+  "observed_at": "2026-07-29T14:00:00Z",
+  "origin": "observed",
+  "record_hash": "sha256:57fcddcd66f85b42a6154d8a3e3e43bdf2e0b12605f3fdb81f7b8b9acd295bdf",
+  "provenance": {
+    "origin_provider_id": "provider_example",
+    "producer_kind": "tool",
+    "producer_ref": "tool://log-reader"
+  },
+  "record_kind": "evidence",
+  "statement": "log line 2026-07-29T12:04:11Z shows upstream timeout after 3 retries",
+  "evidence_kind": "log"
+}
