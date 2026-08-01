@@ -217,6 +217,20 @@ which. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1
   host. Wire-compatible; Rust API breaking (#5, #6, #11).
 
 ### Fixed
+- **The three SDK example providers now serve verifiable file provenance.**
+  The Python, TypeScript, and Go `example-docs` fixtures cited
+  `file:///docs/…` paths that exist on no machine, with placeholder digests
+  (`sha256:1111…`) that hash nothing. That was fine until
+  `provenance-fixture-consistency` began re-reading the bytes every `file`
+  provenance names: a provider serving no locally-readable provenance is
+  skipped, and `conformance-external.sh` requires every check green, none
+  skipped — so all three "sdk is a conformant implementation" CI jobs went
+  red. Each example now ships the same two fixture files the Rust reference
+  provider uses, resolves them to absolute `file://` URIs from its own
+  location, and computes the real sha256 over the on-disk bytes at startup —
+  the digest a host re-derives when it re-reads the file, so the check passes
+  end to end (§6.2, §F5) and cannot drift: the digest is computed from the
+  same bytes the URI names.
 - **The conformance badge this repo hands to providers now resolves** (#57,
   [ADR 0008](./docs/adr/0008-deploy-topology-and-advertised-urls.md)).
   `docs/registry.md` and `docs/implementing-a-provider.md` told every

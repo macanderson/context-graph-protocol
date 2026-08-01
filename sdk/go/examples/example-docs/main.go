@@ -8,9 +8,13 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
 	"sort"
-	"strings"
 
 	cg "github.com/macanderson/context-graph-protocol/sdk/go/contextgraph"
 )
@@ -24,13 +28,43 @@ const (
 	embeddingDimensions  = 384
 )
 
-// Stable, syntactically valid sha256:<64 hex> digests (SPEC.md F5). Not real
-// hashes of anything — this fixture serves string literals, not on-disk bytes —
-// but well-formed, and the same value verify answers with, so served frames and
-// verify verdicts can never drift apart.
+// fixtureDir is the directory holding this provider's on-disk backing files,
+// resolved from this source file's own recorded path so a digest is computed
+// over the same bytes no matter where the provider is spawned from (SPEC.md
+// §6.2). runtime.Caller records the path at build time; the conformance run
+// builds and probes on the same machine, so the path resolves.
+func fixtureDir() string {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		return "fixtures"
+	}
+	return filepath.Join(filepath.Dir(file), "fixtures")
+}
+
+// fixtureURI is the absolute file:// URI a host re-reads to verify a frame's
+// provenance digest (provenance-fixture-consistency). Absolute and
+// cwd-independent, so verification never depends on the host's working
+// directory.
+func fixtureURI(file string) string {
+	return "file://" + filepath.ToSlash(filepath.Join(fixtureDir(), file))
+}
+
+// fixtureDigest is the real sha256:<64 lowercase hex> digest over a backing
+// file's exact on-disk bytes — byte-for-byte what a host recomputes when it
+// re-reads the file, so an unmutated frame verifies end to end (SPEC.md §6.2,
+// §F5).
+func fixtureDigest(file string) string {
+	bytes, err := os.ReadFile(filepath.Join(fixtureDir(), file))
+	if err != nil {
+		bytes = nil
+	}
+	sum := sha256.Sum256(bytes)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
 var (
-	gettingStartedDigest = "sha256:" + strings.Repeat("11", 32)
-	configurationDigest  = "sha256:" + strings.Repeat("22", 32)
+	gettingStartedDigest = fixtureDigest("getting-started.md")
+	configurationDigest  = fixtureDigest("configuration.md")
 )
 
 func currentDigest(frameID string) (string, bool) {
@@ -51,7 +85,7 @@ func docFrame(id, title, content, file, rng string, score float64, digest string
 		Title:         title,
 		Content:       content,
 		ContentDigest: digest,
-		URI:           "file:///docs/" + file,
+		URI:           fixtureURI(file),
 		Score:         score,
 		// Honest cost: ceil(utf8_len(content)/4) (B3).
 		TokenCost:  cg.BudgetTokens(content),
@@ -59,7 +93,7 @@ func docFrame(id, title, content, file, rng string, score float64, digest string
 		RecordedAt: "2026-07-20T18:00:00Z",
 		Provenance: []cg.Provenance{{
 			Type:   "file",
-			URI:    "file:///docs/" + file,
+			URI:    fixtureURI(file),
 			Range:  rng,
 			Digest: digest,
 			By:     "contextgraph-go-example-docs",
