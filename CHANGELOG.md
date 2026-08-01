@@ -119,6 +119,22 @@ which. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1
   `contextgraph-mcp-server` exposes a CGP host's fan-out as an MCP
   `query_context(goal, budget, kinds)` tool returning frames, provenance,
   citations, and a budget audit as structured content.
+- **Context Exchange Provider profile ratified** (`contextgraph/lifecycle/1.0-draft`,
+  #28) — the draft skeleton becomes a normative profile
+  (`docs/profiles/context-exchange-provider.md`) with RFC-2119 rows and stable
+  anchors. Adds the discriminated `ContextRecord` JSON Schema
+  (`schema/contextgraph-lifecycle-record.schema.json`, `$id` on GitHub-raw per
+  ADR 0008) covering all 12 record kinds, `contextgraph-types::record` wire types
+  (zero new runtime deps), per-kind golden fixtures under `tests/fixtures/` with
+  an RFC 8785 JCS `record_hash` worked example, and a `contextgraph-conformance`
+  round-trip + hash suite. `context/resolve` is scoped to the profile (taking up
+  SPEC §6.4.1's reservation); reconciliation rows D1/D4/D5/D6/D7/B3/B5/C5/E3 are
+  resolved.
+- **Docs: CGP abbreviation convention + a CI badge** (#21, buildable half of #2)
+  — README, CONTRIBUTING, and `docs/` now expand
+  "Context Graph Protocol (CGP)" on first mention and use "CGP" in body prose
+  (titles, link text, version strings, and crate names left intact); the
+  bug-report template grammar is fixed; and the README gains a CI status badge.
 - **`SPEC.md` normative completeness pass** — folds every shipped wire surface
   into the single normative home ahead of the freeze (#49, #50, #48, #13). Adds
   §9 **Verification** (`verify`/`verified`, V1–V4), §6.3 **Frame identity**

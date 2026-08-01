@@ -1,0 +1,36 @@
+{
+  "schema_version": "contextgraph/lifecycle/1.0-draft",
+  "record_id": "rec_prop_0001",
+  "lineage_id": "lin_prop_0001",
+  "record_status": "active",
+  "scope": {
+    "repository_id": "repo_stella",
+    "workspace_id": "ws_main"
+  },
+  "sharing_scope": "repository",
+  "observed_at": "2026-07-29T14:00:00Z",
+  "origin": "derived",
+  "record_hash": "sha256:d14da312af7734f26b51f7e0ea44310c6bca92a0997b9106198ffe597e4351d2",
+  "provenance": {
+    "origin_provider_id": "provider_example",
+    "producer_kind": "agent",
+    "producer_ref": "agent://promoter",
+    "derivation_kind": "inference",
+    "source_refs": [
+      "rec_obs_0001"
+    ]
+  },
+  "confidence": 0.6,
+  "evidence_links": [
+    "rec_obs_0001"
+  ],
+  "record_links": [
+    {
+      "rel": "refines",
+      "target_record_id": "rec_dir_0001"
+    }
+  ],
+  "record_kind": "record_proposal",
+  "proposed_kind": "directive",
+  "rationale": "the same retry-then-502 observation recurred across three sessions"
+}

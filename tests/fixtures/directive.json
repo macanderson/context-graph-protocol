@@ -1,0 +1,24 @@
+{
+  "schema_version": "contextgraph/lifecycle/1.0-draft",
+  "record_id": "rec_dir_0001",
+  "lineage_id": "lin_dir_0001",
+  "record_status": "active",
+  "scope": {
+    "organization_id": "org_acme"
+  },
+  "sharing_scope": "organization",
+  "observed_at": "2026-07-29T14:00:00Z",
+  "origin": "declared",
+  "record_hash": "sha256:0267fa312456074983b526da12682a4b5685f65750081296b42d89399120f4b3",
+  "provenance": {
+    "origin_provider_id": "provider_example",
+    "producer_kind": "human",
+    "producer_ref": "user_security_lead"
+  },
+  "sensitivity": "confidential",
+  "record_kind": "directive",
+  "directive_kind": "constraint",
+  "statement": "never write credentials or tokens to logs or traces",
+  "constraint_effect": "forbid",
+  "enforcement": "blocking"
+}

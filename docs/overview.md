@@ -4,7 +4,7 @@
 > analysis, read [Advantages and Uniqueness](./protocol-advantages.md). If you
 > want to build a provider today, read
 > [Implementing a provider](./implementing-a-provider.md). This page is the
-> one-read explanation of what Context Graph Protocol is, why it exists, and why you would build
+> one-read explanation of what Context Graph Protocol (CGP) is, why it exists, and why you would build
 > against it.
 
 ---
@@ -29,14 +29,14 @@ account for. It works until the budget silently overflows, a provider lies about
 cost, workspace content leaks to a third party, or an auditor asks "where did
 this answer come from?" and there is no trail.
 
-The Context Graph Protocol makes every one of those questions answerable.
+CGP makes every one of those questions answerable.
 Not by convention, but by contract.
 
 ---
 
 ## What Context Graph Protocol is, in one paragraph
 
-Context Graph Protocol is an open wire protocol for context retrieval. It treats a piece of context
+CGP is an open wire protocol for context retrieval. It treats a piece of context
 as a typed, budgeted, provenance-carrying, consent-gated, and
 conformance-verified unit of exchange called a **frame**. A host asks providers
 for frames relevant to a goal, under a token budget. Each provider returns
@@ -53,7 +53,7 @@ conformance suite). All three are dual-licensed MIT OR Apache-2.0.
 
 ## The seven guarantees
 
-Context Graph Protocol makes seven promises about every frame that enters a prompt. Each one is a
+CGP makes seven promises about every frame that enters a prompt. Each one is a
 type in `contextgraph-types` and an enforcement path in `contextgraph-host` or `contextgraph-conformance`,
 not a line in a style guide.
 
@@ -62,7 +62,7 @@ not a line in a style guide.
 | **Provenance**          | Every frame carries its origin: URI, line range, cryptographic digest, method, and the agent that produced it                                 | `ContextFrame.provenance`                              |
 | **Budget honesty**      | A provider's frames never sum above the query's `max_tokens`. A provider that lies is detected and its frames are dropped, loudly             | Host budget audit + `budget-honesty` conformance check |
 | **Consent enforcement** | A provider that sends data off-machine is never queried until you record named, revocable consent. The query payload is not transmitted first | `ConsentStore` gate in `contextgraph-host`                      |
-| **Conformance**         | "Context Graph Protocol conformant" is a checkable claim, not a self-attestation. The suite is adversarial and ships a mode that trips every failure on purpose  | `contextgraph-conformance`, 5 checks                            |
+| **Conformance**         | "CGP conformant" is a checkable claim, not a self-attestation. The suite is adversarial and ships a mode that trips every failure on purpose  | `contextgraph-conformance`, 5 checks                            |
 | **Citation**            | Every frame has a non-empty title and citation label. Raw ids are never the on-screen identifier                                              | `frame-validity` conformance check                     |
 | **Version stability**   | The protocol evolves inside a major family. The draft-to-stable freeze needs no flag day and breaks no deployed provider                      | `versions_compatible` in `contextgraph-host`                    |
 | **Temporal validity**   | Facts carry `valid_from` and `valid_to` windows. A query can pin retrieval to a point in time with `as_of`                                    | `ContextFrame` temporal fields                         |
@@ -70,7 +70,7 @@ not a line in a style guide.
 The properties compose, and the combination is the point. Provenance without
 budget honesty means you can trace a frame but not control its cost. Budget
 honesty without consent means costs are honest but data can still leak. Remove
-any one and the trust model collapses back to the blob-pipe. That is why Context Graph Protocol is
+any one and the trust model collapses back to the blob-pipe. That is why CGP is
 specified as one integrated protocol, not a menu of options.
 
 ---
@@ -141,11 +141,11 @@ separates a message body from its headers.
 ## How Context Graph Protocol relates to MCP
 
 They are complementary, not competing. The Model Context Protocol (MCP) connects
-**tools**: functions an agent calls to take an action. Context Graph Protocol connects **context**:
+**tools**: functions an agent calls to take an action. CGP connects **context**:
 typed, budgeted, cited evidence a host composes into the prompt before the agent
 acts. MCP has no budget-honesty contract, no egress consent gate, no provenance
 chain, and no conformance suite, because those are outside its scope, not
-deficiencies in it. An agent that needs both composes them. Context Graph Protocol frames feed the
+deficiencies in it. An agent that needs both composes them. CGP frames feed the
 prompt. MCP tools do the work.
 
 ---
@@ -156,7 +156,7 @@ prompt. MCP tools do the work.
   to writing a provider is a JSON codec and the wire table. In-process, over
   stdio, or over HTTP.
 - **Conformance is a test you run in CI.** Point `contextgraph-inspect` at your provider.
-  Green means it works with any Context Graph Protocol host. A broken provider is caught at CI time,
+  Green means it works with any CGP host. A broken provider is caught at CI time,
   not at integration time. The suite ships a `--misbehave` mode that trips every
   check on purpose, so you know the checks are real.
 - **Stability you can pin.** The protocol version is `contextgraph/1.0-draft`. Two versions
@@ -168,7 +168,7 @@ prompt. MCP tools do the work.
 
 ## Status
 
-Context Graph Protocol is `contextgraph/1.0-draft` today. The wire types are stable enough to build against,
+CGP is `contextgraph/1.0-draft` today. The wire types are stable enough to build against,
 the host runtime enforces the guarantees, and the conformance suite verifies them.
 The path from "open context as an idea" to "open context as a standard" is the
 conformance suite: anyone can build a provider, anyone can verify it, and the

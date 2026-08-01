@@ -1,6 +1,6 @@
 # Contributing to Context Graph Protocol
 
-Thanks for wanting to make Context Graph Protocol better. This document is the whole game:
+Thanks for wanting to make Context Graph Protocol (CGP) better. This document is the whole game:
 how to set up, where your change goes, what "done" means here, and how to
 get it merged. It's long because it's honest — but the short version is:
 
@@ -60,7 +60,7 @@ locally before you push):
 
 ## Issues and labels
 
-- **[Bug report](https://github.com/macanderson/context-graph-protocol/issues/new?template=bug_report.yml)** — include the Context Graph Protocol crate name and version, OS, and a repro.
+- **[Bug report](https://github.com/macanderson/context-graph-protocol/issues/new?template=bug_report.yml)** — include the CGP crate name and version, OS, and a repro.
 - **[Feature request](https://github.com/macanderson/context-graph-protocol/issues/new?template=feature_request.yml)** — say what you're trying to do, not just what to add.
 
 Labels you'll see: `area:*` routes an issue to a crate; `P0`–`P2` is priority;
@@ -69,7 +69,7 @@ a PR is waiting on its witness test.
 
 ## License
 
-Context Graph Protocol is dual-licensed **MIT OR Apache-2.0**. By contributing, you agree your
+CGP is dual-licensed **MIT OR Apache-2.0**. By contributing, you agree your
 contributions are licensed under the same terms, as certified by your DCO
 sign-off. No CLA, no copyright assignment.
 

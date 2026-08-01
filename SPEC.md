@@ -359,8 +359,15 @@ to obtain the full source of a `compact` or `reference` frame.
 **`context/resolve` is not defined in `contextgraph/1.0`.** There is no resolve
 envelope, and a host has no protocol-defined operation that turns a `content_ref`
 into bytes. Resolution is reserved for a `1.x` additive minor (§13); a design
-sketch lives under [`docs/sketches/`](./docs/sketches/). This has three
-consequences a 1.0 implementer **MUST** understand:
+sketch lives under [`docs/sketches/`](./docs/sketches/). The **Context Exchange
+Provider profile** (issue #28,
+[`docs/profiles/context-exchange-provider.md`](docs/profiles/context-exchange-provider.md))
+takes that reservation up: it defines `context/resolve` as a **profile-scoped**
+operation layered on the `contextgraph/1` family — *outside* the frozen `1.0`
+core, which still ships no resolve operation — turning `capabilities.resolve`
+from a forward-declaration into a callable contract within that profile's
+capability envelope. This has three consequences a 1.0 implementer **MUST**
+understand:
 
 - A provider communicating over a transport binding (stdio, HTTP) **SHOULD NOT**
   return `reference` frames, because the host cannot rehydrate them over the wire
@@ -714,6 +721,15 @@ Together U1–U4 are the mechanism behind the one-line promise that the freeze
 "drops `-draft` without a flag day": a `1.0` peer and a `1.5` peer interoperate
 because the `1.0` peer ignores what it does not know, the vocabularies it does
 know only ever grew, and nothing it relied on was moved out from under it.
+
+The **Context Exchange Provider profile** (issue #28,
+[`docs/profiles/context-exchange-provider.md`](docs/profiles/context-exchange-provider.md))
+applies these same rules to its record layer:
+[`schema/contextgraph-lifecycle-record.schema.json`](schema/contextgraph-lifecycle-record.schema.json)
+is a second authoring-strict schema (`unevaluatedProperties: false`) that is a
+lint, not the interop contract; `record_kind` is closed within `lifecycle/1.0`
+(a new kind is a `lifecycle/1.x` addition, the U2 discipline); and record
+`extensions` and `record_links.rel` follow the U3 namespacing rule.
 
 ---
 

@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a defect in an Context Graph Protocol crate or the specification
+description: Report a defect in a Context Graph Protocol crate or the specification
 title: "bug: "
 labels: ["bug", "needs-triage"]
 body:

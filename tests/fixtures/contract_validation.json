@@ -1,0 +1,42 @@
+{
+  "schema_version": "contextgraph/lifecycle/1.0-draft",
+  "record_id": "rec_cval_0001",
+  "lineage_id": "lin_cval_0001",
+  "record_status": "active",
+  "scope": {
+    "repository_id": "repo_stella",
+    "environment_id": "env_ci"
+  },
+  "sharing_scope": "repository",
+  "observed_at": "2026-07-29T14:00:00Z",
+  "origin": "observed",
+  "record_hash": "sha256:862f66a847ba716c410b11792a98ec483929776cab3c98d071b4a89f8be45312",
+  "provenance": {
+    "origin_provider_id": "provider_example",
+    "producer_kind": "system",
+    "producer_ref": "ci://runner-7"
+  },
+  "evidence_links": [
+    "rec_evid_0001"
+  ],
+  "record_links": [
+    {
+      "rel": "validates",
+      "target_record_id": "rec_contract_0001"
+    }
+  ],
+  "record_kind": "contract_validation",
+  "contract_ref": "rec_contract_0001",
+  "outcome": "pass",
+  "requirement_results": [
+    {
+      "requirement_kind": "file_exists",
+      "outcome": "pass"
+    },
+    {
+      "requirement_kind": "command",
+      "outcome": "pass",
+      "detail": "42 tests, 0 failures"
+    }
+  ]
+}
