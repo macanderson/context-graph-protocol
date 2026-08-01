@@ -13,11 +13,12 @@ green on `.github/scripts/conformance-external.sh` — before anything goes out.
 | --- | --- | --- |
 | TypeScript | npm, `@contextgraphprotocol/typescript-sdk` | ✅ published (PR #46) |
 | Python | PyPI, [`contextgraph-sdk`](https://pypi.org/project/contextgraph-sdk/) | ✅ published 0.1.0 (2026-07-31) |
-| Go | Go module proxy, `.../sdk/go/contextgraph` | ⬜ not yet published (tag-gated, see below) |
+| Go | Go module proxy, `.../sdk/go/contextgraph` | ✅ published 0.1.0 (2026-08-01, tag `sdk/go/v0.1.0`) |
 
-**Nobody has run the Go publish steps yet.** This file exists so the
-*first* real publish of each is a checklist, not an improvisation — exactly
-the role [`../PUBLISHING.md`](../PUBLISHING.md) plays for the crates.
+**All three first publishes have now happened.** This file remains the
+checklist for every *subsequent* release, so a version bump is a checklist,
+not an improvisation — exactly the role
+[`../PUBLISHING.md`](../PUBLISHING.md) plays for the crates.
 
 ## npm (already live — for the next bump)
 

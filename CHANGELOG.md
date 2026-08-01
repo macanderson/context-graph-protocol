@@ -26,8 +26,16 @@ which. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1
   build`, `twine check`, `twine upload`). Verified against the *published*
   package, not the checkout: `pip install contextgraph-sdk` into a scratch
   venv, then the example provider run from that venv passes all 13 checks in
-  `conformance-external.sh` — the #59 acceptance bar. The Go module publish
-  (a `sdk/go/v0.1.0` tag) remains the one still-unpublished SDK.
+  `conformance-external.sh` — the #59 acceptance bar.
+- **First Go SDK publish** (2026-08-01) — tag `sdk/go/v0.1.0` is pushed (on
+  green main, `4377bff3`), which for a Go module *is* the publish. The first
+  `go get` was run deliberately to seed `proxy.golang.org`/`sum.golang.org`
+  (per [sdk/PUBLISHING.md](./sdk/PUBLISHING.md)); a scratch module resolves
+  `github.com/macanderson/context-graph-protocol/sdk/go v0.1.0` with a
+  recorded `go.sum` checksum, and the example provider built against the
+  externally-fetched module — not the checkout — passes all 13 checks in
+  `conformance-external.sh`. The tag-triggered `verify-go` job is green. All
+  three SDKs and all three crates are now published.
 - **Conformance registry + provider badge** (`docs/registry.md`,
   `assets/badges/conformant.svg`, #20) — a page listing providers that are green on
   `contextgraph-conformance`'s suite, each backed by a reproducible
