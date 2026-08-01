@@ -7,10 +7,21 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-# Deliberately NOT published: this crate implements docs/sketches/host-trace.md,
-# which is a sketch, not part of the contextgraph/1.0 surface. It inherits the
-# workspace default (publish = false); publication is an open question recorded
-# in the sketch.
+documentation = "https://docs.rs/contextgraph-trace"
+readme = "README.md"
+keywords = ["contextgraph", "trace", "replay", "agents", "llm"]
+categories = ["encoding", "development-tools::debugging"]
+# Published as of 0.1.2 — the open question the sketch recorded is now answered.
+# This crate still implements docs/sketches/host-trace.md, which is a sketch and
+# NOT part of the contextgraph/1.0 stable surface: the journal wire format may
+# change in any 0.x release, and `TRACE_FORMAT` is what downstreams should gate
+# on, not the crate version. It is published anyway because leaving it out
+# forced its only downstream (stella's `stella arena`) to pin the whole
+# workspace by git rev — an unreviewed, unversioned, GC-eligible commit — to get
+# a vocabulary the other three crates already publish. A published crate with an
+# honest stability caveat is a smaller supply-chain risk than an unpublished one
+# consumed by SHA. See docs/stability.md for what 0.x does and does not promise.
+publish = true
 
 [dependencies]
 # Floor requirement — see the note in contextgraph-host/Cargo.toml: caret reqs

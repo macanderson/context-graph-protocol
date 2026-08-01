@@ -13,14 +13,15 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.90"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/macanderson/context-graph-protocol"
 homepage = "https://contextgraphprotocol.org"
-# Default: crates opt IN to publishing. The three Context Graph Protocol crates each set
-# `publish = true`; any future internal/helper crate stays unpublished by default.
+# Default: crates opt IN to publishing. The four published Context Graph Protocol
+# crates (types, host, conformance, trace) each set `publish = true`; any future
+# internal/helper crate stays unpublished by default.
 publish = false
 
 [workspace.dependencies]
