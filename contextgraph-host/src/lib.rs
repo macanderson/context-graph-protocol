@@ -82,7 +82,7 @@ pub use error::HostError;
 pub use host::{
     DropReason, DroppedFrame, FanOut, Host, ProviderOutcome, ProviderResult, VerifyOutcome,
 };
-pub use http::{Credential, HttpProvider};
+pub use http::{Credential, HttpProvider, refuse_insecure_transport};
 pub use ingest::{
     IngestBundle, IngestConfig, IngestProvider, PasteIngest, SegmentKind, SegmentOutcome,
     SegmentReport, ingest_paste,

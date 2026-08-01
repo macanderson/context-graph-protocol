@@ -639,6 +639,25 @@ excluded while a healthy provider fanned out concurrently beside it still return
 its frames, so one leg's crash never poisons a `query_all`. Run it:
 `contextgraph-inspect host` (CI: `host-conformance.sh`).
 
+That harness drives *this* repository's host. A **composition harness**
+(`contextgraph-conformance`'s `composition_conformance` module) covers the step
+above it, in whatever host implements it: given a `ComposingHost` — anything that
+answers "with these providers and this query, what reaches the prompt, and what
+did you drop getting there?" — it checks the rules binding a host's merge across
+providers. `Host::query_all` audits budget honesty **per provider**, so a set of
+individually conformant providers can still overflow a shared budget in
+aggregate: three providers each returning one honest 400-token frame against a
+1000-token query are each within budget and jointly 200 over. The checks are the
+cross-provider **token bound** (§7); the **total partition** — every offered frame
+is admitted or reported dropped, never silently truncated (issue #15); the
+**quarantine** (§7 B2/B4) — a provider the audit rejected contributes nothing,
+checked with a *frame flooder* whose frames are individually cheap, so only having
+consulted the audit keeps them out; and **determinism** — an unchanged frame set
+composes to the same render order, the prompt-cache guarantee of
+`docs/context-reuse.md` §1. `ReferenceComposingHost` (`query_all` plus
+`compose_for_prompt`) is the worked example that passes it. A host with its own
+merge implements the trait and gets the same audit instead of an assurance.
+
 What remains genuinely unchecked:
 
 - **C4, C7, C8 — the HTTP transport rules.** These bind the host's HTTP client.

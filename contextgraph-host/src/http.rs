@@ -101,7 +101,32 @@ fn is_loopback_host(host: &str) -> bool {
 /// allowed (the bytes never leave the machine); every `https://` target is
 /// allowed. Called before the client is built or DNS is resolved, so a refusal
 /// short-circuits with zero network activity.
-fn refuse_insecure_transport(id: &str, url: &str) -> Result<(), HostError> {
+///
+/// # Why this is public
+///
+/// [`Host::add_http`](crate::Host::add_http) already calls it, so C7 holds
+/// whether or not a caller does. It is exported for the case a host wants to
+/// classify a URL *before* attempting the connection — typically to report a
+/// plaintext endpoint as the configuration error it is, rather than as a
+/// connection failure or a non-conformant provider.
+///
+/// The alternative is that every host re-derives "which hosts are loopback"
+/// locally, and C7 ends up with one implementation per host, free to disagree
+/// about `[::1]`, `127.0.0.2`, or the casing of `LOCALHOST`. A normative rule
+/// with N implementations is N rules. This is the one.
+///
+/// ```no_run
+/// use contextgraph_host::{HostError, refuse_insecure_transport};
+///
+/// // Plaintext to a remote peer: refused, with the peer named.
+/// let refusal = refuse_insecure_transport("acme", "http://cgp.example.com/q");
+/// assert!(matches!(refusal, Err(HostError::InsecureTransport { .. })));
+///
+/// // Loopback plaintext and TLS are both fine.
+/// assert!(refuse_insecure_transport("local", "http://127.0.0.1:8080/q").is_ok());
+/// assert!(refuse_insecure_transport("acme", "https://cgp.example.com/q").is_ok());
+/// ```
+pub fn refuse_insecure_transport(id: &str, url: &str) -> Result<(), HostError> {
     let parsed = reqwest::Url::parse(url).map_err(|e| HostError::Transport {
         id: id.to_string(),
         message: format!("invalid provider url: {e}"),
@@ -560,6 +585,58 @@ mod tests {
             }
             other => panic!("expected InsecureTransport, got {other:?}"),
         }
+    }
+
+    /// The C7 rule is now public API ([`refuse_insecure_transport`]) so a host can
+    /// classify a URL without re-deriving "which hosts are loopback" locally. That
+    /// makes these edge cases part of the exported contract rather than an
+    /// internal detail, so they are pinned directly instead of only through
+    /// `connect`: they are exactly the cases an independent reimplementation gets
+    /// wrong, and the reason the rule is exported at all.
+    #[test]
+    fn the_exported_c7_rule_classifies_every_loopback_spelling() {
+        // Allowed: TLS anywhere, and plaintext to loopback in each of its
+        // spellings — the literal name (any casing), all of `127.0.0.0/8` rather
+        // than just `127.0.0.1`, and bracketed IPv6 `::1`.
+        for allowed in [
+            "https://example.com/cgp",
+            "http://localhost:8080/cgp",
+            "http://LOCALHOST:8080/cgp",
+            "http://127.0.0.1/cgp",
+            "http://127.0.0.2/cgp",
+            "http://[::1]:8080/cgp",
+        ] {
+            assert!(
+                refuse_insecure_transport("p", allowed).is_ok(),
+                "C7 must allow {allowed}"
+            );
+        }
+
+        // Refused: plaintext to anything off-machine. `127.0.0.1.example.com` is
+        // the prefix-matching trap — it *starts with* a loopback IP and is a
+        // remote DNS name.
+        for refused in [
+            "http://example.com/cgp",
+            "http://127.0.0.1.example.com/cgp",
+            "http://[2001:db8::1]/cgp",
+            "http://10.0.0.5/cgp",
+        ] {
+            assert!(
+                matches!(
+                    refuse_insecure_transport("p", refused),
+                    Err(HostError::InsecureTransport { .. })
+                ),
+                "C7 must refuse {refused}"
+            );
+        }
+
+        // An unparseable URL is a config error, not a security verdict: reporting
+        // it as `InsecureTransport` would tell an operator to add TLS to a string
+        // that is not a URL at all.
+        assert!(matches!(
+            refuse_insecure_transport("p", "not a url"),
+            Err(HostError::Transport { .. })
+        ));
     }
 
     #[tokio::test]
