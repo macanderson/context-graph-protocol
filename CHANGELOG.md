@@ -3,7 +3,8 @@
 All notable changes to the Context Graph Protocol crates and this
 specification repository are documented in this file.
 
-The Context Graph Protocol crates (`contextgraph-types`, `contextgraph-host`, `contextgraph-conformance`) track **crate
+The Context Graph Protocol crates (`contextgraph-types`, `contextgraph-host`,
+`contextgraph-conformance`, `contextgraph-trace`) track **crate
 version** (`0.x` today) and **protocol version** (`contextgraph/1.0-draft`) as two
 independent axes — see [docs/stability.md](./docs/stability.md). This changelog
 records crate releases and spec-repository milestones together, noting which is
@@ -15,6 +16,34 @@ drafts the missing entries from the merge's actual diff
 ([`changelog-ai.sh`](.github/scripts/changelog-ai.sh)) and proposes them as a
 bot PR for review — the file never falls silently behind main, and no drafted
 text lands without a human merge.
+
+## [0.1.2] — 2026-08-01 (crate release)
+
+All four crates published from `main`: `contextgraph-types`,
+`contextgraph-host`, `contextgraph-conformance`, and — for the first time —
+`contextgraph-trace`. Protocol version is unchanged (`contextgraph/1.0-draft`);
+this is a crate-version release only.
+
+### Added
+- **`contextgraph-trace` is now published.** It was `publish = false` and
+  documented as "deliberately NOT published", which did not stop anyone
+  depending on it — it only forced its downstream (stella's `stella arena`, via
+  `EventBody` / `TraceEvent` / `Journal` / `run_oracles` / `ToolStatus`) to pin
+  the entire workspace by git rev to reach it. The crate remains **sketch
+  stage**: it implements `docs/sketches/host-trace.md`, is not part of the
+  `contextgraph/1.0` surface, and its journal wire format may change in any
+  `0.x` release. Downstreams should gate on `TRACE_FORMAT`, not on the crate
+  version. Adds a crate README and the metadata the other three already carry.
+
+### Fixed
+- **`contextgraph-types` 0.1.0/0.1.1 shipped without `record.rs`.** Both were
+  published from a tree that predates this repository's history re-root, so the
+  `ContextRecord` module — `ContextRecord`, `RecordBody`, `RecordProvenance`,
+  `RecordAttestation`, `RecordLink`, `RecordScope`, `RecordStatus`,
+  `LIFECYCLE_SCHEMA_VERSION`, and the rest of the lifecycle vocabulary — was
+  declared in `lib.rs` on `main` but absent from the published crate. 0.1.2 is
+  cut from `main` and contains it. **0.1.1 corresponds to no commit on `main`
+  and should not be depended on**; use 0.1.2 or later.
 
 ## [Unreleased]
 
