@@ -9,9 +9,17 @@ independent axes — see [docs/stability.md](./docs/stability.md). This changelo
 records crate releases and spec-repository milestones together, noting which is
 which. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+A PR records its own user-visible changes under `## [Unreleased]` in the same
+merge. When a merge skips that, [`changelog.yml`](.github/workflows/changelog.yml)
+drafts the missing entries from the merge's actual diff
+([`changelog-ai.sh`](.github/scripts/changelog-ai.sh)) and proposes them as a
+bot PR for review — the file never falls silently behind main, and no drafted
+text lands without a human merge.
+
 ## [Unreleased]
 
 ### Added
+
 - **First real crates.io publish** (2026-07-31) — `contextgraph-types`,
   `contextgraph-host`, and `contextgraph-conformance` 0.1.0 are live, published
   manually in dependency order per [PUBLISHING.md](./PUBLISHING.md) (one-shot
@@ -237,7 +245,83 @@ which. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1
 - Recommended relation vocabulary `frame::rel` (#7).
 - Embedding fingerprint format and exact-match rule (E1) (#11).
 
+- [`schema/contextgraph-envelope.schema.json`](./schema/contextgraph-envelope.schema.json) — a
+  machine-readable JSON Schema (Draft 2020-12) for the Context Graph Protocol envelope and all wire
+  types. Validates in any language (`ajv`, Python `jsonschema`, Rust
+  `jsonschema`, Go `gojsonschema`). Includes `schema/validate-examples.py` to
+  check the bundled examples and serve as a validator-usage reference.
+- [`examples/`](./examples/) — diffable wire transcripts of a complete Context Graph Protocol
+  session (NDJSON + pretty-printed reference messages), so an implementer in
+  any language can diff their output against the exact shapes on the wire.
+- `GOVERNANCE.md` — maintainer-led model, normative-change process, and the
+  concrete criteria for the `contextgraph/1.0-draft` → `contextgraph/1.0` freeze.
+- Repository governance files: `SECURITY.md`, `CODE_OF_CONDUCT.md`, and
+  GitHub issue/PR templates.
+- Prominent **License** section in the README clarifying the dual MIT OR
+  Apache-2.0 licensing of all Context Graph Protocol crates.
+- A consolidated **Conformance requirements** section in
+  `docs/protocol-surface.md`, with RFC 2119 keywords and a formal ABNF grammar
+  for the protocol version string.
+
+- **Frame identity, deterministic composition, and usage reports** (#32) —
+  `FrameId`, the (provider, frame, content-digest) triple whose derived order
+  IS the canonical composition order; `compose_context` renders an unchanged
+  frame set byte-identically across turns and hosts, so prompt-cache prefixes
+  stay stable by construction; `ContextFrame.content_digest` joins the type and
+  schema; and `UsageReport` itemizes a fan-out's per-frame cost so a billed
+  total re-sums from the exact frames it names (`FanOut::usage_report`).
+- **Golden wire fixtures with attested digests** (#35) — a published vector set
+  under `contextgraph-conformance` (frame and query fixtures, digest-profile
+  vectors, a manifest of JCS-canonicalized sha256 hashes) that a downstream
+  implementation copies and drift-gates against, so "our wire matches the
+  reference" is a diff, not a claim.
+- **ADR 0007 — the protocol/product boundary** (#61, #27) — classifies every
+  delta from the adaptive-context bundle against the spec: the bundle's
+  task-wide frame is the host-owned `CompiledContextFrame`, not the protocol's
+  atomic `ContextFrame`; frames stay evidence, never directives; and the CGEP
+  rename is rejected — the canonical name remains Context Graph Protocol.
+  `docs/adaptive-context-reconciliation.md` routes each adopted item to a spec
+  change or a normative-track issue.
+- **Composition conformance — a downstream host can now be certified** (#70) —
+  `run_host_conformance` only ever certified this repo's reference host, and
+  three individually honest providers can still jointly exceed a query's
+  budget once composed. A new `composition_conformance` suite drives any
+  `ComposingHost` through four checks: the cross-provider token bound, the
+  total partition (every offered frame admitted or reported dropped, never
+  silently truncated), the audit quarantine, and deterministic render order.
+  Also exports `refuse_insecure_transport`, so C7's loopback rule has one
+  implementation rather than one per host.
+
+### Changed
+
+- **Breaking:** `token_cost` MUST now equal the canonical count for its content.
+  Providers that under-declared cost were previously green (#8).
+- Withdrew the incorrect claim that CGP rides JSON-RPC 2.0 (#4).
+- Code comments cite `SPEC.md` anchors instead of a private repository (#3).
+
+- `docs/protocol-advantages.md`: corrected "MIT licensed" to the accurate
+  dual-license statement ("MIT OR Apache-2.0") to match the rest of the repo.
+- `docs/protocol-advantages.md`: fixed a misspelling — "BTreive" → "Btrieve".
+- `docs/protocol-advantages.md`, `docs/running-conformance.md`: removed leftover
+  references to the unrelated `stella` project, replacing them with Context Graph Protocol-specific
+  names (`contextgraph-graph`, `contextgraph-example-docs`).
+
+- **Breaking:** the project is renamed — Open Context Protocol (OCP) →
+  Context Graph Protocol (#1). Crates `ocp-types`/`ocp-host`/`ocp-conformance`
+  become `contextgraph-*`, binaries `ocp-inspect`/`ocp-example-docs` become
+  `contextgraph-*`, the wire protocol version `ocp/1.0-draft` becomes
+  `contextgraph/1.0-draft`, and the schema file and `$id` move with them.
+  `MIGRATION.md` carries the rename map and the redirect hazard for
+  downstreams pinning the old URLs.
+- **The downstream canary's scheduled run now fails on a break** (#70) — the
+  canary caught a real downstream break on 2026-07-29, emitted its warning,
+  and reported success; nobody saw it. A scheduled run gates no PR, so failing
+  costs nothing and buys a red run plus GitHub's failure notification. The
+  `pull_request` path stays advisory — a downstream repo still cannot block a
+  merge here.
+
 ### Removed
+
 - **The `site/` documentation app is retired** (#57,
   [ADR 0008](./docs/adr/0008-deploy-topology-and-advertised-urls.md)). It was a
   fumadocs/Next app built on every PR as a hard gate and deployed nowhere,
@@ -257,6 +341,7 @@ which. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1
   host. Wire-compatible; Rust API breaking (#5, #6, #11).
 
 ### Fixed
+
 - **The three SDK example providers now serve verifiable file provenance.**
   The Python, TypeScript, and Go `example-docs` fixtures cited
   `file:///docs/…` paths that exist on no machine, with placeholder digests
@@ -333,40 +418,6 @@ which. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1
   validate serialized frames (not just hand-authored examples) against the
   schema. `content` remains governed per-representation by the existing `allOf`.
 
-### Changed
-- **Breaking:** `token_cost` MUST now equal the canonical count for its content.
-  Providers that under-declared cost were previously green (#8).
-- Withdrew the incorrect claim that CGP rides JSON-RPC 2.0 (#4).
-- Code comments cite `SPEC.md` anchors instead of a private repository (#3).
-
-### Added
-- [`schema/contextgraph-envelope.schema.json`](./schema/contextgraph-envelope.schema.json) — a
-  machine-readable JSON Schema (Draft 2020-12) for the Context Graph Protocol envelope and all wire
-  types. Validates in any language (`ajv`, Python `jsonschema`, Rust
-  `jsonschema`, Go `gojsonschema`). Includes `schema/validate-examples.py` to
-  check the bundled examples and serve as a validator-usage reference.
-- [`examples/`](./examples/) — diffable wire transcripts of a complete Context Graph Protocol
-  session (NDJSON + pretty-printed reference messages), so an implementer in
-  any language can diff their output against the exact shapes on the wire.
-- `GOVERNANCE.md` — maintainer-led model, normative-change process, and the
-  concrete criteria for the `contextgraph/1.0-draft` → `contextgraph/1.0` freeze.
-- Repository governance files: `SECURITY.md`, `CODE_OF_CONDUCT.md`, and
-  GitHub issue/PR templates.
-- Prominent **License** section in the README clarifying the dual MIT OR
-  Apache-2.0 licensing of all Context Graph Protocol crates.
-- A consolidated **Conformance requirements** section in
-  `docs/protocol-surface.md`, with RFC 2119 keywords and a formal ABNF grammar
-  for the protocol version string.
-
-### Changed
-- `docs/protocol-advantages.md`: corrected "MIT licensed" to the accurate
-  dual-license statement ("MIT OR Apache-2.0") to match the rest of the repo.
-- `docs/protocol-advantages.md`: fixed a misspelling — "BTreive" → "Btrieve".
-- `docs/protocol-advantages.md`, `docs/running-conformance.md`: removed leftover
-  references to the unrelated `stella` project, replacing them with Context Graph Protocol-specific
-  names (`contextgraph-graph`, `contextgraph-example-docs`).
-
-### Fixed
 - `contextgraph-host` and `contextgraph-conformance` did not compile from a
   half-applied merge of #37 (egress-scope + consent receipts): `host.rs` used
   `ConsentReceipt`/`EgressScope` without importing them and a `DataFlow` literal
