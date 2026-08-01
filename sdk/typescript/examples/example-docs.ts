@@ -8,6 +8,11 @@
  * contextgraph-inspect stdio --json -- node dist/examples/example-docs.js
  * ```
  */
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
 import { budgetTokens } from "../src/budget.js";
 import { ProviderError, runStdioProvider, type Provider } from "../src/provider.js";
 import type {
@@ -19,12 +24,43 @@ import type {
   VerifyResponse,
 } from "../src/types.js";
 
-// Stable, syntactically valid `sha256:<64 hex>` digests (SPEC.md §F5). Not real
-// hashes of anything — this fixture serves string literals, not on-disk bytes —
-// but well-formed, and the same value verify answers with, so the frames it
-// serves and its verify verdicts can never drift apart.
-const GETTING_STARTED_DIGEST = `sha256:${"11".repeat(32)}`;
-const CONFIGURATION_DIGEST = `sha256:${"22".repeat(32)}`;
+// The directory holding this provider's on-disk backing files. Resolved from
+// this module's own location so a digest is computed over the same bytes no
+// matter where the provider is spawned from (SPEC.md §6.2). The compiled
+// module runs from `dist/examples/`, where `fixtures/` is not copied — the
+// second candidate reaches the source tree's copy.
+const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
+const FIXTURE_DIR = [
+  join(MODULE_DIR, "fixtures"),
+  join(MODULE_DIR, "..", "..", "examples", "fixtures"),
+].find((dir) => existsSync(dir)) ?? join(MODULE_DIR, "fixtures");
+
+/**
+ * The absolute `file://` URI a host re-reads to verify a frame's provenance
+ * digest (`provenance-fixture-consistency`). Absolute and cwd-independent, so
+ * verification never depends on the host's working directory.
+ */
+function fixtureUri(file: string): string {
+  return pathToFileURL(join(FIXTURE_DIR, file)).href;
+}
+
+/**
+ * The real `sha256:<64 lowercase hex>` digest over a backing file's exact
+ * on-disk bytes — byte-for-byte what a host recomputes when it re-reads the
+ * file, so an unmutated frame verifies end to end (SPEC.md §6.2, §F5).
+ */
+function fixtureDigest(file: string): string {
+  let bytes: Buffer;
+  try {
+    bytes = readFileSync(join(FIXTURE_DIR, file));
+  } catch {
+    bytes = Buffer.alloc(0);
+  }
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}
+
+const GETTING_STARTED_DIGEST = fixtureDigest("getting-started.md");
+const CONFIGURATION_DIGEST = fixtureDigest("configuration.md");
 
 // The embedding space this fixture declares it indexes (SPEC.md §E1). Its
 // dimension — the 2nd `/`-separated segment (384) — is the length a query
@@ -69,7 +105,7 @@ function docFrame(
     title,
     content,
     content_digest: digest,
-    uri: `file:///docs/${file}`,
+    uri: fixtureUri(file),
     score,
     // Honest cost: ceil(utf8_len(content)/4) (B3).
     token_cost: budgetTokens(content),
@@ -78,7 +114,7 @@ function docFrame(
     provenance: [
       {
         type: "file",
-        uri: `file:///docs/${file}`,
+        uri: fixtureUri(file),
         range,
         digest,
         by: "contextgraph-ts-example-docs",

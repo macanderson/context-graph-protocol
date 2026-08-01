@@ -12,6 +12,22 @@ which. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1
 ## [Unreleased]
 
 ### Added
+- **First real crates.io publish** (2026-07-31) — `contextgraph-types`,
+  `contextgraph-host`, and `contextgraph-conformance` 0.1.0 are live, published
+  manually in dependency order per [PUBLISHING.md](./PUBLISHING.md) (one-shot
+  `cargo publish -p … -p … -p …`, rehearsed with `--dry-run` first). Verified
+  end to end: an external scratch crate resolves both `contextgraph-types` and
+  `contextgraph-conformance` from the real registry with no path override and
+  compiles. The README's crates.io/docs.rs badges now resolve (#16's
+  acceptance signal).
+- **First PyPI publish of the Python SDK** (2026-07-31) —
+  [`contextgraph-sdk` 0.1.0](https://pypi.org/project/contextgraph-sdk/) is
+  live, published per [sdk/PUBLISHING.md](./sdk/PUBLISHING.md) (`python -m
+  build`, `twine check`, `twine upload`). Verified against the *published*
+  package, not the checkout: `pip install contextgraph-sdk` into a scratch
+  venv, then the example provider run from that venv passes all 13 checks in
+  `conformance-external.sh` — the #59 acceptance bar. The Go module publish
+  (a `sdk/go/v0.1.0` tag) remains the one still-unpublished SDK.
 - **Conformance registry + provider badge** (`docs/registry.md`,
   `assets/badges/conformant.svg`, #20) — a page listing providers that are green on
   `contextgraph-conformance`'s suite, each backed by a reproducible
@@ -233,6 +249,20 @@ which. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1
   host. Wire-compatible; Rust API breaking (#5, #6, #11).
 
 ### Fixed
+- **The three SDK example providers now serve verifiable file provenance.**
+  The Python, TypeScript, and Go `example-docs` fixtures cited
+  `file:///docs/…` paths that exist on no machine, with placeholder digests
+  (`sha256:1111…`) that hash nothing. That was fine until
+  `provenance-fixture-consistency` began re-reading the bytes every `file`
+  provenance names: a provider serving no locally-readable provenance is
+  skipped, and `conformance-external.sh` requires every check green, none
+  skipped — so all three "sdk is a conformant implementation" CI jobs went
+  red. Each example now ships the same two fixture files the Rust reference
+  provider uses, resolves them to absolute `file://` URIs from its own
+  location, and computes the real sha256 over the on-disk bytes at startup —
+  the digest a host re-derives when it re-reads the file, so the check passes
+  end to end (§6.2, §F5) and cannot drift: the digest is computed from the
+  same bytes the URI names.
 - **The conformance badge this repo hands to providers now resolves** (#57,
   [ADR 0008](./docs/adr/0008-deploy-topology-and-advertised-urls.md)).
   `docs/registry.md` and `docs/implementing-a-provider.md` told every

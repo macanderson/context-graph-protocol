@@ -12,10 +12,10 @@ green on `.github/scripts/conformance-external.sh` — before anything goes out.
 | SDK | Registry | Status |
 | --- | --- | --- |
 | TypeScript | npm, `@contextgraphprotocol/typescript-sdk` | ✅ published (PR #46) |
-| Python | PyPI, `contextgraph-sdk` | ⬜ not yet published |
+| Python | PyPI, [`contextgraph-sdk`](https://pypi.org/project/contextgraph-sdk/) | ✅ published 0.1.0 (2026-07-31) |
 | Go | Go module proxy, `.../sdk/go/contextgraph` | ⬜ not yet published (tag-gated, see below) |
 
-**Nobody has run the PyPI or Go publish steps yet.** This file exists so the
+**Nobody has run the Go publish steps yet.** This file exists so the
 *first* real publish of each is a checklist, not an improvisation — exactly
 the role [`../PUBLISHING.md`](../PUBLISHING.md) plays for the crates.
 
@@ -102,7 +102,10 @@ the in-tree copy — still passes conformance by pointing the example provider's
 shebang at the scratch venv's interpreter, or simpler, copy
 `sdk/python/examples/example_docs.py` into the scratch dir and run it with the
 scratch venv's `python3` (the example only imports `contextgraph_sdk`, so it
-is agnostic to where that package physically resolves from):
+is agnostic to where that package physically resolves from). Copy the
+example's sibling `fixtures/` directory along with it — the provider serves
+file provenance whose digests are computed from those files, resolved
+relative to the example's own location:
 
 ```bash
 ./.github/scripts/conformance-external.sh -- /tmp/cgp-sdk-smoke/bin/python3 /tmp/example_docs.py
