@@ -4,10 +4,6 @@
 [![contextgraph-host on crates.io](https://img.shields.io/crates/v/contextgraph-host.svg)](https://crates.io/crates/contextgraph-host) [![contextgraph-host docs](https://img.shields.io/docsrs/contextgraph-host)](https://docs.rs/contextgraph-host)
 [![contextgraph-conformance on crates.io](https://img.shields.io/crates/v/contextgraph-conformance.svg)](https://crates.io/crates/contextgraph-conformance) [![contextgraph-conformance docs](https://img.shields.io/docsrs/contextgraph-conformance)](https://docs.rs/contextgraph-conformance)
 
-> These badges read "not found" until the crates are actually published
-> (tracked by [#16](https://github.com/macanderson/context-graph-protocol/issues/16)) —
-> expected today, and the acceptance signal once a real release ships.
-
 https://contextgraphprotocol.org
 
 **The canonical architecture for building context graphs that agents use to reason over.**

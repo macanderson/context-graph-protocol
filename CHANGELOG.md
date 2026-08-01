@@ -12,6 +12,22 @@ which. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1
 ## [Unreleased]
 
 ### Added
+- **First real crates.io publish** (2026-07-31) — `contextgraph-types`,
+  `contextgraph-host`, and `contextgraph-conformance` 0.1.0 are live, published
+  manually in dependency order per [PUBLISHING.md](./PUBLISHING.md) (one-shot
+  `cargo publish -p … -p … -p …`, rehearsed with `--dry-run` first). Verified
+  end to end: an external scratch crate resolves both `contextgraph-types` and
+  `contextgraph-conformance` from the real registry with no path override and
+  compiles. The README's crates.io/docs.rs badges now resolve (#16's
+  acceptance signal).
+- **First PyPI publish of the Python SDK** (2026-07-31) —
+  [`contextgraph-sdk` 0.1.0](https://pypi.org/project/contextgraph-sdk/) is
+  live, published per [sdk/PUBLISHING.md](./sdk/PUBLISHING.md) (`python -m
+  build`, `twine check`, `twine upload`). Verified against the *published*
+  package, not the checkout: `pip install contextgraph-sdk` into a scratch
+  venv, then the example provider run from that venv passes all 13 checks in
+  `conformance-external.sh` — the #59 acceptance bar. The Go module publish
+  (a `sdk/go/v0.1.0` tag) remains the one still-unpublished SDK.
 - **Conformance registry + provider badge** (`docs/registry.md`,
   `assets/badges/conformant.svg`, #20) — a page listing providers that are green on
   `contextgraph-conformance`'s suite, each backed by a reproducible
