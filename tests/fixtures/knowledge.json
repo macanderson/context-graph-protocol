@@ -1,0 +1,23 @@
+{
+  "schema_version": "contextgraph/lifecycle/1.0-draft",
+  "record_id": "rec_know_0001",
+  "lineage_id": "lin_know_0001",
+  "record_status": "active",
+  "scope": {
+    "organization_id": "org_acme",
+    "repository_id": "repo_stella"
+  },
+  "sharing_scope": "organization",
+  "observed_at": "2026-07-29T14:00:00Z",
+  "origin": "declared",
+  "record_hash": "sha256:2d3a4530de7392338a66f321e798e65398c1b51955f622ceceaac24c709212c2",
+  "provenance": {
+    "origin_provider_id": "provider_example",
+    "producer_kind": "human",
+    "producer_ref": "user_mac"
+  },
+  "confidence": 0.95,
+  "record_kind": "knowledge",
+  "knowledge_kind": "fact",
+  "statement": "the retry ceiling for the deploy pipeline is five attempts"
+}

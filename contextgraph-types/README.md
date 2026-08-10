@@ -1,5 +1,8 @@
 # contextgraph-types
 
+[![crates.io](https://img.shields.io/crates/v/contextgraph-types.svg)](https://crates.io/crates/contextgraph-types)
+[![docs.rs](https://img.shields.io/docsrs/contextgraph-types)](https://docs.rs/contextgraph-types)
+
 The wire types for the **Context Graph Protocol**: context frames,
 queries, capabilities, and provenance.
 

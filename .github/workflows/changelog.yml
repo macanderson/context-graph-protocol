@@ -1,0 +1,118 @@
+name: changelog
+
+# Keep CHANGELOG.md's [Unreleased] section from silently falling behind main.
+#
+# The convention is that a PR records its own user-visible changes under
+# `## [Unreleased]` in the same merge. When a merge lands WITHOUT touching
+# CHANGELOG.md, this workflow drafts the missing entries from the actual
+# diff (.github/scripts/changelog-ai.sh) and proposes them as a bot PR —
+# a draft for human review, never a direct push to main.
+#
+# The gap is self-resetting: it is measured from the last commit that
+# touched CHANGELOG.md to HEAD. Merging the bot PR touches CHANGELOG.md,
+# which empties the gap; each run regenerates the WHOLE current gap, so
+# force-updating the bot branch never loses coverage, and a bot PR left
+# unmerged while more merges land is simply superseded by a fuller one.
+#
+# Degrade-open: no AI_GATEWAY_API_KEY, a failed call, or an internal-only
+# gap produces no PR and a log line — never a red check.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: changelog
+  cancel-in-progress: false
+
+permissions:
+  contents: write # push the bot/changelog branch
+  pull-requests: write # open/update the bot PR
+
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Measure the gap since the changelog was last touched
+        id: gap
+        run: |
+          set -euo pipefail
+          base="$(git log -1 --format=%H HEAD -- CHANGELOG.md)"
+          if [ -z "$base" ]; then
+            echo "no commit has ever touched CHANGELOG.md; nothing to measure."
+            echo "empty=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          count="$(git rev-list --count "${base}..HEAD")"
+          echo "gap: ${count} commit(s) since ${base} last touched CHANGELOG.md"
+          if [ "$count" -eq 0 ]; then
+            echo "empty=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "empty=false" >> "$GITHUB_OUTPUT"
+            echo "base=${base}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Draft entries from the gap's diff
+        id: draft
+        if: steps.gap.outputs.empty != 'true'
+        env:
+          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+          BASE: ${{ steps.gap.outputs.base }}
+        run: |
+          set -euo pipefail
+          entries="${RUNNER_TEMP}/changelog-entries.md"
+          ./.github/scripts/changelog-ai.sh "${BASE}..HEAD" > "${entries}" || true
+          if [ -s "${entries}" ]; then
+            echo "entries=${entries}" >> "$GITHUB_OUTPUT"
+            echo "----- drafted entries -----"; cat "${entries}"
+          else
+            echo "nothing drafted (no key, call failed, or internal-only gap); done."
+          fi
+
+      - name: Propose the entries as a bot PR
+        if: steps.gap.outputs.empty != 'true' && steps.draft.outputs.entries != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE: ${{ steps.gap.outputs.base }}
+          ENTRIES_FILE: ${{ steps.draft.outputs.entries }}
+        run: |
+          set -euo pipefail
+          branch="bot/changelog"
+
+          git checkout -B "${branch}" HEAD
+
+          # Insert the drafted bullets directly under `## [Unreleased]`,
+          # above whatever the section already holds — the gap's commits by
+          # definition wrote none of the existing entries, so nothing can be
+          # duplicated.
+          perl -pi -e '
+            if (/^## \[Unreleased\]$/) {
+              open my $fh, "<", $ENV{ENTRIES_FILE} or next;
+              my $e = do { local $/; <$fh> };
+              $e =~ s/\s+\z//;
+              $_ .= "\n" . $e . "\n";
+            }' CHANGELOG.md
+          if git diff --quiet -- CHANGELOG.md; then
+            echo "insertion was a no-op ([Unreleased] heading missing?); done."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "docs(changelog): record the merges since ${BASE:0:8} touched the changelog"
+          git push -f origin "HEAD:refs/heads/${branch}"
+
+          title="docs(changelog): AI-drafted entries for merges that skipped the changelog"
+          body="$(printf 'One or more merges landed without touching CHANGELOG.md. These entries were drafted from the actual diff of %s..main by .github/scripts/changelog-ai.sh.\n\nReview like any contribution: edit freely, or close if the gap really was internal-only. Each push to main regenerates this PR to cover the whole current gap, so it is always the newest, fullest draft.' "${BASE:0:8}")"
+          existing="$(gh pr list --head "${branch}" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "${existing}" ]; then
+            gh pr edit "${existing}" --title "${title}" --body "${body}"
+          else
+            gh pr create --base main --head "${branch}" --title "${title}" --body "${body}"
+          fi

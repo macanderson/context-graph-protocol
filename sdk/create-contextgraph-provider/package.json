@@ -1,0 +1,26 @@
+{
+  "name": "create-contextgraph-provider",
+  "version": "0.1.0",
+  "description": "Scaffold a conformant Context Graph Protocol provider (TypeScript or Python) with contextgraph-inspect running in its CI from day one.",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "bin": {
+    "create-contextgraph-provider": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "templates",
+    "README.md"
+  ],
+  "keywords": [
+    "context-graph-protocol",
+    "cgp",
+    "provider",
+    "scaffold",
+    "generator",
+    "create"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

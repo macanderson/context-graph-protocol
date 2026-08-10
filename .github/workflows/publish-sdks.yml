@@ -1,0 +1,181 @@
+name: Publish SDKs
+
+# Companion to `ci.yml`, scoped to the one-way registry actions `ci.yml`
+# deliberately never runs: `twine upload` and `npm publish`. See
+# `sdk/PUBLISHING.md` for the full checklist and prerequisites this workflow
+# automates the mechanical half of.
+#
+# Safety property this file is required to hold (see sdk/PUBLISHING.md and
+# the repo's contribution rules): a tag push alone can never publish
+# anything. Concretely:
+#
+#   - The `verify-*` jobs run on a matching tag push. They build, lint, and
+#     run the relevant SDK's example provider through the same
+#     `conformance-external.sh` oracle CI uses on every PR. No secrets are
+#     read and nothing leaves the runner.
+#   - The `publish-*` jobs run ONLY on a manual `workflow_dispatch`, never on
+#     a tag push (see each job's `if:`). A maintainer must explicitly choose
+#     the ref and the target, after the verify job for that ref is green.
+#   - `publish-*` jobs are additionally scoped to the `publish-sdks`
+#     GitHub Environment. Configure required reviewers on that environment
+#     (Settings -> Environments) before the token secrets below are added, so
+#     the manual dispatch itself needs a second approval.
+#   - Each `publish-*` job hard-fails before touching the registry if its
+#     credential secret is unset, rather than silently skipping (a skip could
+#     be mistaken for "already published").
+#
+# There is no `publish-go` job. Go modules don't have an upload step: the
+# `sdk/go/vX.Y.Z` tag itself is the publish, and cutting/pushing that tag is
+# explicitly a human-only action (see sdk/PUBLISHING.md) that no workflow
+# here performs. `verify-go` exists so a tag push still produces the same
+# build+conformance proof the other two SDKs get.
+
+on:
+  push:
+    tags:
+      - "npm-v*"
+      - "pypi-v*"
+      - "sdk/go/v*"
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Registry to publish to (publish-* jobs only; verify-* jobs always run)"
+        required: true
+        type: choice
+        options:
+          - npm
+          - pypi
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify-npm:
+    name: verify (npm) — build + conformance, no credentials
+    if: startsWith(github.ref, 'refs/tags/npm-v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --bins
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build the TypeScript SDK
+        working-directory: sdk/typescript
+        run: |
+          npm install
+          npm run build
+      - name: Inspect exactly what `npm publish` would upload
+        working-directory: sdk/typescript
+        run: npm pack --dry-run
+      - name: Example provider passes the conformance suite
+        run: ./.github/scripts/conformance-external.sh -- node sdk/typescript/dist/examples/example-docs.js
+
+  verify-pypi:
+    name: verify (pypi) — build + conformance, no credentials
+    if: startsWith(github.ref, 'refs/tags/pypi-v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --bins
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build twine
+      - name: Build sdist + wheel
+        working-directory: sdk/python
+        run: python -m build
+      - name: Validate package metadata (no upload)
+        working-directory: sdk/python
+        run: twine check dist/*
+      - name: Example provider passes the conformance suite
+        run: ./.github/scripts/conformance-external.sh -- python3 sdk/python/examples/example_docs.py
+
+  verify-go:
+    name: verify (go) — build + conformance, no credentials, no tag
+    if: startsWith(github.ref, 'refs/tags/sdk/go/v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --bins
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: Vet and build the Go SDK
+        working-directory: sdk/go
+        run: |
+          go vet ./...
+          go build -o "$GITHUB_WORKSPACE/cg-go-example" ./examples/example-docs
+      - name: Example provider passes the conformance suite
+        run: ./.github/scripts/conformance-external.sh -- ./cg-go-example
+
+  publish-npm:
+    name: publish (npm) — manual dispatch only
+    needs: verify-npm
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'npm'
+    environment: publish-sdks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - name: Refuse to publish without a token
+        env:
+          TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::NPM_TOKEN secret is not set. Add it in Settings -> Secrets and variables -> Actions -> Environment secrets (publish-sdks) before re-running this job. Refusing to publish without it."
+            exit 1
+          fi
+      - name: Build
+        working-directory: sdk/typescript
+        run: |
+          npm install
+          npm run build
+      - name: npm publish --access public
+        working-directory: sdk/typescript
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
+
+  publish-pypi:
+    name: publish (pypi) — manual dispatch only
+    needs: verify-pypi
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'pypi'
+    environment: publish-sdks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build twine
+      - name: Refuse to publish without a token
+        env:
+          TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::PYPI_API_TOKEN secret is not set. Add it in Settings -> Secrets and variables -> Actions -> Environment secrets (publish-sdks) before re-running this job — or switch this job to PyPI Trusted Publishing (OIDC) per sdk/PUBLISHING.md. Refusing to publish without it."
+            exit 1
+          fi
+      - name: Build sdist + wheel
+        working-directory: sdk/python
+        run: python -m build
+      - name: twine upload
+        working-directory: sdk/python
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: twine upload dist/*

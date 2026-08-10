@@ -1,0 +1,31 @@
+name: conformance
+
+# Runs contextgraph-inspect against this provider on every push — the machine-
+# checkable claim that it honors the Context Graph Protocol. Green here is the
+# same bar the reference implementation is held to.
+on:
+  push:
+  pull_request:
+
+jobs:
+  conformant:
+    name: provider passes contextgraph-inspect
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build the provider
+        run: |
+          npm install
+          npm run build
+
+      # Install the conformance prober (contextgraph-inspect) from crates.io.
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install contextgraph-inspect
+        run: cargo install contextgraph-conformance
+
+      - name: Provider is conformant
+        run: node scripts/check-conformance.mjs

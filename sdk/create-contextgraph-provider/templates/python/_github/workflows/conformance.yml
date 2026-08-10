@@ -1,0 +1,29 @@
+name: conformance
+
+# Runs contextgraph-inspect against this provider on every push — the machine-
+# checkable claim that it honors the Context Graph Protocol. Green here is the
+# same bar the reference implementation is held to.
+on:
+  push:
+  pull_request:
+
+jobs:
+  conformant:
+    name: provider passes contextgraph-inspect
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the provider and its SDK
+        run: pip install -e .
+
+      # Install the conformance prober (contextgraph-inspect) from crates.io.
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install contextgraph-inspect
+        run: cargo install contextgraph-conformance
+
+      - name: Provider is conformant
+        run: python scripts/check_conformance.py

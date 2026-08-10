@@ -8,6 +8,7 @@ conformance suite drives to prove a third independent implementation passes::
 
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
 from typing import Any
@@ -28,12 +29,34 @@ from contextgraph_sdk import (  # noqa: E402
 EMBEDDING_FINGERPRINT = "bge-small-en-v1.5/384/l2"
 EMBEDDING_DIMENSIONS = int(EMBEDDING_FINGERPRINT.split("/")[1])
 
-# Stable, syntactically valid sha256:<64 hex> digests (SPEC.md F5). Not real
-# hashes of anything -- this fixture serves string literals, not on-disk bytes --
-# but well-formed, and the same value verify answers with, so served frames and
-# verify verdicts can never drift apart.
-GETTING_STARTED_DIGEST = "sha256:" + ("11" * 32)
-CONFIGURATION_DIGEST = "sha256:" + ("22" * 32)
+# The directory holding this provider's on-disk backing files, resolved
+# relative to this file so a digest is computed over the same bytes no matter
+# where the provider is spawned from (SPEC.md §6.2).
+FIXTURE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
+
+
+def _fixture_uri(file: str) -> str:
+    """The absolute ``file://`` URI a host re-reads to verify a frame's
+    provenance digest (``provenance-fixture-consistency``). Absolute and
+    cwd-independent, so verification never depends on the host's working
+    directory."""
+    return "file://" + os.path.join(FIXTURE_DIR, file)
+
+
+def _fixture_digest(file: str) -> str:
+    """The real ``sha256:<64 lowercase hex>`` digest over a backing file's exact
+    on-disk bytes -- byte-for-byte what a host recomputes when it re-reads the
+    file, so an unmutated frame verifies end to end (SPEC.md §6.2, §F5)."""
+    try:
+        with open(os.path.join(FIXTURE_DIR, file), "rb") as handle:
+            data = handle.read()
+    except OSError:
+        data = b""
+    return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+GETTING_STARTED_DIGEST = _fixture_digest("getting-started.md")
+CONFIGURATION_DIGEST = _fixture_digest("configuration.md")
 
 
 def _current_digest(frame_id: str) -> str | None:
@@ -70,7 +93,7 @@ def _doc_frame(
         "title": title,
         "content": content,
         "content_digest": digest,
-        "uri": f"file:///docs/{file}",
+        "uri": _fixture_uri(file),
         "score": score,
         # Honest cost: ceil(utf8_len(content)/4) (B3).
         "token_cost": budget_tokens(content),
@@ -79,7 +102,7 @@ def _doc_frame(
         "provenance": [
             {
                 "type": "file",
-                "uri": f"file:///docs/{file}",
+                "uri": _fixture_uri(file),
                 "range": rng,
                 "digest": digest,
                 "by": "contextgraph-py-example-docs",

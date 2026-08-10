@@ -1,0 +1,26 @@
+{
+  "schema_version": "contextgraph/lifecycle/1.0-draft",
+  "record_id": "rec_use_0001",
+  "lineage_id": "lin_use_0001",
+  "record_status": "active",
+  "scope": {
+    "repository_id": "repo_stella",
+    "task_id": "task_deploy_fix",
+    "session_id": "sess_412"
+  },
+  "sharing_scope": "repository",
+  "observed_at": "2026-07-29T14:00:00Z",
+  "origin": "observed",
+  "record_hash": "sha256:183ea4a10a56ca024166f81403cd5a84a0ba9a356d7c81f21108bc4e735c5784",
+  "provenance": {
+    "origin_provider_id": "provider_example",
+    "producer_kind": "system",
+    "producer_ref": "host://composer"
+  },
+  "record_kind": "context_use",
+  "used_record_ref": "rec_know_0001",
+  "selected": true,
+  "rendered": true,
+  "cited": false,
+  "task_ref": "task_deploy_fix"
+}

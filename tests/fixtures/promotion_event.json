@@ -1,0 +1,29 @@
+{
+  "schema_version": "contextgraph/lifecycle/1.0-draft",
+  "record_id": "rec_promo_0001",
+  "lineage_id": "lin_promo_0001",
+  "record_status": "active",
+  "scope": {
+    "organization_id": "org_acme",
+    "repository_id": "repo_stella"
+  },
+  "sharing_scope": "organization",
+  "observed_at": "2026-07-29T14:00:00Z",
+  "origin": "declared",
+  "record_hash": "sha256:81e644153f47d2c7d4b268118bef27f119e47265e2fd0a1cdba849450d84b90c",
+  "provenance": {
+    "origin_provider_id": "provider_example",
+    "producer_kind": "human",
+    "producer_ref": "user_security_lead"
+  },
+  "record_links": [
+    {
+      "rel": "promotes",
+      "target_record_id": "rec_dir_0001"
+    }
+  ],
+  "record_kind": "promotion_event",
+  "subject_ref": "rec_dir_0001",
+  "to_status": "active",
+  "from_status": "proposed"
+}

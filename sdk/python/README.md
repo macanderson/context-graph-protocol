@@ -59,6 +59,28 @@ run_stdio_provider(MyDocsProvider())
 (echoing the correlation `id`), verify, shutdown — and stays alive with a typed
 error on a malformed line rather than crashing.
 
+## Host it over HTTP
+
+The same provider runs behind a single POST endpoint (the streamable-HTTP
+transport, SPEC.md §3) via a WSGI app — runnable on the stdlib server or any WSGI
+host (gunicorn, Flask):
+
+```python
+from wsgiref.simple_server import make_server
+from contextgraph_sdk import make_wsgi_app
+
+make_server("127.0.0.1", 8788, make_wsgi_app(MyDocsProvider())).serve_forever()
+# Flask:           app.wsgi_app = make_wsgi_app(provider)
+# FastAPI (ASGI):  reply with respond_to_body(provider, await request.body()) in your route
+```
+
+`handle_envelope(provider, envelope)` is the transport-free state machine if you
+want to wire it into a framework yourself. A runnable HTTP example lives at
+`examples/example_docs_http.py`; confirm it green with
+`contextgraph-inspect http http://127.0.0.1:8788` (the `malformed-input-tolerance`,
+`embedding-fingerprint`, and `correlation` probes report *skipped* over HTTP —
+they inspect raw framing this transport doesn't expose).
+
 ## Prove it conformant
 
 From the repository root, with the Rust bins built:

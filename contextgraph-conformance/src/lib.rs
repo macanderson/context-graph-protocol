@@ -30,14 +30,22 @@
 //!   the pinned instant (SPEC.md §6.1). SHOULD-strength and one-sided: a
 //!   provider that returns fewer frames, or none, never fails it.
 //! - **shutdown-clean** — the provider tears down without error (SPEC.md §3).
-//! - **malformed-input-tolerance** — a garbage line is ignored-or-errored,
-//!   never crashing the host (SPEC.md §10, task deliverable). Wire-level, so it
+//! - **malformed-input-tolerance** — a garbage line is ignored, or errored with
+//!   code `bad_request`, never crashing the host (SPEC.md §R1). Staying alive is
+//!   the MUST; the structured `bad_request` code is the SHOULD this check now
+//!   inspects (#9), so an arbitrary error no longer passes. Wire-level, so it
 //!   applies to stdio providers.
 //! - **embedding-fingerprint** — a provider declaring an
 //!   `embeddings_fingerprint` rejects a query embedding whose length
 //!   contradicts its declared dimension with `bad_request` (SPEC.md §E1). A
 //!   SHOULD, gated on the provider declaring a fingerprint; wire-level, so like
 //!   the malformed probe it applies to stdio providers.
+//! - **provenance-fixture-consistency** — every `file` provenance digest the
+//!   provider serves matches the bytes on disk it names, re-read and re-hashed
+//!   by the host ([`contextgraph_host::verify_file_provenance`], §6.2/§F5). A
+//!   grammatically valid digest that hashes *wrong* — a stale or forged claim —
+//!   is caught here, where §F5's grammar check cannot see it. Host-local: a link
+//!   to files this host cannot read is skipped, not failed.
 //!
 //! The suite is deliberately adversarial: pointed at a provider that lies
 //! about costs, emits an out-of-range score, omits a citation label, or dies
@@ -50,10 +58,21 @@
 //! [`host_conformance`], the dual suite: [`run_host_conformance`] drives the
 //! reference [`Host`] against adversarial in-process providers and asserts it
 //! upholds them (`SPEC.md` §11.1; issue #14).
+//!
+//! Both of those suites certify code in *this* repository. A third,
+//! [`composition_conformance`], is for code that is not: it takes a
+//! [`ComposingHost`] and certifies **someone else's** composition layer — the step
+//! above [`Host::query_all`] that turns a fan-out across several providers into
+//! the one frame set that reaches a prompt. That step is where a downstream host
+//! makes its own calls about a shared budget, and neither suite above can see it:
+//! three providers each returning one honest 400-token frame against a
+//! 1000-token query are individually conformant and jointly 200 over. Run
+//! [`run_composition_conformance`] against your own host;
+//! [`ReferenceComposingHost`] is the worked example that passes it.
 
 use contextgraph_host::{
-    ConsentRecord, ContextProvider, DropReason, Host, HostError, RawStdioConnection,
-    frame_kind_name,
+    ConsentRecord, ContextProvider, DigestVerification, DropReason, Host, HostError,
+    RawStdioConnection, frame_kind_name, verify_file_provenance,
 };
 use contextgraph_types::capability::fingerprint_dimensions;
 use contextgraph_types::{
@@ -61,12 +80,18 @@ use contextgraph_types::{
     Grantor, ProviderInfo,
 };
 
+pub mod composition_conformance;
 pub mod host_conformance;
 mod report;
 
+pub use composition_conformance::{
+    CCHECK_BUDGET_BOUND, CCHECK_DETERMINISM, CCHECK_QUARANTINE, CCHECK_TOTAL_PARTITION,
+    ComposingHost, Composition, ExcludedFrame, ReferenceComposingHost, run_composition_conformance,
+};
 pub use host_conformance::{
-    HCHECK_BUDGET_DROP, HCHECK_CONSENT_GATE, HCHECK_CONTENT_QUOTING, HCHECK_FRAME_LIMIT,
-    HCHECK_PROVENANCE_BYTES, HCHECK_SCOPE_RECEIPT, run_host_conformance,
+    HCHECK_BUDGET_DROP, HCHECK_COMPOSITION_AUDIT, HCHECK_CONSENT_GATE, HCHECK_CONTENT_QUOTING,
+    HCHECK_CRASH_ISOLATION, HCHECK_FRAME_LIMIT, HCHECK_PROVENANCE_BYTES, HCHECK_SCOPE_RECEIPT,
+    HCHECK_VERSION_REJECT, run_host_conformance,
 };
 pub use report::{CheckResult, CheckStatus, ConformanceReport};
 
@@ -83,6 +108,7 @@ pub const CHECK_EMBEDDING_FINGERPRINT: &str = "embedding-fingerprint";
 pub const CHECK_CORRELATION: &str = "correlation";
 pub const CHECK_KINDS_FILTER: &str = "kinds-filter";
 pub const CHECK_ANCHOR_RELEVANCE: &str = "anchor-relevance";
+pub const CHECK_PROVENANCE_FIXTURE_CONSISTENCY: &str = "provenance-fixture-consistency";
 
 /// How to reach the provider under test. `contextgraph-inspect` builds one of these
 /// from its CLI arguments; tests build them directly.
@@ -159,6 +185,7 @@ pub async fn run_conformance(target: ProviderTarget) -> ConformanceReport {
                 CHECK_AS_OF,
                 CHECK_KINDS_FILTER,
                 CHECK_ANCHOR_RELEVANCE,
+                CHECK_PROVENANCE_FIXTURE_CONSISTENCY,
                 CHECK_SHUTDOWN,
             ] {
                 checks.push(CheckResult::skip(name, "handshake failed"));
@@ -210,7 +237,7 @@ async fn build_host(
         }
         ProviderTarget::Http { url } => {
             let id = "provider-under-test".to_string();
-            host.add_http(id.clone(), url).await?;
+            host.add_http(id.clone(), url, None).await?;
             capture_identity(&host, &id)?
         }
         ProviderTarget::InProcess(provider) => {
@@ -294,6 +321,7 @@ async fn run_query_and_shutdown_checks(
     checks.push(check_as_of(&host, id).await);
     checks.push(check_kinds_filter(&host, id, caps).await);
     checks.push(check_anchor_relevance(&host, id, caps).await);
+    checks.push(check_provenance_fixture_consistency(&host, id).await);
 
     let results = host.shutdown().await;
     match results.iter().find(|(pid, _)| pid == id) {
@@ -435,9 +463,13 @@ async fn check_verify_honesty(
 }
 
 /// Wire-level probe: complete the handshake on a fresh connection, inject a
-/// malformed line, then send a valid query. A conforming provider ignores or
-/// cleanly errors on the garbage and stays alive to answer the query; a
-/// provider that dies on one bad line fails (SPEC.md §10).
+/// malformed line, then send a valid query. A conforming provider either
+/// ignores the garbage and answers the query, or errors on it with code
+/// `bad_request` — and stays alive either way (SPEC.md §R1). A provider that
+/// dies on one bad line fails; so, now, does one that stays alive but reports an
+/// error *other* than `bad_request` — the code is read, not merely the fact of
+/// an error (#9), so the check can tell a well-formed rejection from an
+/// arbitrary failure.
 async fn malformed_stdio_probe(program: &str, args: &[String]) -> CheckResult {
     let mut conn = match RawStdioConnection::spawn(program, args).await {
         Ok(conn) => conn,
@@ -477,9 +509,32 @@ async fn malformed_stdio_probe(program: &str, args: &[String]) -> CheckResult {
             CHECK_MALFORMED,
             "provider ignored a malformed line and still answered a valid query",
         ),
-        Ok(contextgraph_host::Envelope::Error { message, .. }) => CheckResult::pass(
+        // §R1's SHOULD: staying alive is the MUST, but a *structured*
+        // `bad_request` is what lets a host tell "your line was malformed" from
+        // an arbitrary failure. Inspecting the code (as the §E1 probe does) is
+        // the whole point of #9 — passing on any error would leave the code
+        // unread and the distinction unmade.
+        Ok(contextgraph_host::Envelope::Error {
+            code: Some(ErrorCode::BadRequest),
+            message,
+            ..
+        }) => CheckResult::pass(
             CHECK_MALFORMED,
-            format!("provider errored cleanly on malformed input and stayed alive: {message}"),
+            format!(
+                "provider errored cleanly on malformed input with `bad_request` and stayed alive: {message}"
+            ),
+        ),
+        // Alive, but the error is not the `bad_request` §R1 recommends (a
+        // different code, or none at all). The MUST is met; the SHOULD is not,
+        // and an unstructured failure is exactly what structured codes exist to
+        // replace — so this is flagged.
+        Ok(contextgraph_host::Envelope::Error { code, message, .. }) => CheckResult::fail(
+            CHECK_MALFORMED,
+            format!(
+                "provider stayed alive but answered malformed input with `{}` rather than the `bad_request` §R1 recommends: {message}",
+                code.map(|c| c.to_string())
+                    .unwrap_or_else(|| "no code".to_string())
+            ),
         ),
         Ok(other) => CheckResult::fail(
             CHECK_MALFORMED,
@@ -945,6 +1000,77 @@ async fn check_anchor_relevance(host: &Host, id: &str, caps: &Capabilities) -> C
 /// edge's `target_uri` (one hop) equals the anchor.
 fn frame_is_anchored(frame: &contextgraph_types::ContextFrame, anchor: &str) -> bool {
     frame.uri.as_deref() == Some(anchor) || frame.relations.iter().any(|r| r.target_uri == anchor)
+}
+
+/// **§6.2/§F5 (bytes)** — every `file` provenance digest a provider serves must
+/// match the bytes on disk it names.
+///
+/// The `frame-validity` §F5 check proves a provenance digest is *shaped* like a
+/// sha256; only re-reading the file it addresses proves it is the *right* one.
+/// This check re-reads each `file` provenance the provider serves and re-hashes
+/// it with [`contextgraph_host::verify_file_provenance`], the host's own
+/// byte-level verifier.
+///
+/// A definitive failure is a **`Mismatch`**: the bytes are here and hash to
+/// something else — provenance forgery, or a fixture that drifted out of sync
+/// with its own files. An **`Unreadable`** link (a `file://` this host cannot
+/// see — an out-of-tree or remote provider) is *not* a failure: byte
+/// verification is a host-local capability, and a provider is not broken because
+/// its files do not sit on this machine. A provider serving no locally-readable
+/// file provenance is therefore skipped, not failed — mirroring how
+/// `verify-honesty` skips a provider that does not advertise `verify`.
+async fn check_provenance_fixture_consistency(host: &Host, id: &str) -> CheckResult {
+    let result = match host.query_provider(id, &sample_query()).await {
+        Ok(result) => result,
+        Err(error) => {
+            return CheckResult::fail(
+                CHECK_PROVENANCE_FIXTURE_CONSISTENCY,
+                format!("query failed: {error}"),
+            );
+        }
+    };
+
+    let mut verified = 0usize;
+    let mut unreadable = 0usize;
+    let mut mismatches = Vec::new();
+    for frame in &result.frames {
+        for (index, outcome) in verify_file_provenance(frame) {
+            match outcome {
+                DigestVerification::Verified => verified += 1,
+                DigestVerification::Mismatch { expected, actual } => mismatches.push(format!(
+                    "{} provenance[{index}] declared {expected} but its bytes hash to {actual}",
+                    frame.id
+                )),
+                DigestVerification::Unreadable { .. } => unreadable += 1,
+                DigestVerification::NotFileProvenance => {}
+            }
+        }
+    }
+
+    if !mismatches.is_empty() {
+        return CheckResult::fail(
+            CHECK_PROVENANCE_FIXTURE_CONSISTENCY,
+            format!(
+                "{} file-provenance digest(s) do not match the bytes they name — a stale or forged digest that passes §F5's grammar but not its bytes (§6.2): {}",
+                mismatches.len(),
+                mismatches.join("; ")
+            ),
+        );
+    }
+    if verified == 0 {
+        return CheckResult::skip(
+            CHECK_PROVENANCE_FIXTURE_CONSISTENCY,
+            format!(
+                "no locally re-readable file provenance to verify ({unreadable} link(s) name files this host cannot see); §6.2 byte-verification is host-local"
+            ),
+        );
+    }
+    CheckResult::pass(
+        CHECK_PROVENANCE_FIXTURE_CONSISTENCY,
+        format!(
+            "re-read and re-hashed {verified} file-provenance digest(s) against the bytes on disk — all match (§6.2)"
+        ),
+    )
 }
 
 /// The [`sample_query`] pinned to [`AS_OF_PIN`] — the query the temporal probe

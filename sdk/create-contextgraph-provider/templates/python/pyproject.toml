@@ -1,0 +1,13 @@
+[project]
+name = "{{PROJECT_NAME}}"
+version = "0.1.0"
+description = "A Context Graph Protocol provider."
+requires-python = ">=3.9"
+dependencies = ["{{SDK_SPEC}}"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["provider", "server"]

@@ -12,7 +12,7 @@ the same conformance suite that judges the Rust reference provider.
 ## Install
 
 ```sh
-go get github.com/macanderson/context-graph-protocol/sdk/go/contextgraph
+go get github.com/macanderson/context-graph-protocol/sdk/go/contextgraph@v0.1.0
 ```
 
 ## Write a provider
@@ -59,6 +59,22 @@ func main() { cg.RunStdioProvider(myProvider{}) }
 To answer `context/verify`, also implement `cg.Verifier`. The runtime handles the
 whole lifecycle — handshake, query (echoing the correlation `id`), verify,
 shutdown — and stays alive with a typed error on a malformed line.
+
+## Host it over HTTP
+
+The same provider runs behind a single POST endpoint (the streamable-HTTP
+transport, SPEC.md §3) via a `net/http` handler:
+
+```go
+http.ListenAndServe("127.0.0.1:8789", cg.Handler(myProvider{}))
+```
+
+`cg.RespondToBody(provider, body)` is the transport-free state machine if you
+want to wire it into a router yourself. A runnable HTTP example lives at
+`examples/example-docs-http`; confirm it green with
+`contextgraph-inspect http http://127.0.0.1:8789` (the `malformed-input-tolerance`,
+`embedding-fingerprint`, and `correlation` probes report *skipped* over HTTP —
+they inspect raw framing this transport doesn't expose).
 
 ## Prove it conformant
 

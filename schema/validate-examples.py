@@ -211,30 +211,86 @@ for start, block in blocks:
 # 5. The schema's `$id` must dereference to this exact schema.
 #
 #    `$id` is the schema's public identity — the URL third parties resolve and
-#    quote. It pointed at `context-graph-protocol.org`, a hyphenated host that
-#    was never registered and returned a DNS failure, so every consumer that
-#    tried to fetch it got nothing. Now it names the live domain, and the site
-#    serves the file from `site/public/schema/`.
+#    quote. It first pointed at `context-graph-protocol.org`, a hyphenated host
+#    that was never registered and returned a DNS failure, so every consumer
+#    that tried to fetch it got nothing (issue #58). Swapping in the live
+#    apex, `contextgraphprotocol.org`, does not fix it either: the domain
+#    resolves, but it is served by a different repository
+#    (macanderson/cgp-website) that carries nothing under `/schema/`. Pointing
+#    `$id` at that host would trade one unreachable URL for another.
 #
-#    A served copy can drift from the source of truth, which would be worse than
-#    a 404: a stale schema that still resolves is one that silently validates
-#    the wrong thing. So the copy is asserted byte-identical here rather than
-#    trusted to be refreshed by hand.
+#    This is now permanent, not interim. #57 was settled by retiring this
+#    repo's undeployed `site/` app: the microsite is the protocol's single
+#    published website, and this repository deploys nothing. So `$id` names
+#    this repo's GitHub-raw URL — the one host that serves these bytes by
+#    construction — and there is no second copy to keep in sync any more.
+#
+#    The rule generalises beyond the schema: the same wall was hit by the
+#    conformance badge and the registry report, so it is written down as ADR
+#    0008 (docs/adr/0008-deploy-topology-and-advertised-urls.md) — this repo
+#    may advertise an artifact URL only on a host it serves.
+#    `.github/scripts/check-deploy-hygiene.py` enforces that across the repo,
+#    including that each advertised artifact exists at the path its URL names;
+#    this check is the schema's half, pinning the exact `$id` string.
 SCHEMA_SOURCE = ROOT / "schema" / "contextgraph-envelope.schema.json"
-SCHEMA_SERVED = ROOT / "site" / "public" / "schema" / "contextgraph-envelope.schema.json"
-expected_id = f"https://contextgraphprotocol.org/schema/{SCHEMA_SOURCE.name}"
+expected_id = f"https://raw.githubusercontent.com/macanderson/context-graph-protocol/main/schema/{SCHEMA_SOURCE.name}"
 
 check(f"$id is {expected_id}", SCHEMA.get("$id") == expected_id)
 
-if not SCHEMA_SERVED.exists():
-    check(f"site serves the schema at {SCHEMA_SERVED.relative_to(ROOT)}", False)
-    print(f"        missing — copy it: cp {SCHEMA_SOURCE.relative_to(ROOT)} {SCHEMA_SERVED.relative_to(ROOT)}")
-    failures += 1
-else:
-    identical = SCHEMA_SERVED.read_bytes() == SCHEMA_SOURCE.read_bytes()
-    check("the served schema copy is byte-identical to the source", identical)
-    if not identical:
-        print(f"        refresh it: cp {SCHEMA_SOURCE.relative_to(ROOT)} {SCHEMA_SERVED.relative_to(ROOT)}")
+# 6. The Context Exchange Provider lifecycle-record profile (issue #28).
+#
+#    A second schema, a second wire surface: the discriminated `ContextRecord`
+#    union of `schema/contextgraph-lifecycle-record.schema.json`. It is held to
+#    the same discipline as the envelope schema — every hand-authored example
+#    record under `tests/fixtures/` (the canonical fixture home) validates, and
+#    the `$id` names this repo's GitHub-raw URL — the only host that serves
+#    these bytes, per ADR 0008. The record fixtures' `record_hash`
+#    values are not checked here (that is the JCS-sha256 job of
+#    `contextgraph-conformance`'s `lifecycle_profile_examples` suite); this
+#    checks STRUCTURE against the schema, the class of error the envelope schema
+#    also guards.
+print("\nValidating lifecycle records against "
+      "schema/contextgraph-lifecycle-record.schema.json\n")
+
+RECORD_SCHEMA_SOURCE = ROOT / "schema" / "contextgraph-lifecycle-record.schema.json"
+RECORD_SCHEMA = json.loads(RECORD_SCHEMA_SOURCE.read_text())
+ATTESTATION_FIXTURE = "record-attestation.json"
+
+fixtures_dir = ROOT / "tests" / "fixtures"
+record_fixtures = sorted(
+    p for p in fixtures_dir.glob("*.json") if p.name != ATTESTATION_FIXTURE
+)
+if not record_fixtures:
+    check("tests/fixtures holds lifecycle record examples", False)
+    print("        no record fixtures found — did the fixture home move?")
+
+for path in record_fixtures:
+    try:
+        jsonschema.validate(json.loads(path.read_text()), RECORD_SCHEMA)
+    except (json.JSONDecodeError, jsonschema.ValidationError) as e:
+        check(f"tests/fixtures/{path.name}", False)
+        print(f"        {getattr(e, 'message', e)}")
+        continue
+    kind = json.loads(path.read_text()).get("record_kind")
+    check(f"tests/fixtures/{path.name} ({kind})", True)
+
+# The detached attestation validates against its own $def, never the root record
+# schema — it is ledger metadata beside a record, not a record kind.
+attestation_path = fixtures_dir / ATTESTATION_FIXTURE
+attestation_schema = {
+    "$schema": RECORD_SCHEMA["$schema"],
+    "$ref": "#/$defs/RecordAttestation",
+    "$defs": RECORD_SCHEMA["$defs"],
+}
+try:
+    jsonschema.validate(json.loads(attestation_path.read_text()), attestation_schema)
+    check(f"tests/fixtures/{ATTESTATION_FIXTURE} (RecordAttestation)", True)
+except (json.JSONDecodeError, jsonschema.ValidationError) as e:
+    check(f"tests/fixtures/{ATTESTATION_FIXTURE} (RecordAttestation)", False)
+    print(f"        {getattr(e, 'message', e)}")
+
+record_expected_id = f"https://raw.githubusercontent.com/macanderson/context-graph-protocol/main/schema/{RECORD_SCHEMA_SOURCE.name}"
+check(f"$id is {record_expected_id}", RECORD_SCHEMA.get("$id") == record_expected_id)
 
 print(f"\n{'OK — all examples validate' if failures == 0 else f'{failures} failure(s)'}")
 sys.exit(1 if failures else 0)

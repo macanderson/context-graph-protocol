@@ -84,6 +84,47 @@ jobs:
       - name: Reference host upholds every host-binding rule (§11.1, #14)
         run: ./.github/scripts/host-conformance.sh
 
+  reference-provider-ripgrep:
+    name: reference provider (ripgrep) is conformant
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --bins
+      # No target-dir argument: the provider defaults to its bundled fixtures/,
+      # so the run is hermetic and reproducible.
+      - name: ripgrep reference provider passes the conformance suite
+        run: ./.github/scripts/conformance-external.sh -- ./target/debug/contextgraph-ripgrep
+
+  reference-provider-treesitter:
+    name: reference provider (treesitter) is conformant
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --bins
+      - name: treesitter reference provider passes the conformance suite
+        run: ./.github/scripts/conformance-external.sh -- ./target/debug/contextgraph-treesitter
+
+  mcp-bridge:
+    name: mcp→cgp bridge is a conformant provider
+    runs-on: ubuntu-latest
+    # Self-contained: builds the hermetic in-repo MCP fixture server and the
+    # bridge that wraps it, then runs the same external conformance gate the SDK
+    # example providers pass. No network, no npx — the fixture is the MCP server.
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --bins
+      - name: Bridge wrapping the in-repo MCP fixture passes the conformance suite
+        run: |
+          ./.github/scripts/conformance-external.sh \
+            -- ./target/debug/contextgraph-mcp-bridge \
+               -- ./target/debug/contextgraph-mcp-fixture
+
   sdk-typescript:
     name: sdk (typescript) is a conformant implementation
     runs-on: ubuntu-latest
@@ -136,6 +177,119 @@ jobs:
       - name: Go example provider passes the conformance suite
         run: ./.github/scripts/conformance-external.sh -- ./cg-go-example
 
+  sdk-typescript-http:
+    name: sdk (typescript) HTTP adapter is conformant
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --bins
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build the TypeScript SDK
+        working-directory: sdk/typescript
+        run: |
+          npm install
+          npm run build
+      - name: TS HTTP example passes the conformance suite
+        run: |
+          PORT=8787 node sdk/typescript/dist/examples/example-docs-http.js &
+          SERVER=$!
+          for _ in $(seq 1 40); do
+            curl -sf -X POST http://127.0.0.1:8787 \
+              -d '{"type":"handshake","protocol_version":"contextgraph/1.0-draft"}' >/dev/null && break
+            sleep 0.25
+          done
+          ./target/debug/contextgraph-inspect http http://127.0.0.1:8787
+          code=$?
+          kill $SERVER 2>/dev/null || true
+          exit $code
+
+  sdk-python-http:
+    name: sdk (python) HTTP adapter is conformant
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --bins
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Python HTTP example passes the conformance suite
+        run: |
+          PORT=8788 python3 sdk/python/examples/example_docs_http.py &
+          SERVER=$!
+          for _ in $(seq 1 40); do
+            curl -sf -X POST http://127.0.0.1:8788 \
+              -d '{"type":"handshake","protocol_version":"contextgraph/1.0-draft"}' >/dev/null && break
+            sleep 0.25
+          done
+          ./target/debug/contextgraph-inspect http http://127.0.0.1:8788
+          code=$?
+          kill $SERVER 2>/dev/null || true
+          exit $code
+
+  sdk-go-http:
+    name: sdk (go) HTTP adapter is conformant
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --bins
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: Build the Go HTTP example
+        working-directory: sdk/go
+        run: go build -o "$GITHUB_WORKSPACE/cg-go-http" ./examples/example-docs-http
+      - name: Go HTTP example passes the conformance suite
+        run: |
+          PORT=8789 ./cg-go-http &
+          SERVER=$!
+          for _ in $(seq 1 40); do
+            curl -sf -X POST http://127.0.0.1:8789 \
+              -d '{"type":"handshake","protocol_version":"contextgraph/1.0-draft"}' >/dev/null && break
+            sleep 0.25
+          done
+          ./target/debug/contextgraph-inspect http http://127.0.0.1:8789
+          code=$?
+          kill $SERVER 2>/dev/null || true
+          exit $code
+
+  sdk-scaffold:
+    name: create-contextgraph-provider scaffolds a conformant project
+    runs-on: ubuntu-latest
+    env:
+      CONTEXTGRAPH_INSPECT: ${{ github.workspace }}/target/debug/contextgraph-inspect
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --bins
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: "Build the TypeScript SDK (for the file: dependency)"
+        working-directory: sdk/typescript
+        run: npm install && npm run build
+      - name: Scaffolded TypeScript project is conformant
+        run: |
+          node sdk/create-contextgraph-provider/index.js /tmp/scaffold-ts \
+            --lang typescript --name scaffold-ts --sdk "file:$GITHUB_WORKSPACE/sdk/typescript"
+          cd /tmp/scaffold-ts && npm install && npm run build && node scripts/check-conformance.mjs
+      - name: Scaffolded Python project is conformant
+        run: |
+          pip install ./sdk/python
+          node sdk/create-contextgraph-provider/index.js /tmp/scaffold-py --lang python --name scaffold_py
+          cd /tmp/scaffold-py && python scripts/check_conformance.py
+
   schema:
     name: schema validates the examples
     runs-on: ubuntu-latest
@@ -147,34 +301,39 @@ jobs:
       - run: pip install jsonschema
       - run: python3 schema/validate-examples.py
 
-  site:
-    name: docs site builds
+  deploy-hygiene:
+    name: advertised artifact URLs point at a host we serve
     runs-on: ubuntu-latest
-    # Hard gate: the docs site build must pass. It was advisory-only
-    # (continue-on-error) during early churn so a broken lockfile there could
-    # not block a spec change; now that the build is stable it is promoted to a
-    # required check, so a broken marketing surface can no longer ship silently.
+    # This repo deploys none of the hosts in the CGP domain family: the Vercel
+    # project that owns contextgraphprotocol.org and cgp.oxagen.sh is
+    # Git-connected to macanderson/cgp-website, and `site/` deploys nowhere
+    # (ADR 0008). So every absolute URL this repo hands third parties for one of
+    # its own artifacts — schema, conformance report, badge — has to resolve
+    # through GitHub-raw. No build step dereferences a URL, so without this job
+    # a dead link ships silently. It already had: the badge docs/registry.md
+    # told providers to paste into their READMEs 404ed (#57).
     steps:
       - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: site/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
-        working-directory: site
-      - run: pnpm build
-        working-directory: site
-      # The witness asserts the site still exposes the docs it claims to, on the
-      # neutral theme, with the logo wired up. It has lived in the repo passing
-      # locally and running nowhere, which makes it decoration rather than a
-      # gate — the same "checked in but never executed" gap this round is
-      # closing elsewhere (#51).
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Docs-site witness
-        run: python3 -m unittest discover -s tests -p 'docs_site_witness_test.py' -v
+      - run: python3 .github/scripts/check-deploy-hygiene.py
+
+  publish-dry-run:
+    name: contextgraph-types packages cleanly (crates.io dry run)
+    runs-on: ubuntu-latest
+    # Cheap, credential-free proof that the first crate in the publish chain
+    # (see PUBLISHING.md) still packages, resolves, and compiles in isolation.
+    # `--dry-run` never authenticates and never uploads — it aborts right
+    # before that step. Verified: `cargo publish --dry-run -p contextgraph-types`
+    # needs no `cargo login` and no CARGO_REGISTRY_TOKEN. Scoped to
+    # contextgraph-types only because it's the one crate in the chain with no
+    # unpublished workspace-internal dependency to resolve — contextgraph-host
+    # and contextgraph-conformance can't dry-run until contextgraph-types is
+    # actually live on crates.io (see PUBLISHING.md's note on why local
+    # pre-publish verification is asymmetric).
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo publish --dry-run -p contextgraph-types

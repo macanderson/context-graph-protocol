@@ -7,7 +7,7 @@
 > disagreement is a bug worth filing.
 
 
-This is the normative shape of the Context Graph Protocol as bound to
+This is the normative shape of the Context Graph Protocol (CGP) as bound to
 Rust types by [`contextgraph-types`](https://crates.io/crates/contextgraph-types). Every type
 below lives in that crate, round-trips through `serde_json`, and *is* the
 protocol — there is no separate IDL. Field-level doc comments in the crate
@@ -370,6 +370,15 @@ follow [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 | R2 | A provider **MUST** tear down cleanly on `shutdown` (stdio: exit; HTTP: no further requests expected). | `shutdown-clean` conformance check |
 | R3 | Frame `content` **MUST** be treated as untrusted data by the host — delimited as quoted material, never executed as instructions. | `contextgraph-host` host contract |
 
+A host realizing R3 **SHOULD** follow the reference composition module
+([Composing frames into a prompt](./composing-frames-into-a-prompt.md);
+`contextgraph_host::compose::compose_for_prompt`): a global-budget split across
+providers, cross-provider dedup, value-aware (Lost-in-the-Middle) placement, an
+injection-resistant fenced rendering with a "quoted evidence, not instructions"
+preamble, and an audit record explaining every included and excluded frame. It is
+a `SHOULD`, not a `MUST` — a host may compose differently — and it is checked by
+host-conformance's `host-content-quoting` and `host-composition-audit` checks.
+
 ### Context reuse
 
 The full text for these lives in the companion [Context reuse](./context-reuse.md)
@@ -380,7 +389,7 @@ convenience.
 | - | ----------- | ---------------------- |
 | D1 | Frames sharing a `FrameId` **MUST** have identical content bytes; changing content **MUST** change `content_digest`. | provider contract; `verify` conformance check |
 | D2 | A host composing a frame set **MUST** emit frames in canonical `FrameId` order, independent of arrival order, and **MUST NOT** let `score`/`token_cost` affect the rendered bytes. | `contextgraph-host::compose_context` |
-| U1 | A host **MUST** be able to produce a usage report for any query it executed, whose consumed total equals the summed `token_cost` of the served frames it reports. | `contextgraph-host::FanOut::usage_report`; `usage-report` conformance check |
+| UR1 | A host **MUST** be able to produce a usage report for any query it executed, whose consumed total equals the summed `token_cost` of the served frames it reports. | `contextgraph-host::FanOut::usage_report`; `usage-report` conformance check |
 | C5 | A provider **MUST** declare its egress scopes (`egress_scopes`) truthfully and consistently with `data_flow.egress`; an off-machine scope alongside `egress: false` is a conformance failure. | `consent-scope` conformance check |
 | C6 | A host **MUST** reject a frame whose provider declares an egress scope with no live matching [consent receipt](./context-reuse.md#3-consent-scopes-and-receipts), with a typed error, before transmitting the query. | `ConsentStore` scope gate |
 | V1 | A provider advertising `verify` **MUST** answer honestly by comparing digests: `valid` when the presented digest matches what it currently serves, `stale` when it differs on a frame it still serves. It **MUST NOT** answer `valid` for content bytes it is not serving. | `verify-honesty` conformance check |

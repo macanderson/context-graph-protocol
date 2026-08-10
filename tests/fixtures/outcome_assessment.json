@@ -1,0 +1,28 @@
+{
+  "schema_version": "contextgraph/lifecycle/1.0-draft",
+  "record_id": "rec_out_0001",
+  "lineage_id": "lin_out_0001",
+  "record_status": "active",
+  "scope": {
+    "repository_id": "repo_stella",
+    "task_id": "task_deploy_fix"
+  },
+  "sharing_scope": "workspace",
+  "observed_at": "2026-07-29T14:00:00Z",
+  "origin": "derived",
+  "record_hash": "sha256:4f66d632c3b820e6d4f467650eae08ebe9ec56b7eec67d128c82b2fda51eb02e",
+  "provenance": {
+    "origin_provider_id": "provider_example",
+    "producer_kind": "agent",
+    "producer_ref": "agent://judge",
+    "derivation_kind": "inference",
+    "source_refs": [
+      "rec_cval_0001"
+    ]
+  },
+  "confidence": 0.75,
+  "record_kind": "outcome_assessment",
+  "subject_ref": "task_deploy_fix",
+  "assessment": "the retry ceiling change resolved the intermittent 502s",
+  "rating": 0.8
+}

@@ -82,7 +82,7 @@ before this exchange completes.**
 | - | ----------- | ----------- |
 | **H1** | A provider **MUST** reply to `handshake` with a `handshake_ack` whose `protocol_version` is in the same major family as the host's. | `handshake` check |
 | **H2** | `provider.name` and `provider.version` **MUST NOT** be empty. | `handshake` check |
-| **H3** | A version-family mismatch **MUST** be reported as a named error, never left to hang. | `versions_compatible`; `handshake` check |
+| **H3** | A version-family mismatch **MUST** be reported as a named error, never left to hang. | `versions_compatible`; `handshake` check (provider-facing); `host-version-reject` host-side scenario (§11.1) |
 | **H4** | A provider declaring `capabilities.correlation` **MUST** echo a request's `id` verbatim on the corresponding `frames` or `error`. | `CorrelationMismatch`; `drop-correlation-id` witness |
 
 ### 3.1 Version strings
@@ -359,8 +359,15 @@ to obtain the full source of a `compact` or `reference` frame.
 **`context/resolve` is not defined in `contextgraph/1.0`.** There is no resolve
 envelope, and a host has no protocol-defined operation that turns a `content_ref`
 into bytes. Resolution is reserved for a `1.x` additive minor (§13); a design
-sketch lives under [`docs/sketches/`](./docs/sketches/). This has three
-consequences a 1.0 implementer **MUST** understand:
+sketch lives under [`docs/sketches/`](./docs/sketches/). The **Context Exchange
+Provider profile** (issue #28,
+[`docs/profiles/context-exchange-provider.md`](docs/profiles/context-exchange-provider.md))
+takes that reservation up: it defines `context/resolve` as a **profile-scoped**
+operation layered on the `contextgraph/1` family — *outside* the frozen `1.0`
+core, which still ships no resolve operation — turning `capabilities.resolve`
+from a forward-declaration into a callable contract within that profile's
+capability envelope. This has three consequences a 1.0 implementer **MUST**
+understand:
 
 - A provider communicating over a transport binding (stdio, HTTP) **SHOULD NOT**
   return `reference` frames, because the host cannot rehydrate them over the wire
@@ -427,6 +434,26 @@ budget.
 refinement — an optional handshake tokenizer id plus an optional exact count. It
 does not disturb the floor established here.)*
 
+### 7.3 Usage reports
+
+Budget honesty (B1–B4) stops at the individual frame. A host that meters context
+into a billing system — the usage-events → warehouse → invoice loop platforms
+reselling agents run — needs the per-request roll-up, and every host inventing
+that shape independently leaves context cost unauditable one level up from the
+wire. A **usage report** is that roll-up: a host-side artifact, not a wire
+envelope, whose total is pinned to the same byte-exact `token_cost` (B3) the
+frames already carry, so the number a customer is billed is the number the
+frames actually cost.
+
+| # | Requirement | Verified by |
+| - | ----------- | ----------- |
+| **UR1** | A host **MUST** be able to produce a usage report for any query it executed, whose `budget_consumed` equals the summed `token_cost` of the served frames it reports. The report **MUST** reference those frames by their `FrameId` (§6.3), so a billed total is walkable back to the exact `(provider id, frame id, content_digest)` triples behind it. | `contextgraph-host::FanOut::usage_report` |
+
+The full report shape and its warehouse/billing metering path are described in
+the companion [`docs/context-reuse.md` §2](./docs/context-reuse.md). `UR1` is a
+distinct rule from the extensibility `U1` of §13 (ignore-unknown-members); the
+two share no anchor.
+
 ---
 
 ## 8. Graph
@@ -470,6 +497,22 @@ inventing `calls` / `call` / `code.call`:
 
 Provider-specific edges belong under their own namespace (`myindex.owns`), which
 keeps the shared namespace meaningful.
+
+### 8.3 Multi-hop traversal is deferred
+
+**A wire operation for walking edges beyond one hop is not defined in
+`contextgraph/1.0`.** G4 pins the one traversal semantics a suite can witness —
+the zero-or-one-hop *anchored* predicate — and stops there. There is no
+`neighbors` request in 1.0: a host receives frames with their edges from a
+`query` and composes them; it never asks a provider to return a node's
+neighborhood to a given depth. Freezing that operation now, with no host
+emitting it, would reintroduce the dead-capability surface §8.2 and
+[ADR 0004](./docs/adr/0004-dead-capability-surface.md) work to avoid. When a
+concrete traversal consumer forces its design it can land as an additive minor,
+gated on a new `capabilities.neighbors`, with `depth: 1` defined to return
+exactly the G4 anchored set so nothing this freeze witnessed is invalidated. A
+design sketch lives under
+[`docs/sketches/context-neighbors.md`](./docs/sketches/context-neighbors.md).
 
 ---
 
@@ -563,7 +606,12 @@ hosts.
 | - | ----------- | ----------- |
 | **R1** | A provider **MUST NOT** crash on a malformed line or bad request. It **SHOULD** reply `error` with code `bad_request`. | `malformed-input-tolerance` |
 | **R2** | A provider **MUST** tear down cleanly on `shutdown`. | `shutdown-clean` |
-| **R3** | A host **MUST** treat frame `content` as untrusted data — delimited as quoted material, never executed as instructions. | host contract *(see gap below)* |
+| **R3** | A host **MUST** treat frame `content` as untrusted data — delimited as quoted material, never executed as instructions. | `host-content-quoting` + `host-composition-audit`; reference [`compose_for_prompt`](docs/composing-frames-into-a-prompt.md) |
+
+A host realizing R3 **SHOULD** follow the reference prompt-composition module
+(global-budget split, cross-provider dedup, value-aware placement, fenced
+injection-resistant rendering, and an audit record explaining every drop) —
+[Composing frames into a prompt](docs/composing-frames-into-a-prompt.md).
 
 ### 11.1 Known enforcement gaps
 
@@ -572,32 +620,73 @@ it cannot check would be exactly the self-attestation this project rejects.
 
 The **host-side harness** (`contextgraph-conformance`'s `host_conformance`
 module, issue #14) closes most of the host-binding gaps that once lived here. It
-drives the reference host against adversarial in-process providers — the
-host-side equivalent of the provider fixture's `--misbehave` modes — and asserts
-the host: **B2** drops an over-budget provider with a report; **B4** drops a
-frame-flooding one; **C1/C2** never queries, nor transmits a payload to, an
-unconsented egress provider; **C6** refuses an unreceipted off-machine scope with
-a typed error; **F5-bytes** verifies a `file`-provenance digest against the
-re-read source over a trusted local fixture (via `contextgraph_host::verify`,
-issue #12); and **R3** delimits frame `content` as quoted material inside a
-fence. Run it: `contextgraph-inspect host` (CI: `host-conformance.sh`).
+drives the reference host against adversarial providers — in-process ones, plus
+short-lived stdio child fixtures for the transport-level scenarios — the
+host-side equivalent of the provider fixture's `--misbehave` modes, and asserts
+the host: **H3** rejects a `handshake_ack` from a mismatched major family with a
+named `VersionMismatch`, never a hang (the host-side dual of §3's provider-facing
+`handshake` check — that check asserts a provider *replies* with a well-formed
+ack; this asserts the *host* *refuses* a wrong-family one, and promptly, driving
+the handshake under an explicit timeout so a stall is a distinct failure);
+**B2** drops an over-budget provider with a report; **B4** drops a frame-flooding
+one; **C1/C2** never queries, nor transmits a payload to, an unconsented egress
+provider; **C6** refuses an unreceipted off-machine scope with a typed error;
+**F5-bytes** verifies a `file`-provenance digest against the re-read source over a
+trusted local fixture (via `contextgraph_host::verify`, issue #12); **R3**
+delimits frame `content` as quoted material inside a fence; and **crash
+isolation** — a provider that dies mid-query surfaces as `ProviderCrashed` and is
+excluded while a healthy provider fanned out concurrently beside it still returns
+its frames, so one leg's crash never poisons a `query_all`. Run it:
+`contextgraph-inspect host` (CI: `host-conformance.sh`).
+
+That harness drives *this* repository's host. A **composition harness**
+(`contextgraph-conformance`'s `composition_conformance` module) covers the step
+above it, in whatever host implements it: given a `ComposingHost` — anything that
+answers "with these providers and this query, what reaches the prompt, and what
+did you drop getting there?" — it checks the rules binding a host's merge across
+providers. `Host::query_all` audits budget honesty **per provider**, so a set of
+individually conformant providers can still overflow a shared budget in
+aggregate: three providers each returning one honest 400-token frame against a
+1000-token query are each within budget and jointly 200 over. The checks are the
+cross-provider **token bound** (§7); the **total partition** — every offered frame
+is admitted or reported dropped, never silently truncated (issue #15); the
+**quarantine** (§7 B2/B4) — a provider the audit rejected contributes nothing,
+checked with a *frame flooder* whose frames are individually cheap, so only having
+consulted the audit keeps them out; and **determinism** — an unchanged frame set
+composes to the same render order, the prompt-cache guarantee of
+`docs/context-reuse.md` §1. `ReferenceComposingHost` (`query_all` plus
+`compose_for_prompt`) is the worked example that passes it. A host with its own
+merge implements the trait and gets the same audit instead of an assurance.
 
 What remains genuinely unchecked:
 
-- **C4, C7, C8 — the HTTP transport rules.** Treating every non-loopback
-  provider as egress (C4), requiring TLS (C7), and never logging credentials
-  (C8) are properties of the host's HTTP client; exercising them needs a real
-  non-loopback, TLS network peer the in-process harness cannot stand up. They
-  remain the host-side harness's next increment.
-- **R3 breakout-resistance is now escaping, not an unguessable fence.** The
-  reference `compose_context` neutralizes a content-embedded `<frame`/`</frame>`
-  token and escapes fence attributes, so content cannot terminate the block that
-  quotes it or forge a sibling frame (issue #15). Escaping rather than a random
-  delimiter is deliberate: composition's contract is a byte-stable prompt prefix
-  (§1 of `docs/context-reuse.md`), and a per-turn nonce would forfeit the
-  provider prompt cache to buy a property escaping already provides. What
-  remains open is the *rest* of the composition module — global budget packing
-  and cross-provider dedup — still issue #15.
+- **C4, C7, C8 — the HTTP transport rules.** These bind the host's HTTP client.
+  **C7 (TLS for non-loopback) and C8 (credentials never logged) are now enforced
+  and unit-tested in the reference host** (issue #13): the transport refuses a
+  plaintext `http://` connection to a non-loopback provider with a typed
+  `HostError::InsecureTransport` *before any bytes leave the host*, keeps the
+  loopback `http://` exception, attaches a bearer credential via reqwest's
+  `bearer_auth` rather than a format string, and renders every `Credential` as a
+  fixed `Credential(<redacted>)` placeholder in both `Debug` and `Display` so it
+  cannot spill into a log or a panic — each covered by a `contextgraph-host` unit
+  test. What remains genuinely unchecked is full *live-TLS-peer* conformance:
+  exercising the handshake, TLS negotiation, and credential exchange end-to-end
+  against a real non-loopback TLS peer — and witnessing C4's treat-as-egress
+  override over that same peer — needs a network peer the in-process harness
+  cannot stand up, and stays the host-side harness's next increment.
+- **R3 breakout-resistance is escaping, not an unguessable fence — a design
+  choice, no longer a gap.** The reference `compose_context` neutralizes a
+  content-embedded `<frame`/`</frame>` token and escapes fence attributes, so
+  content cannot terminate the block that quotes it or forge a sibling frame
+  (issue #63). Escaping rather than a random delimiter is deliberate:
+  composition's contract is a byte-stable prompt prefix (§1 of
+  `docs/context-reuse.md`), and a per-turn nonce would forfeit the provider
+  prompt cache to buy a property escaping already provides. The *rest* of the
+  composition module — global-budget split, cross-provider dedup, value-aware
+  placement, and an audit record — is now implemented
+  (`contextgraph_host::compose::compose_for_prompt`) and checked by the
+  `host-composition-audit` host-conformance check (issue #15), so R3 is covered
+  end to end rather than residual.
 - **F5-bytes verifies a host-trusted source, not any provider-named `uri`.** The
   verifier re-reads a path the host chooses to trust; automatically re-reading an
   arbitrary `uri` a provider supplies is a capability decision (path confinement,
@@ -652,6 +741,15 @@ Together U1–U4 are the mechanism behind the one-line promise that the freeze
 because the `1.0` peer ignores what it does not know, the vocabularies it does
 know only ever grew, and nothing it relied on was moved out from under it.
 
+The **Context Exchange Provider profile** (issue #28,
+[`docs/profiles/context-exchange-provider.md`](docs/profiles/context-exchange-provider.md))
+applies these same rules to its record layer:
+[`schema/contextgraph-lifecycle-record.schema.json`](schema/contextgraph-lifecycle-record.schema.json)
+is a second authoring-strict schema (`unevaluatedProperties: false`) that is a
+lint, not the interop contract; `record_kind` is closed within `lifecycle/1.0`
+(a new kind is a `lifecycle/1.x` addition, the U2 discipline); and record
+`extensions` and `record_links.rel` follow the U3 namespacing rule.
+
 ---
 
 ## 14. Attribution
@@ -664,7 +762,7 @@ wrong one ("this frame was never cited" — it cost four).
 
 | # | Requirement | Verified by |
 | - | ----------- | ----------- |
-| **A1** | A frame's attribution handle **is** its `FrameId` (§6.3) — the same `(provider id, frame id, content_digest)` triple used for composition, dedup, usage reports (§U1), and `verify` (§9). An implementation **MUST NOT** mint a separate attribution id. | `contextgraph-types::attribution` |
+| **A1** | A frame's attribution handle **is** its `FrameId` (§6.3) — the same `(provider id, frame id, content_digest)` triple used for composition, dedup, usage reports (§7.3, UR1), and `verify` (§9). An implementation **MUST NOT** mint a separate attribution id. | `contextgraph-types::attribution` |
 | **A2** | A host reporting attribution **MUST** report `selected`, `rendered`, and `cited` as independent observations, not a single score. `cited` **MUST** mean the model's output referred to the frame, an observable fact — never an inference that the frame *influenced* the output. | `contextgraph-types::attribution` |
 | **A3** | An attribution record **MUST** be reconcilable: coherent (`cited` ⇒ `rendered` ⇒ `selected`) and naming a frame the paired usage report actually billed. | `AttributionReport::is_reconcilable` |
 
