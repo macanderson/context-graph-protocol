@@ -117,7 +117,7 @@ hang; but only your provider can guarantee it survives garbage input.
 ### Version compatibility
 
 Two protocol version strings interoperate when they share a **major
-family** — the substring up to the first `.`. So `contextgraph/1.0-draft` and
+family** — the substring up to the first `.`. So `contextgraph/1.0` and
 `contextgraph/1.0` interoperate (both family `contextgraph/1`), while `contextgraph/2.0` does not
 (`contextgraph-host::wire::versions_compatible`). This is what lets the eventual
 public `contextgraph/1.0` freeze drop the `-draft` suffix without a flag day — ack

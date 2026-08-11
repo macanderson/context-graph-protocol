@@ -10,7 +10,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
-const PROFILE: &str = "contextgraph-1.0-draft";
+const PROFILE: &str = "contextgraph-1.0";
 const PROFILE_VERSION: &str = "1.1.0";
 const GENERATION_COMMAND: &str = "cargo test -p contextgraph-conformance --test golden_fixtures";
 const FIXTURE_FILES: [&str; 7] = [
@@ -22,7 +22,7 @@ const FIXTURE_FILES: [&str; 7] = [
     "normalization-vectors.json",
     "strict-validation.invalid.json",
 ];
-// The pinned `contextgraph-1.0-draft` strict frame profile. `content_digest` is
+// The pinned `contextgraph-1.0` strict frame profile. `content_digest` is
 // intentionally excluded here as it was before the representation work; the nine
 // representation/cost fields below are additive and default-absent.
 const FRAME_FIELDS: [&str; 23] = [
@@ -501,7 +501,7 @@ fn representation_vectors_are_honest_and_structurally_valid() {
     //
     // These are parsed as real `ContextFrame`s rather than through
     // `strict_frame`: a `compact` frame carries `content_digest`, which the
-    // frozen `contextgraph-1.0-draft` field allow-list deliberately omits (it
+    // frozen `contextgraph-1.0` field allow-list deliberately omits (it
     // predates the representation work). Their conformance is proven below by
     // `representation_invariants`, §B3 honesty, and `check_frames`.
     let compact: ContextFrame = read_fixture("context-frame.compact.valid.json");

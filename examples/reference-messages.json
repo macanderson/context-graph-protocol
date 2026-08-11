@@ -1,11 +1,11 @@
 [
   {
     "type": "handshake",
-    "protocol_version": "contextgraph/1.0-draft"
+    "protocol_version": "contextgraph/1.0"
   },
   {
     "type": "handshake_ack",
-    "protocol_version": "contextgraph/1.0-draft",
+    "protocol_version": "contextgraph/1.0",
     "provider": {
       "name": "repo-graph",
       "version": "0.2.0",
@@ -30,7 +30,7 @@
   },
   {
     "type": "handshake_ack",
-    "protocol_version": "contextgraph/1.0-draft",
+    "protocol_version": "contextgraph/1.0",
     "provider": {
       "name": "cloud-docs",
       "version": "1.4.0",
@@ -177,7 +177,7 @@
   },
   {
     "type": "handshake_ack",
-    "protocol_version": "contextgraph/1.0-draft",
+    "protocol_version": "contextgraph/1.0",
     "provider": {
       "name": "cloud-docs",
       "version": "1.3.0",

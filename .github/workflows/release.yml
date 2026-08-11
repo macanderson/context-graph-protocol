@@ -1,9 +1,8 @@
 name: Release
 
-# Publishes the three publishable Context Graph Protocol crates to crates.io,
+# Publishes the four public Context Graph Protocol crates to crates.io,
 # in dependency order (see PUBLISHING.md): contextgraph-types -> contextgraph-host
-# -> contextgraph-conformance. `contextgraph-trace` is deliberately excluded — it
-# inherits the workspace's `publish = false` default (see its Cargo.toml).
+# -> contextgraph-conformance -> contextgraph-trace.
 #
 # This workflow is inert by construction. A `contextgraph-v*` tag push alone
 # can never publish anything:
@@ -54,7 +53,7 @@ jobs:
       - run: cargo publish --dry-run -p contextgraph-types
 
   publish:
-    name: publish crates.io (contextgraph-types -> contextgraph-host -> contextgraph-conformance)
+    name: publish crates.io (types -> host -> conformance -> trace)
     needs: preflight
     runs-on: ubuntu-latest
     environment: crates-io
@@ -72,7 +71,7 @@ jobs:
         run: ./.github/scripts/wait-for-crate.sh contextgraph-types "${GITHUB_REF_NAME#contextgraph-v}"
 
       # contextgraph-host depends on contextgraph-types via a path dep with a
-      # ">=0.1.0" version requirement (see contextgraph-host/Cargo.toml) —
+      # ">=1.0.0" version requirement (see contextgraph-host/Cargo.toml) —
       # crates.io strips the path and resolves the version req against the
       # registry, so this step fails fast if the wait above returned too
       # early.
@@ -86,5 +85,10 @@ jobs:
 
       - name: Publish contextgraph-conformance
         run: cargo publish -p contextgraph-conformance --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Publish contextgraph-trace
+        run: cargo publish -p contextgraph-trace --locked
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

@@ -31,7 +31,7 @@ dependency run top to bottom.
 > `contextgraph/1` family: new optional fields (`content_digest`,
 > `egress_scopes`), new capability-gated methods (`verify`), and new host-side
 > artifacts (`UsageReport`, `ConsentReceipt`) that ride no new required wire
-> field. A `contextgraph/1.0-draft` provider that implements none of them still
+> field. A `contextgraph/1.0` provider that implements none of them still
 > handshakes and answers queries; a host that wants them degrades to its
 > existing behavior (re-query, boolean consent) when a provider opts out. No
 > flag day — see [stability.md](./stability.md).

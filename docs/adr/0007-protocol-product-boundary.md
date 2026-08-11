@@ -1,6 +1,6 @@
 # 0007 — The protocol/product boundary: atomic `ContextFrame` vs host-owned `CompiledContextFrame`
 
-**Status:** Accepted (draft; `contextgraph/1.0-draft`)
+**Status:** Accepted (draft; `contextgraph/1.0`)
 
 ## Context
 
@@ -116,7 +116,7 @@ The stella build prompt and the oxagen lifecycle spec proposed renaming the
 protocol to "Context Graph **Exchange** Protocol / CGEP", a `cgep/1.0-draft`
 capability namespace, and a `context-graph-exchange-protocol` repo. **This is
 rejected.** The canonical name is **Context Graph Protocol (CGP)**; the wire
-version is **`contextgraph/1.0-draft`**; the capability/namespace stem is
+version is **`contextgraph/1.0`**; the capability/namespace stem is
 **`contextgraph`**. Any item adopted from the build prompt is normalized to this
 naming. (Public docs spell out "Context Graph Protocol (CGP)" on first use, then
 use "CGP" freely.)

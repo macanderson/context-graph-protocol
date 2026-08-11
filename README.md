@@ -166,9 +166,9 @@ prompt. MCP tools do the work.
   Green means it works with any CGP host. A broken provider is caught at CI time,
   not at integration time. The suite ships a `--misbehave` mode that trips every
   check on purpose, so you know the checks are real.
-- **Stability you can pin.** The protocol version is `contextgraph/1.0-draft`. Two versions
+- **Stability you can pin.** The protocol version is `contextgraph/1.0`. Two versions
   interoperate when they share a major family, the part before the first dot. So
-  `contextgraph/1.0-draft` and `contextgraph/1.0` both belong to family `contextgraph/1` and interoperate.
+  `contextgraph/1.0` and `contextgraph/1.0` both belong to family `contextgraph/1` and interoperate.
   When the draft freezes, every deployed provider keeps working. No flag day.
 
 ---
@@ -184,7 +184,7 @@ contributing you agree your contributions are licensed under the same terms.
 
 ## Status
 
-CGP is `contextgraph/1.0-draft` today. The wire types are stable enough to build against,
+CGP is `contextgraph/1.0` today. The wire types are stable enough to build against,
 the host runtime enforces the guarantees, and the conformance suite verifies them.
 The path from "open context as an idea" to "open context as a standard" is the
 conformance suite: anyone can build a provider, anyone can verify it, and the

@@ -57,7 +57,7 @@ Labels show direction; they are **not** part of the wire data.
 speaks.
 
 ```json
-{"type":"handshake","protocol_version":"contextgraph/1.0-draft"}
+{"type":"handshake","protocol_version":"contextgraph/1.0"}
 ```
 
 **2. provider → host — `handshake_ack`.** The provider replies with its own
@@ -65,7 +65,7 @@ version, its identity, and its capabilities. This provider reads workspace
 content locally and has **no egress**, so a host may auto-enable it.
 
 ```json
-{"type":"handshake_ack","protocol_version":"contextgraph/1.0-draft","provider":{"name":"repo-graph","version":"0.2.0","data_flow":{"reads":true,"writes":false,"egress":false}},"capabilities":{"query":{"kinds":["doc","symbol"]},"correlation":true,"graph":true,"embeddings_fingerprint":null,"verify":true}}
+{"type":"handshake_ack","protocol_version":"contextgraph/1.0","provider":{"name":"repo-graph","version":"0.2.0","data_flow":{"reads":true,"writes":false,"egress":false}},"capabilities":{"query":{"kinds":["doc","symbol"]},"correlation":true,"graph":true,"embeddings_fingerprint":null,"verify":true}}
 ```
 
 **3. host → provider — `query`.** A retrieval request carrying a hard token
@@ -96,7 +96,7 @@ If a provider sends data off the local machine — a cloud documentation search,
 a remote embedding API — it declares `egress: true`:
 
 ```json
-{"type":"handshake_ack","protocol_version":"contextgraph/1.0-draft","provider":{"name":"cloud-docs","version":"1.4.0","data_flow":{"reads":true,"writes":false,"egress":true}},"capabilities":{"query":{"kinds":["doc"]},"correlation":true,"graph":false,"embeddings_fingerprint":null}}
+{"type":"handshake_ack","protocol_version":"contextgraph/1.0","provider":{"name":"cloud-docs","version":"1.4.0","data_flow":{"reads":true,"writes":false,"egress":true}},"capabilities":{"query":{"kinds":["doc"]},"correlation":true,"graph":false,"embeddings_fingerprint":null}}
 ```
 
 A conforming host **does not auto-enable** this provider. It gates the provider

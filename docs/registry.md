@@ -8,7 +8,7 @@ checkable report backing the claim. It exists so "conformant" stays a
 verifiable fact about a specific build, not a badge anyone can paste in.
 
 Listings here are also load-bearing for governance: the freeze from
-`contextgraph/1.0-draft` to `contextgraph/1.0` requires **at least two
+`contextgraph/1.0` to `contextgraph/1.0` requires **at least two
 independent implementations** passing the suite
 ([GOVERNANCE.md](../GOVERNANCE.md#the-path-to-contextgraph10)). This registry
 is where that count becomes checkable.
@@ -17,7 +17,7 @@ is where that count becomes checkable.
 
 | Provider | Author | Transport | Declared capabilities | Data flow | Protocol version | Last verified | Report |
 |---|---|---|---|---|---|---|---|
-| [`contextgraph-example-docs`](../contextgraph-conformance/src/bin/contextgraph-example-docs.rs) | CGP maintainers (bundled reference fixture) | stdio | `kinds=[doc, snippet]`, `graph`, `verify`, `correlation`, `embeddings_fingerprint=bge-small-en-v1.5/384/l2` | reads-only, `egress=false` (`local-only`) | `contextgraph/1.0-draft` | 2026-07-29 | 13/13 checks passed — [report](../registry/contextgraph-example-docs.report.json) |
+| [`contextgraph-example-docs`](../contextgraph-conformance/src/bin/contextgraph-example-docs.rs) | CGP maintainers (bundled reference fixture) | stdio | `kinds=[doc, snippet]`, `graph`, `verify`, `correlation`, `embeddings_fingerprint=bge-small-en-v1.5/384/l2` | reads-only, `egress=false` (`local-only`) | `contextgraph/1.0` | 2026-07-29 | 13/13 checks passed — [report](../registry/contextgraph-example-docs.report.json) |
 
 This founding entry is the reference fixture bundled with
 `contextgraph-conformance` itself (`SPEC.md` §11 seed providers) — it exists to
@@ -73,7 +73,7 @@ which renders as:
 
 The badge is a static, hand-authored asset — not a live third-party redirect —
 so it never depends on anyone's site being up, and never phones home. It names
-the protocol family the badge claims (`contextgraph/1.0-draft`), not a specific
+the protocol family the badge claims (`contextgraph/1.0`), not a specific
 provider version; the row in this table is what backs the specific claim.
 
 The URL is this repository's GitHub-raw path because this repository does not

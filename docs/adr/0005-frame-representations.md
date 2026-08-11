@@ -1,6 +1,6 @@
 # 0005 — Frame representations (full, compact, reference)
 
-**Status:** Accepted (draft; `contextgraph/1.0-draft`)
+**Status:** Accepted (draft; `contextgraph/1.0`)
 
 **Context:** CGEP lifecycle work, phase 2 — frame representations. Numbering is
 provisional: this ADR lands ahead of PR #33's ADR set (0002–0004); if it

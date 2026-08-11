@@ -7,10 +7,10 @@ Usage:
 
 Exits 0 if every message in examples/, every reference-serialized vector, and
 every fenced example in SPEC.md is valid under schema/ — and the schema's `$id`
-is the URL that actually serves it. Exits 1 otherwise.
+resolves to a byte-identical served copy. Exits 1 otherwise.
 No third-party dependencies beyond `jsonschema` (pip install jsonschema).
 
-The three example surfaces are deliberately different in kind:
+The four example surfaces are deliberately different in kind:
 
   * `examples/` is hand-authored — it proves the schema accepts what a human
     writes, and is what a provider author diffs against.
@@ -23,11 +23,8 @@ The three example surfaces are deliberately different in kind:
     that the reference envelope has no field for, and that the schema's
     `additionalProperties: false` rejects. The spec's own examples are now held
     to the spec's own schema.
-
-`$id` is checked separately (5, below): it is the schema's public identity, and
-a schema whose identity URL 404s is quoted by nobody. It is pinned to the one
-host that serves this repo's bytes, because this repo deploys no website of its
-own — see ADR 0008.
+  * the served `$id` copy is the schema's public identity — checked because a
+    stale schema that still resolves is worse than one that 404s.
 """
 import json
 import re

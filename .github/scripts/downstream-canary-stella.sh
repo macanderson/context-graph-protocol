@@ -68,6 +68,15 @@ fi
 
 echo "CGP crates available to patch in: ${crates[*]}"
 
+# A local patch must still satisfy the downstream's declared semver requirement.
+# During a release-major canary, temporarily align exact workspace pins with
+# this checkout so the canary tests source compatibility rather than stopping
+# at dependency resolution. This only mutates the disposable downstream checkout.
+cgp_version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$CGP_DIR/Cargo.toml" | head -1)
+for crate in "${crates[@]}"; do
+  sed -i -E "s|^(${crate}[[:space:]]*=[[:space:]]*)\"=?[0-9][^\"]*\"|\1\"=${cgp_version}\"|" "$STELLA_MANIFEST"
+done
+
 if grep -qF "$SENTINEL" "$STELLA_MANIFEST"; then
   echo "stella's Cargo.toml already carries the local-CGP patch — leaving it as-is."
 else
@@ -79,11 +88,16 @@ else
     for crate in "${crates[@]}"; do
       printf '%s = { path = "%s/%s" }\n' "$crate" "$CGP_DIR" "$crate"
     done
+    echo ""
+    echo '[patch.crates-io]'
+    for crate in "${crates[@]}"; do
+      printf '%s = { path = "%s/%s" }\n' "$crate" "$CGP_DIR" "$crate"
+    done
   } >>"$STELLA_MANIFEST"
 fi
 
 echo "--- patched Cargo.toml tail ---"
-tail -n "$(( ${#crates[@]} + 3 ))" "$STELLA_MANIFEST"
+tail -n "$(( 2 * ${#crates[@]} + 5 ))" "$STELLA_MANIFEST"
 echo "-------------------------------"
 
 # Discover which stella crates depend on a contextgraph-* crate at all, from
@@ -93,8 +107,8 @@ echo "-------------------------------"
 dependents=()
 while IFS= read -r manifest; do
   dependents+=("$(basename "$(dirname "$manifest")")")
-done < <(cd "$STELLA_DIR" && find . -mindepth 2 -maxdepth 2 -name Cargo.toml \
-  -exec grep -lE '^contextgraph-[a-z-]+ = ' {} \; | sort -u)
+done < <(cd "$STELLA_DIR" && find . -mindepth 2 -maxdepth 3 -name Cargo.toml \
+  -exec grep -lE '^contextgraph-[a-z-]+([.]workspace)?[[:space:]]*=' {} \; | sort -u)
 
 if [[ "${#dependents[@]}" -eq 0 ]]; then
   echo "::error::no stella crate depends on contextgraph-* — is STELLA_DIR stale, or did the dependency move?"

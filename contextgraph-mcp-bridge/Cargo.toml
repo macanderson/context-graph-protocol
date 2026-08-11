@@ -11,10 +11,10 @@ homepage.workspace = true
 publish = false
 
 [dependencies]
-contextgraph-types = { path = "../contextgraph-types", version = ">=0.1.0" }
+contextgraph-types = { path = "../contextgraph-types", version = ">=1.0.0" }
 # Reused only for the wire `Envelope` enum + its NDJSON codec, so the bridge's
 # CGP side stays byte-for-byte the reference wire rather than a re-spelling.
-contextgraph-host = { path = "../contextgraph-host", version = ">=0.1.0" }
+contextgraph-host = { path = "../contextgraph-host", version = ">=1.0.0" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

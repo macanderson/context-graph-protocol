@@ -1,100 +1,52 @@
 # Version & stability
 
-Context Graph Protocol (CGP) has **two independent version axes**, and it's important not to conflate
-them:
+Context Graph Protocol (CGP) has two independent version axes:
 
-- **The crate version** — `0.1.0` today, `[workspace.package].version` in the
-  workspace root `Cargo.toml`, inherited by `contextgraph-types`, `contextgraph-host`, and
-  `contextgraph-conformance` alike. This is ordinary Rust/Cargo semver.
-- **The protocol version** — `contextgraph/1.0-draft`, the `PROTOCOL_VERSION` constant
-  in `contextgraph-types::lib`. This is the wire-format identity two CGP
-  implementations negotiate at handshake time, independent of what language
-  or crate version either side is written in.
+- **Crate version:** `1.0.0`, inherited from the workspace `Cargo.toml` by the
+  public Rust crates. This follows ordinary semantic versioning.
+- **Protocol version:** `contextgraph/1.0`, exposed as
+  `contextgraph_types::PROTOCOL_VERSION` and negotiated on the wire.
 
-A crate patch release (bug fix, better error message, an added helper
-method) does not imply a protocol change. A protocol change, conversely, is
-what actually breaks interop between a host and a provider built against
-different crate versions — that's the one that matters most to a third
-party.
+A crate patch can improve implementation behavior without changing the wire
+protocol. A protocol-breaking change requires a new protocol and crate major.
 
-## What `-draft` means right now
+## The 1.0 stability guarantee
 
-Quoting `contextgraph-types::PROTOCOL_VERSION`'s doc comment verbatim, since it's the
-authoritative statement:
+The `contextgraph/1.0` wire contract is frozen. Within the `contextgraph/1`
+family, changes are additive: defined fields are not removed, renamed, or
+repurposed; receivers continue to follow the extensibility rules in SPEC §13.
+Rust crates follow semver: `1.x` releases preserve public compatibility, while
+a breaking redesign requires both `contextgraph/2.0` and crate version `2.0.0`.
 
-> The protocol version string this crate implements. Frozen to `contextgraph/1.0`
-> only at the public v1.0 release.
+The former `contextgraph/1.0-draft` identifier belongs to the same major family
+and remains wire-compatible. This deliberate compatibility means existing
+Stella deployments and other draft-era providers can migrate without a flag
+day. New implementations should emit `contextgraph/1.0`.
 
-In other words: the wire shape captured in this `0.1.0` release —
-`ContextFrame`, `ContextQuery`, `Capabilities`, the `Envelope` vocabulary, the
-consent/budget/citation contracts documented in
-[protocol-surface.md](./protocol-surface.md) — is **real and implemented
-today** by the reference host (`contextgraph-host`) and conformance suite
-(`contextgraph-conformance`), and is safe to build against. It is not yet a **frozen**
-contract: a pre-1.0 revision could still change a field shape or add a
-required check based on real-world provider implementation feedback, before
-the public `contextgraph/1.0` release drops the `-draft` suffix.
+## Version-family negotiation
 
-The [context-reuse guarantees](./context-reuse.md) (deterministic composition,
-usage reports, consent receipts, `context/verify`) are a worked example of how
-the wire shape grows *additively* within a family: they add only optional
-fields (`content_digest`, `egress_scopes`), a capability-gated method
-(`verify`), and host-side artifacts that ride no new required wire field. A
-`contextgraph/1.0-draft` provider that implements none of them still handshakes
-and answers queries within family `contextgraph/1`; a host that wants them
-degrades to re-query and boolean consent when a provider opts out. That is the
-draft-family additive discipline in practice — no flag day, no deployed
-provider broken.
+`contextgraph_host::wire::versions_compatible` compares the major-family prefix
+through the protocol major. Consequently `contextgraph/1.0-draft`,
+`contextgraph/1.0`, and future additive `contextgraph/1.x` revisions
+interoperate; `contextgraph/2.0` does not.
 
-## Why version families interoperate
+## Conformance
 
-`contextgraph-host::wire::versions_compatible` treats two protocol strings as
-compatible when they share a **major family** — the substring up to the
-first `.`. `contextgraph/1.0-draft` and `contextgraph/1.0` are both family `contextgraph/1` and
-interoperate; `contextgraph/2.0` does not interoperate with either. This is
-deliberate: it means the eventual freeze from `contextgraph/1.0-draft` to `contextgraph/1.0`
-does not require a flag day where every already-deployed provider breaks the
-instant the spec freezes — a `1.0-draft` provider and a `1.0` host (or vice
-versa) still handshake successfully within the `1` family. What *does* break
-interop is a jump to a new major protocol family (`contextgraph/2.0`), which is
-reserved for a genuinely breaking protocol redesign.
+"CGP conformant" means green on `contextgraph-conformance` for the declared
+capability set. Providers should run the suite on every implementation change;
+hosts with custom composition should also run the host and composition suites.
+The attested `contextgraph-1.0` fixture bundle keeps schema, Rust serialization,
+and external implementations tied to the stable contract.
 
-## The stability guarantee, going forward
+## Dependency guidance
 
-- **Pre-1.0 (now):** crate versions are `0.x`, tracking `contextgraph/1.0-draft`. Cargo
-  semver rules mean **any `0.x → 0.y` bump may contain breaking changes** to
-  either the Rust API or the wire shape — normal pre-1.0 Rust convention.
-  Pin an exact version (`contextgraph-types = "=0.1.0"`) if you need a hard guarantee
-  against churn before the freeze.
-- **At the freeze:** when the protocol is declared `contextgraph/1.0` (the `-draft`
-  suffix drops), `contextgraph-types`, `contextgraph-host`, and `contextgraph-conformance` bump to
-  `1.0.0` in lockstep. That `1.0.0` release is the stability guarantee: from
-  that point on, the crates follow ordinary semver — a `1.x → 1.y` minor is
-  additive-only, and a wire-breaking protocol change requires both a new
-  protocol major (`contextgraph/2.0`) and a new crate major (`2.0.0`).
-- **Conformance is the enforcement mechanism.** "CGP conformant" is defined
-  as green on `contextgraph-conformance`'s suite for your declared capability set
-  (see [running-conformance.md](./running-conformance.md)) — that suite, not
-  a hand-audited checklist, is what a third party checks their implementation
-  against, before and after the freeze alike.
-
-## Practical guidance for early adopters
-
-- **Depend on `contextgraph-types` with a caret or exact pin**, per your risk
-  tolerance — `^0.1` accepts any pre-1.0 patch/minor per Cargo's (unusual)
-  0.x semver rules, `=0.1.0` pins exactly.
-- **Re-run `contextgraph-conformance` after every `contextgraph-types`/`contextgraph-host` upgrade**
-  before the 1.0 freeze — a 0.x bump is exactly the kind of change that can
-  silently add or tighten a conformance check.
-- **Don't hardcode `"contextgraph/1.0-draft"` or `"contextgraph/1.0"` in your own handshake
-  code** — read `contextgraph_types::PROTOCOL_VERSION` and use
-  `contextgraph_host::wire::versions_compatible` (or the equivalent major-family
-  comparison, if you're implementing a provider outside Rust) so your
-  implementation keeps working across the freeze without a code change.
+Use a compatible stable requirement such as `contextgraph-types = "1"`, and
+upgrade within `1.x` normally. Do not hardcode a protocol identifier: use
+`contextgraph_types::PROTOCOL_VERSION` and
+`contextgraph_host::wire::versions_compatible`, or implement the equivalent
+major-family comparison in another language.
 
 ## MSRV and edition
 
-All three crates inherit `rust-version = "1.90"` and `edition = "2024"` from
-the workspace. An MSRV bump is a minor-version-worthy change while pre-1.0
-(consistent with the guidance above); after 1.0.0 it will follow the same
-semver discipline as the rest of the crate's public API.
+The Rust crates use `rust-version = "1.90"` and edition 2024. An MSRV increase
+will be handled as a semver-significant compatibility decision.

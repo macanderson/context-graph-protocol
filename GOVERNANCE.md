@@ -1,7 +1,7 @@
 # Context Graph Protocol governance
 
 This document describes how the Context Graph Protocol is maintained, how
-it changes, and the path from `contextgraph/1.0-draft` to a frozen `contextgraph/1.0`. It exists
+it changes, and the maintenance of the frozen `contextgraph/1.0` family. It exists
 so adopters can trust that the protocol is maintained deliberately and that
 "Context Graph Protocol conformant" is a stable, verifiable claim — not a maintainer's mood.
 
@@ -9,7 +9,7 @@ so adopters can trust that the protocol is maintained deliberately and that
 
 - **Maintainer.** Mac Anderson (`@macanderson`) is the current maintainer. The
   maintainer owns release decisions, approval of normative changes, and the
-  call on when `contextgraph/1.0-draft` freezes to `contextgraph/1.0`.
+  stewardship of the frozen `contextgraph/1.0` family.
 - **Contributors.** Anyone. Contributions land via pull request under the
   [DCO](./CONTRIBUTING.md) — no CLA, no copyright assignment.
 
@@ -51,26 +51,18 @@ version bump.
 The bias is **additive, not breaking.** A new optional field is a minor change;
 a removed or renamed field requires a new major family (`contextgraph/2`).
 
-## The path to `contextgraph/1.0`
+## The `contextgraph/1.0` freeze
 
-`contextgraph/1.0-draft` freezes to `contextgraph/1.0` when **all** of the following are true:
+The protocol froze on 2026-08-11 after the pre-freeze backlog and conformance
+enforcement sweep. The release ships independent TypeScript, Python, Go, and
+Rust provider implementations, an external-provider harness, host and custom
+composition suites, and an attested fixture profile. Stella remains compatible
+with both the former draft identifier and stable peers through major-family
+negotiation.
 
-- **Independent implementations.** At least two independent Context Graph Protocol implementations
-  pass the conformance suite against the reference host. One reference
-  implementation plus one genuine third-party implementation is the minimum;
-  the point is to prove the spec is buildable without the reference code.
-- **Stabilization window.** The wire surface has had no normative change for at
-  least 60 days.
-- **No blocking normative issues.** There are no open normative issues the
-  maintainer considers blocking.
-- **Complete enforcement.** The conformance suite's checks are agreed to fully
-  enforce the documented conformance requirements in [`SPEC.md`](./SPEC.md)
-  (indexed in [protocol-surface.md](./docs/protocol-surface.md#conformance-requirements)).
-
-At the freeze, the `-draft` suffix is dropped, the crates move to `1.0.0` in
-lockstep, and the major-family compatibility rule guarantees that
-already-deployed `1.0-draft` providers keep handshaking successfully — no flag
-day. See [stability.md](./docs/stability.md).
+Within `contextgraph/1`, normative evolution is additive-only. A removed,
+renamed, or repurposed wire field requires `contextgraph/2`; conformance checks
+may be strengthened when doing so enforces an already-normative requirement.
 
 ## Governance evolution
 

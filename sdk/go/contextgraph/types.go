@@ -5,7 +5,7 @@
 package contextgraph
 
 // ProtocolVersion is the protocol version this SDK speaks.
-const ProtocolVersion = "contextgraph/1.0-draft"
+const ProtocolVersion = "contextgraph/1.0"
 
 // Provenance is one link in a frame's provenance chain. Type is the wire name
 // for the entry's kind ("file", "derivation", ...).
