@@ -31,7 +31,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 /** The published dependency each template resolves by default (see #59). */
 const DEFAULT_SDK = {
   typescript: "^0.1.0",
-  python: "contextgraph-sdk>=0.1.0",
+  python: "contextgraph-sdk>=1.0.0",
 };
 
 function fail(message) {

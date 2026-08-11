@@ -1,6 +1,6 @@
 # Context Graph Protocol (CGP) — normative specification
 
-**Version:** `contextgraph/1.0-draft`
+**Version:** `contextgraph/1.0`
 
 This document is the **single normative home** of the Context Graph Protocol.
 A provider or host can be implemented from this document, the
@@ -95,7 +95,7 @@ minor          = 1*DIGIT
 
 The **major family** is the substring up to (not including) the first `.`. Two
 versions interoperate **if and only if** they share a major family.
-`contextgraph/1.0-draft` and `contextgraph/1.0` both belong to `contextgraph/1`
+`contextgraph/1.0` and `contextgraph/1.0` both belong to `contextgraph/1`
 and interoperate; `contextgraph/2.0` does not.
 
 This is what lets the freeze drop `-draft` without a flag day. An

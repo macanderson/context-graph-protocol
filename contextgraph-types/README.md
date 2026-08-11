@@ -11,7 +11,7 @@ licensed, zero dependencies beyond `serde`.** You can implement a CGP
 provider or host in Rust against this crate alone, with no dependency on
 [Stella](https://github.com/macanderson/stella) or any of its other crates.
 
-Protocol version: `contextgraph/1.0-draft` (see [`stability.md`][stability] for what
+Protocol version: `contextgraph/1.0` (see [`stability.md`][stability] for what
 that means for this crate's semver).
 
 ## What's in here

@@ -1,6 +1,6 @@
 # 0006 — Prompt ingestion as a local provider
 
-**Status:** Accepted (draft; `contextgraph/1.0-draft`)
+**Status:** Accepted (draft; `contextgraph/1.0`)
 
 ## Context
 

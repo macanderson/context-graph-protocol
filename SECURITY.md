@@ -20,7 +20,7 @@ Include as much of the following as you can:
 - A description of the issue and its security impact.
 - The Context Graph Protocol crate(s) and version(s) affected (`contextgraph-types`, `contextgraph-host`,
   `contextgraph-conformance`).
-- The protocol version (e.g. `contextgraph/1.0-draft`).
+- The protocol version (e.g. `contextgraph/1.0`).
 - A minimal repro: a malformed envelope, a misbehaving provider, or a
   bypassed consent gate.
 - Any mitigations you have identified.
@@ -56,5 +56,5 @@ Advisory and, where applicable, a CVE.
 
 ## Supported versions
 
-Context Graph Protocol is pre-1.0 (`contextgraph/1.0-draft`). Only the latest published crate release
+Context Graph Protocol is pre-1.0 (`contextgraph/1.0`). Only the latest published crate release
 receives security fixes until the `contextgraph/1.0` freeze.

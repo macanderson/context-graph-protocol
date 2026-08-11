@@ -220,7 +220,7 @@ pub fn decode_line(line: &str) -> Result<Envelope, HostError> {
 /// Two protocol version strings interoperate when they share a **major
 /// family** — the substring up to the first `.`. So `contextgraph/1.0-draft` and
 /// `contextgraph/1.0` interoperate (both `contextgraph/1`), while `contextgraph/2.0` does not. This is
-/// what lets the public v1.0 freeze drop the `-draft` suffix without a flag
+/// what allowed the public v1.0 freeze to drop the `-draft` suffix without a flag
 /// day (`SPEC.md`).
 pub fn versions_compatible(a: &str, b: &str) -> bool {
     protocol_family(a) == protocol_family(b)
@@ -359,14 +359,11 @@ mod tests {
             "contextgraph/1.0"
         ));
         assert!(versions_compatible(
-            "contextgraph/1.0-draft",
+            "contextgraph/1.0",
             "contextgraph/1.0-draft"
         ));
         assert!(versions_compatible(PROTOCOL_VERSION, "contextgraph/1.9"));
-        assert!(!versions_compatible(
-            "contextgraph/1.0-draft",
-            "contextgraph/2.0"
-        ));
+        assert!(!versions_compatible("contextgraph/1.0", "contextgraph/2.0"));
         assert!(!versions_compatible("contextgraph/1.0", "mcp/1.0"));
     }
 }

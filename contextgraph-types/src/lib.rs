@@ -8,7 +8,7 @@
 //!
 //! [`SPEC.md`]: https://github.com/macanderson/context-graph-protocol/blob/main/SPEC.md
 //!
-//! Protocol version: `contextgraph/1.0-draft`.
+//! Protocol version: `contextgraph/1.0`.
 
 pub mod attribution;
 pub mod capability;
@@ -53,6 +53,5 @@ pub use validate::{
 };
 pub use verify::{FrameVerdict, Verdict, VerifyRequest, VerifyResponse};
 
-/// The protocol version string this crate implements. Frozen to `contextgraph/1.0`
-/// only at the public v1.0 release (`SPEC.md` §Version strings).
-pub const PROTOCOL_VERSION: &str = "contextgraph/1.0-draft";
+/// The stable protocol version string this crate implements (`SPEC.md` §3.1).
+pub const PROTOCOL_VERSION: &str = "contextgraph/1.0";

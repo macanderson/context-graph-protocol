@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, TypedDict
 
-PROTOCOL_VERSION = "contextgraph/1.0-draft"
+PROTOCOL_VERSION = "contextgraph/1.0"
 
 FrameKind = Literal["snippet", "symbol", "fact", "doc", "memory", "episode", "graph"]
 Representation = Literal["full", "compact", "reference"]

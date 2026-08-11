@@ -8,7 +8,7 @@
  */
 
 /** The protocol version this SDK speaks. */
-export const PROTOCOL_VERSION = "contextgraph/1.0-draft" as const;
+export const PROTOCOL_VERSION = "contextgraph/1.0" as const;
 
 /** What kind of thing a frame represents. */
 export type FrameKind =

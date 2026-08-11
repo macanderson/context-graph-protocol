@@ -287,10 +287,10 @@ target id. The convention is consistent across the protocol surface.
 
 CGP separates **crate version** (ordinary Cargo semver) from **protocol
 version** (the wire-format identity negotiated at handshake). The current
-protocol version is `contextgraph/1.0-draft`.
+protocol version is `contextgraph/1.0`.
 
 Two protocol versions interoperate when they share a **major family** — the
-substring up to the first `.`. So `contextgraph/1.0-draft` and `contextgraph/1.0` both belong to
+substring up to the first `.`. So `contextgraph/1.0` and `contextgraph/1.0` both belong to
 family `contextgraph/1` and interoperate. A jump to `contextgraph/2.0` does not.
 
 This design has a critical consequence: **the freeze from draft to stable does

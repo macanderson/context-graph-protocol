@@ -38,7 +38,7 @@ use crate::validate::{is_protocol_timestamp, is_well_formed_digest};
 
 /// The profile version every `ContextRecord.schema_version` names. Distinct
 /// from the wire [`PROTOCOL_VERSION`](crate::PROTOCOL_VERSION)
-/// (`contextgraph/1.0-draft`): the lifecycle layer is a *profile* on top of the
+/// (`contextgraph/1.0`): the lifecycle layer is a *profile* on top of the
 /// base family (ADR 0007 §5, reconciliation row D4), so it version-stamps
 /// itself rather than riding the core version.
 pub const LIFECYCLE_SCHEMA_VERSION: &str = "contextgraph/lifecycle/1.0-draft";
@@ -722,7 +722,7 @@ mod tests {
             statement: "x".into(),
             subject_ref: None,
         });
-        record.schema_version = "contextgraph/1.0-draft".into();
+        record.schema_version = "contextgraph/1.0".into();
         assert!(record.envelope_invariants().is_err());
 
         let mut record = record_with(RecordBody::Observation {

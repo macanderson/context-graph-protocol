@@ -5,7 +5,7 @@ specification repository are documented in this file.
 
 The Context Graph Protocol crates (`contextgraph-types`, `contextgraph-host`,
 `contextgraph-conformance`, `contextgraph-trace`) track **crate
-version** (`0.x` today) and **protocol version** (`contextgraph/1.0-draft`) as two
+version** (`1.x` today) and **protocol version** (`contextgraph/1.0`) as two
 independent axes — see [docs/stability.md](./docs/stability.md). This changelog
 records crate releases and spec-repository milestones together, noting which is
 which. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
@@ -46,6 +46,24 @@ this is a crate-version release only.
   and should not be depended on**; use 0.1.2 or later.
 
 ## [Unreleased]
+
+## [1.0.0] — 2026-08-11 (stable protocol and crate release)
+
+The `contextgraph/1.0` wire contract is now frozen. The four public Rust crates
+move to 1.0.0 in lockstep, and the TypeScript and Python provider SDKs advertise
+the stable protocol identifier. Existing `contextgraph/1.0-draft` peers remain
+wire-compatible under the major-family negotiation rule.
+
+### Changed
+- Dropped the `-draft` suffix from `PROTOCOL_VERSION` and every reference wire
+  vector, SDK, example, badge, and conformance fixture.
+- Renamed the attested fixture profile to `contextgraph-1.0`; its strict file
+  coverage and SHA-256 manifest remain the release witness downstreams can pin.
+- Promoted workspace crates and published SDK manifests to version `1.0.0`.
+- Integrated PR #76's schema/spec regression coverage before the freeze, so
+  documented JSONC examples and schema `$id` bytes are checked alongside the
+  existing wire, host, provider, and composition conformance suites.
+
 
 ### Added
 
@@ -274,6 +292,60 @@ this is a crate-version release only.
 - Recommended relation vocabulary `frame::rel` (#7).
 - Embedding fingerprint format and exact-match rule (E1) (#11).
 
+### Removed
+- **Breaking:** `Capabilities.upsert`, `Capabilities.subscribe`, and
+  `QueryCapability.filters` — negotiable at handshake but unreachable by any
+  host. Wire-compatible; Rust API breaking (#5, #6, #11).
+
+### Fixed
+- **`SPEC.md` §9's `verify` example no longer fails the schema `SPEC.md` ships.**
+  Both envelopes carried `"id": "v1"`, but §3.2 grants an `id` only to
+  `query`/`frames`/`error`, the reference `Envelope::Verify`/`Verified` have no
+  such field, and the schema is `additionalProperties: false` — the example was
+  invalid against the protocol's own definition. The `id`s are removed;
+  `verify` correlates by full frame identity, not by envelope id. Root cause:
+  `schema/validate-examples.py` checked `examples/` but never `SPEC.md`, so the
+  one example surface with no machine check was the one that drifted. It now
+  validates every fenced `jsonc` block in `SPEC.md` too (comments and documented
+  placeholders normalized away, structure checked), and CI's existing `schema`
+  job therefore catches this class of drift.
+- **Regression guard for the `ContextQuery` `required` fix.** The schema change
+  itself landed independently in #63; this adds the test that keeps it fixed —
+  an ordinary unfiltered, unanchored query must satisfy the schema's *own*
+  `required` array (read from the schema, so it cannot drift into a stale
+  snapshot). A cross-audit of all 16 shared types confirms no other type demands
+  a field its serializer elides — this bug class has now recurred twice
+  (`ContextFrame` in PR #44, `ContextQuery` in #63), so it is worth a standing
+  check rather than another one-off fix.
+- **§G2 and §D1 are now actually verified, not merely asserted.** Both named
+  `frame-validity` as their verifier while neither `target_uri` nor the frame's
+  own `content_digest` was read by any check — the self-attestation §11.1
+  exists to rule out. `check_frames` now rejects a relation with an empty
+  `target_uri` (§G2) and a present-but-malformed `content_digest` (§D1); its
+  evidence string had claimed "well-formed digests" while accepting
+  `sha256:abc`. §D1 was found by auditing the other ten rules that cite
+  `frame-validity` after §G2 turned out to be unenforced; the remaining nine
+  were confirmed enforced.
+- **`contextgraph-host::wire` docs no longer invert a MUST NOT.** The module
+  said concurrency is "negotiated by observation, not by a capability flag",
+  contradicting `SPEC.md` §3.2 and the shipped `Capabilities::correlation`: a
+  host **MUST NOT** send an `id` to a provider that did not declare correlation.
+- JSON Schema: a `ContextFrame`'s `required` is now exactly what the reference
+  serializer always emits (`id`, `kind`, `title`, `score`, `token_cost`).
+  `provenance` and `relations` were listed as globally required but are
+  `skip_serializing_if = Vec::is_empty` in the reference type and required by no
+  frame-validity check, so a Rust-serialized frame with no edges failed schema
+  validation. Surfaced by ADR 0006's wire-conformance test — the first to
+  validate serialized frames (not just hand-authored examples) against the
+  schema. `content` remains governed per-representation by the existing `allOf`.
+
+### Changed
+- **Breaking:** `token_cost` MUST now equal the canonical count for its content.
+  Providers that under-declared cost were previously green (#8).
+- Withdrew the incorrect claim that CGP rides JSON-RPC 2.0 (#4).
+- Code comments cite `SPEC.md` anchors instead of a private repository (#3).
+
+### Added
 - [`schema/contextgraph-envelope.schema.json`](./schema/contextgraph-envelope.schema.json) — a
   machine-readable JSON Schema (Draft 2020-12) for the Context Graph Protocol envelope and all wire
   types. Validates in any language (`ajv`, Python `jsonschema`, Rust

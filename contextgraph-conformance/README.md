@@ -61,7 +61,7 @@ See [Running conformance][conformance] for the full guide.
 ## Golden fixtures
 
 The versioned interoperability fixtures live under
-`fixtures/contextgraph-1.0-draft/`. The profile contains fully populated and
+`fixtures/contextgraph-1.0/`. The profile contains fully populated and
 minimal `ContextFrame` cases, a minimal `ContextQuery`, distinct missing- and
 blank-citation cases, strict unknown-field negatives, and RFC 8785 JSON
 Canonicalization Scheme (JCS) normalization vectors. `manifest.json` pins the
