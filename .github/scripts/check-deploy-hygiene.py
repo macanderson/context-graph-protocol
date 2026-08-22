@@ -15,12 +15,11 @@ Why this exists (see docs/adr/0008-deploy-topology-and-advertised-urls.md):
   * The Vercel project that owns `contextgraphprotocol.org`, `cgp.oxagen.sh`,
     and `context-graph-protocol.vercel.app` is Git-connected to a *different*
     repository (`macanderson/cgp-website`), which is the protocol's single
-    published website. This repository deploys nothing — its own undeployed
-    `site/` app was retired for that reason (#57) — so every `…/schema/…`,
-    `…/registry/…`, and `…/badges/…` URL on those hosts 404s, including the
-    badge docs/registry.md tells conformant providers to paste into their own
-    READMEs. Nothing failed loudly, because no build step dereferences a URL.
-    This check is that step.
+    published website. This repository owns no website of its own — its own
+    undeployed `site/` app was retired for that reason (#57) — so a
+    `…/schema/…`, `…/registry/…`, or `…/badges/…` URL on those hosts 404s
+    unless this repo publishes that exact prefix. Nothing failed loudly,
+    because no build step dereferences a URL. This check is that step.
 
   * `.vercel/` is gitignored, so a stray local link is invisible to review —
     and `vercel --prod` from a linked checkout deploys this repo over the
@@ -39,11 +38,28 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 
-# The one host that serves this repository's bytes by construction, regardless
-# of how the Vercel deploy topology is settled. When `site/` gains a real
-# deployment (ADR 0008's open decision), add that host here and the URLs it
-# then permits become legal.
-SERVED_HOSTS = {"raw.githubusercontent.com"}
+# What this repository actually publishes, and where those bytes come from.
+#
+# Keyed by URL prefix rather than by host, because the host alone cannot
+# answer the question. This repo publishes *two prefixes* of the apex bucket
+# (`/schema/` and `/spec/`, see .github/workflows/publish-spec.yml) and owns
+# nothing else there — so `/badges/conformant.svg` on that same host is still
+# the 404 ADR 0008 was written about. A bare host entry would re-bless exactly
+# the URL this guard exists to catch.
+#
+# The prefix doubles as the map back to the repo path, which is what keeps the
+# second half of the check — does the artifact exist where its URL says — in
+# force for every served host instead of just for raw.
+#
+# Add a row when a new prefix starts being published, never a bare host.
+SERVED_PREFIXES: dict[str, str] = {
+    # Serves this repo's bytes by construction, whatever the deploy topology.
+    "https://raw.githubusercontent.com/macanderson/context-graph-protocol/main/": "",
+    # publish-spec.yml syncs `schema/` here on every merge to main (#78).
+    # `/spec/` is published too but carries no artifact URLs, so it needs no
+    # row until it does.
+    "https://contextgraphprotocol.org/schema/": "schema/",
+}
 RAW_PREFIX = "https://raw.githubusercontent.com/macanderson/context-graph-protocol/main/"
 
 # The Vercel project serving the public apex from macanderson/cgp-website.
@@ -101,22 +117,23 @@ for path in tracked_text_files():
     for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         for match in ARTIFACT_URL.finditer(line):
             url = match.group(0)
-            host = match.group(1)
-            if host not in SERVED_HOSTS:
+            served = next((p for p in SERVED_PREFIXES if url.startswith(p)), None)
+            if served is None:
                 offenders.append(f"{rel}:{lineno}  {url}")
                 continue
-            # The URL resolves to a host we serve — now make sure it resolves
-            # to a file that exists. A 404 on a host we control is still a 404.
-            if url.startswith(RAW_PREFIX):
-                target = ROOT / url[len(RAW_PREFIX):]
-                if not target.is_file():
-                    missing.append(f"{rel}:{lineno}  {url}")
+            # The URL resolves to a prefix we publish — now make sure it
+            # resolves to a file that exists. A 404 on a host we control is
+            # still a 404.
+            target = ROOT / SERVED_PREFIXES[served] / url[len(served):]
+            if not target.is_file():
+                missing.append(f"{rel}:{lineno}  {url}")
 
-check("no artifact URL on a host this repo does not deploy", not offenders)
+check("no artifact URL on a prefix this repo does not publish", not offenders)
 for offender in offenders:
     print(f"        {offender}")
 if offenders:
-    print(f"        remedy: serve it from {RAW_PREFIX}<repo-relative path>")
+    print(f"        remedy: serve it from {RAW_PREFIX}<repo-relative path>,")
+    print("        or from a prefix this repo publishes — see SERVED_PREFIXES.")
     print("        rationale: docs/adr/0008-deploy-topology-and-advertised-urls.md")
 
 check("every advertised artifact exists at the path its URL names", not missing)
