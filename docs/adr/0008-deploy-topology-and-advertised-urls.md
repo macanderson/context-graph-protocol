@@ -5,6 +5,18 @@
 records the topology that results. Tracking issue:
 [#57](https://github.com/macanderson/context-graph-protocol/issues/57).
 
+**Amended 2026-08-22 by
+[#78](https://github.com/macanderson/context-graph-protocol/pull/78).** Rule
+(1) stands unchanged; the fact it rested on does not. "Today it deploys none"
+was true when this was ratified and is no longer: `publish-spec.yml` syncs
+`schema/` to `contextgraphprotocol.org/schema/` and `SPEC.md`/`docs/**` to
+`/spec/` on every merge to `main`. Those two prefixes are now hosts-this-repo-
+serves for the purpose of rule (1), and nothing else on that apex is — the
+badge and registry URLs stay on `raw.githubusercontent.com`. The guard is
+keyed on the prefix, not the host, so it still rejects
+`contextgraphprotocol.org/badges/conformant.svg`, which is the 404 this ADR
+was written about.
+
 ## Context
 
 This repository has, at various times, believed it deploys the domains it

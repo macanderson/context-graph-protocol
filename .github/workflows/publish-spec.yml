@@ -1,0 +1,204 @@
+name: Publish spec
+
+# Puts the specification and the JSON Schemas on contextgraphprotocol.org, and
+# tells the microsite to rebuild.
+#
+# This repository has no website of its own — the site is built from
+# macanderson/cgp-website — so what it publishes is artifacts, into two
+# prefixes of that site's bucket that belong to this repository and nothing
+# else. The site's own deploy excludes them from its `--delete` sync and is
+# additionally denied write on them in IAM, so the two repositories cannot
+# overwrite each other.
+#
+# What this does NOT change is the schemas' canonical identity. Their `$id`
+# still resolves to raw.githubusercontent.com, and `validate-examples.py`
+# checks the served copy at that URL byte-for-byte. The copies published here
+# are a mirror on a branded host; promoting `$id` to it is a protocol-visible
+# change and is tracked separately.
+on:
+  pull_request:
+    paths:
+      - "schema/**"
+      - "docs/**"
+      - "SPEC.md"
+      - ".github/workflows/publish-spec.yml"
+  push:
+    branches: [main]
+    paths:
+      - "schema/**"
+      - "docs/**"
+      - "SPEC.md"
+      - ".github/workflows/publish-spec.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: publish-spec-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # Re-run rather than trusting ci.yml's `schema` job to have run. Nothing here
+  # can observe that job's result without a `workflow_run` trigger, whose
+  # failure mode is publishing anyway when the dependency is skipped. It costs
+  # a pip install and a few seconds, and it is the difference between "the
+  # schema validated somewhere" and "the bytes about to be published
+  # validated".
+  validate:
+    name: schema validates the examples
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - run: pip install jsonschema
+      - run: python3 schema/validate-examples.py
+
+  publish:
+    name: publish to contextgraphprotocol.org
+    if: github.event_name != 'pull_request'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    permissions:
+      contents: read
+      # Mints the OIDC token the AWS role trusts. On this job only — the
+      # validate job runs on pull requests, forks included, and must not be
+      # able to request one.
+      id-token: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      # Pinned to a commit SHA rather than a tag, unlike the rest of this
+      # repository's workflows. A tag is mutable, and this is the one job here
+      # that holds credentials able to write to a production bucket.
+      - uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          # No stored AWS key. The role trusts exactly one subject —
+          # `repo:macanderson/context-graph-protocol:environment:production` —
+          # so `environment: production` above is load-bearing rather than
+          # decorative, and the role can write only these two prefixes.
+          role-to-assume: arn:aws:iam::578673726240:role/gha-deploy-context-graph-protocol
+          aws-region: us-east-1
+
+      - name: publish the schemas
+        env:
+          BUCKET: cgp-site-578673726240
+        run: |
+          set -euo pipefail
+
+          # Deliberately no `--delete` on this prefix. A published schema URL
+          # is a contract other implementations resolve; removing one is a
+          # breaking change and must not be something a rename in this
+          # repository does silently on merge. Retiring a schema is a manual
+          # `aws s3 rm` with the argument made out loud.
+          #
+          # `--content-type` is spelled out because S3 guesses from the
+          # extension and would serve `.ndjson` as application/octet-stream,
+          # which browsers download instead of showing.
+          aws s3 sync schema "s3://$BUCKET/schema" \
+            --exclude '*' --include '*.json' \
+            --content-type 'application/json' \
+            --cache-control 'public, max-age=300, must-revalidate' \
+            --only-show-errors
+
+          aws s3 cp schema/reference-vectors.ndjson "s3://$BUCKET/schema/reference-vectors.ndjson" \
+            --content-type 'application/x-ndjson' \
+            --cache-control 'public, max-age=300, must-revalidate' \
+            --only-show-errors
+
+          aws s3 ls "s3://$BUCKET/schema/"
+
+      - name: publish the specification
+        env:
+          BUCKET: cgp-site-578673726240
+        run: |
+          set -euo pipefail
+
+          # `--delete` here, unlike the schemas: these are documents, they get
+          # renamed and retired as ordinary editing, and a page that no longer
+          # exists in the repository should not keep answering.
+          aws s3 sync docs "s3://$BUCKET/spec/docs" \
+            --delete \
+            --content-type 'text/markdown; charset=utf-8' \
+            --cache-control 'public, max-age=300, must-revalidate' \
+            --only-show-errors
+
+          aws s3 cp SPEC.md "s3://$BUCKET/spec/SPEC.md" \
+            --content-type 'text/markdown; charset=utf-8' \
+            --cache-control 'public, max-age=300, must-revalidate' \
+            --only-show-errors
+
+      - name: invalidate the CDN
+        env:
+          DISTRIBUTION: EPNX5MRWY4Y58
+        run: |
+          set -euo pipefail
+          # Scoped to the two prefixes this repository owns. A `/*`
+          # invalidation would also evict the microsite's pages, which this
+          # merge did not change — paid for, and a cold edge for readers who
+          # were not affected.
+          invalidation=$(aws cloudfront create-invalidation \
+            --distribution-id "$DISTRIBUTION" \
+            --paths '/schema/*' '/spec/*' \
+            --query 'Invalidation.Id' --output text)
+          echo "invalidation $invalidation"
+          aws cloudfront wait invalidation-completed \
+            --distribution-id "$DISTRIBUTION" --id "$invalidation"
+
+      - name: verify through the public hostname
+        run: |
+          set -euo pipefail
+          url=https://contextgraphprotocol.org/schema/contextgraph-envelope.schema.json
+          for attempt in $(seq 1 10); do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "$url" || echo 000)
+            if [ "$code" = "200" ]; then
+              # A 200 proves the edge answers. That the answer is the schema
+              # and not the site's 404 page — which is also served with a 200
+              # by a static site — is what this second check is for.
+              if curl -sS --max-time 15 "$url" | jq -e '.title' >/dev/null; then
+                echo "schema is live and parses as JSON"
+                exit 0
+              fi
+              echo "::error::$url returned 200 but the body is not the schema"
+              exit 1
+            fi
+            echo "attempt $attempt: $code"
+            sleep 6
+          done
+          echo "::error::$url did not return 200 after the publish (last status $code)"
+          exit 1
+
+      # The microsite renders documentation that quotes this specification, so
+      # a protocol merge has to rebuild it or the two drift with nothing to say
+      # which is current.
+      #
+      # This needs a token that can write to a *different* repository, which
+      # the job's own GITHUB_TOKEN cannot do by design. Until SITE_DISPATCH_TOKEN
+      # exists the step warns and continues rather than failing: the artifacts
+      # above are published either way, and failing the whole job would hide a
+      # successful publish behind a missing convenience.
+      - name: ask the microsite to rebuild
+        env:
+          TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TOKEN:-}" ]; then
+            echo "::warning::SITE_DISPATCH_TOKEN is not set — the schemas and spec are published, but contextgraphprotocol.org will not rebuild until cgp-website's next own merge. Create a fine-grained PAT with Contents: read-write on macanderson/cgp-website and add it as this repository's SITE_DISPATCH_TOKEN secret."
+            exit 0
+          fi
+          status=$(curl -sS -o /dev/stderr -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/macanderson/cgp-website/dispatches \
+            -d '{"event_type":"protocol-updated"}')
+          if [ "$status" != "204" ]; then
+            echo "::error::repository_dispatch returned $status"
+            exit 1
+          fi
+          echo "cgp-website rebuild requested"

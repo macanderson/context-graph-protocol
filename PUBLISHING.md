@@ -172,3 +172,67 @@ never by trying to overwrite or delete what's already there. This is exactly
 why every command above was verified with `--dry-run` / `--no-verify
 --exclude-lockfile` first, and why no agent or script should run the real
 `cargo publish` without a human deliberately choosing to.
+
+---
+
+# Publishing the specification and schemas to contextgraphprotocol.org
+
+Separate from the crates above, and automatic:
+[`.github/workflows/publish-spec.yml`](./.github/workflows/publish-spec.yml)
+runs on every push to `main` that touches `schema/`, `docs/` or `SPEC.md`, and
+puts them on the microsite's CDN.
+
+| Source | URL |
+| --- | --- |
+| `schema/*.json` | `https://contextgraphprotocol.org/schema/…` |
+| `schema/reference-vectors.ndjson` | `https://contextgraphprotocol.org/schema/reference-vectors.ndjson` |
+| `SPEC.md` | `https://contextgraphprotocol.org/spec/SPEC.md` |
+| `docs/**` | `https://contextgraphprotocol.org/spec/docs/…` |
+
+`schema/validate-examples.py` runs first, in this workflow rather than only in
+`ci.yml`. Reading another workflow's result would need a `workflow_run` trigger,
+whose failure mode is publishing anyway when the dependency is skipped — and the
+distinction that matters is between "the schema validated somewhere" and "the
+bytes about to be published validated".
+
+## This does not move the schemas' identity
+
+Each schema's `$id` still resolves to `raw.githubusercontent.com`, and
+`validate-examples.py` checks the copy served *there* byte-for-byte. What is
+published to the site is a **mirror on a branded host**, not a new canonical
+location. Promoting `$id` to `contextgraphprotocol.org` would change what every
+validator resolves and is a protocol-visible decision, not a deployment one.
+
+## Two things the site's own repository depends on
+
+The microsite (`macanderson/cgp-website`) is built from a different repository
+into the *same* bucket. Two arrangements keep them from overwriting each other,
+and both are load-bearing:
+
+- Its deploy excludes `schema/` and `spec/` from a `--delete` sync. Without
+  that, it would remove everything this workflow publishes, silently — deleting
+  a file the sync did not expect is not an error.
+- This repository's AWS role can write **only** those two prefixes, and the
+  site's role is explicitly denied them. Either arrangement being dropped fails
+  a deploy loudly rather than corrupting the other repository's output.
+
+## Retiring a schema is manual, on purpose
+
+The schema upload carries no `--delete`. A published schema URL is a contract
+other implementations resolve, so removing one is a breaking change and must not
+be something a rename in this repository does silently on merge. Retiring one is
+an `aws s3 rm` with the argument made out loud. The `spec/` upload *does* use
+`--delete`, because those are documents and renaming them is ordinary editing.
+
+## One-time setup
+
+- **`production` environment.** The AWS role trusts exactly the subject
+  `repo:macanderson/context-graph-protocol:environment:production`. There is no
+  stored AWS key; without the environment the credential exchange fails.
+- **`SITE_DISPATCH_TOKEN` secret.** The last step asks the microsite to rebuild,
+  because its rendered documentation quotes this specification. Writing to
+  another repository is something the job's own `GITHUB_TOKEN` cannot do by
+  design, so this needs a fine-grained PAT with `Contents: read-write` on
+  `macanderson/cgp-website`. **Until it exists the step warns and the job still
+  succeeds** — the schemas and spec are published either way; only the site
+  rebuild waits for `cgp-website`'s next own merge.
