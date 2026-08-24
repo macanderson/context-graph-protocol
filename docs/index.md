@@ -5,6 +5,10 @@ Reference documentation for the **Context Graph Protocol (CGP)** crates:
 [`contextgraph-host`](https://crates.io/crates/contextgraph-host), and
 [`contextgraph-conformance`](https://crates.io/crates/contextgraph-conformance).
 
+- [**Engineer's guide**](./GUIDE.md) — **start here.** One doc covering the
+  coding principles, the full schema (wire messages, frame shape, and every
+  Rust type), and an indexed summary of every ADR. Written to be readable by
+  anyone, no prior context required.
 - [**The Context Graph Protocol: A Technical Overview**](./overview.md) — the
   one-read marketing overview for engineers: the problem CGP solves, the seven
   guarantees, the wire surface, how it relates to MCP, and why you would build

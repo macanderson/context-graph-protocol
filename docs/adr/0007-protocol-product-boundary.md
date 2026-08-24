@@ -153,5 +153,7 @@ the #28 profile alone.
   guards the *code* side by building stella and the oxagen copy against this
   repo's HEAD.
 
-See [`docs/adaptive-context-reconciliation.md`](../adaptive-context-reconciliation.md)
-for the item-by-item delta table this ADR is the anchor for.
+The item-by-item delta table this ADR was the anchor for has since been
+resolved and removed from the tree; the resolutions it drove now live in this
+ADR, ADR 0004, and the
+[Context Exchange Provider profile](../profiles/context-exchange-provider.md).

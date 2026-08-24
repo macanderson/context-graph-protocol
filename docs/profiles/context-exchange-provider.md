@@ -21,8 +21,8 @@
 > family — **not** new frozen-`1.0` core surface. It carries record *values* and
 > *decisions*; it never grants a host authority to act on them (ADR 0007 §3).
 > Anchored on [ADR 0007 — the protocol/product boundary](../adr/0007-protocol-product-boundary.md)
-> and the [adaptive-context reconciliation](../adaptive-context-reconciliation.md)
-> delta table (rows D1/D4/D5/D6/D7, B3/B5, E3, C5), which this profile resolves.
+> and the (now-resolved and removed) adaptive-context reconciliation delta
+> table, which this profile resolved.
 
 ## 1. Why a profile, not core
 

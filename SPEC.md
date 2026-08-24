@@ -359,7 +359,7 @@ to obtain the full source of a `compact` or `reference` frame.
 **`context/resolve` is not defined in `contextgraph/1.0`.** There is no resolve
 envelope, and a host has no protocol-defined operation that turns a `content_ref`
 into bytes. Resolution is reserved for a `1.x` additive minor (§13); a design
-sketch lives under [`docs/sketches/`](./docs/sketches/). The **Context Exchange
+sketch existed for this during design work but is not kept in-tree. The **Context Exchange
 Provider profile** (issue #28,
 [`docs/profiles/context-exchange-provider.md`](docs/profiles/context-exchange-provider.md))
 takes that reservation up: it defines `context/resolve` as a **profile-scoped**
@@ -511,8 +511,7 @@ emitting it, would reintroduce the dead-capability surface §8.2 and
 concrete traversal consumer forces its design it can land as an additive minor,
 gated on a new `capabilities.neighbors`, with `depth: 1` defined to return
 exactly the G4 anchored set so nothing this freeze witnessed is invalidated. A
-design sketch lives under
-[`docs/sketches/context-neighbors.md`](./docs/sketches/context-neighbors.md).
+design sketch existed for this during design work but is not kept in-tree.
 
 ---
 
@@ -788,8 +787,7 @@ measurement, not enforced against ones that don't.
 **Not on the wire.** There is no `context/feedback` method and no
 `Capabilities.feedback` in this revision. The vocabulary is specified because it
 has to be shared for scores to be comparable across implementations; the
-transport is deferred to a 1.x additive minor
-(`docs/sketches/attribution-feedback.md`). Shipping a negotiated feedback method
+transport is deferred to a 1.x additive minor. Shipping a negotiated feedback method
 with no provider consuming it would recreate exactly the dead capability surface
 [ADR 0004](docs/adr/0004-dead-capability-surface.md) removed — and the asymmetry
 favors waiting: adding the method later is family-safe, removing a dead one is
