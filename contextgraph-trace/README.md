@@ -7,7 +7,7 @@ The host execution trace (journal) and its replay oracles for the **Context
 Graph Protocol**.
 
 > **Sketch stage — not `contextgraph/1.0`.** This crate implements
-> [`docs/sketches/host-trace.md`](../docs/sketches/host-trace.md), a sketch. It
+> a design sketch (removed as stale after `contextgraph/1.0` shipped). It
 > is published so downstream hosts can depend on the trace vocabulary by
 > version rather than by git rev, but the journal wire format may change in any
 > `0.x` release. Gate on the `TRACE_FORMAT` constant, not on the crate version.

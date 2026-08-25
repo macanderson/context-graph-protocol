@@ -9,6 +9,8 @@ https://contextgraphprotocol.org
 
 **The canonical architecture for building context graphs that agents use to reason over.**
 
+> New to this codebase? Read the [Engineer's Guide](./docs/GUIDE.md) — one doc
+> covering the coding principles, the full schema, and every ADR, in plain English.
 > If you want the deep research analysis, read [Advantages and Uniqueness](./docs/protocol-advantages.md).
 > If you want to build a provider today, read [Implementing a provider](./docs/implementing-a-provider.md).
 > This page is the one-read explanation of what Context Graph Protocol (CGP) is, why it exists, and why

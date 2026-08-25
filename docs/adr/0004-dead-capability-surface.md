@@ -38,7 +38,7 @@ consent interaction, and partial-failure reporting would all be guessed rather
 than learned.
 
 The episodic-memory use case that motivates a write path is real, and it
-deserves a design driven by a working provider. `docs/sketches/write-path.md`
+deserves a design driven by a working provider. A removed design sketch
 keeps the door visibly open.
 
 ### 2. `DataFlow.writes` — **kept**, and redefined
@@ -84,7 +84,7 @@ letting push lapse by omission. The push path is not foreclosed:
 [ADR 0002](./0002-request-correlation-and-the-json-rpc-question.md) makes
 unsolicited provider→host messages *expressible* by defining an envelope with
 no `id` as a notification, which is the exact prerequisite push invalidation
-needs. `docs/sketches/push-invalidation.md` records the design so the 1.x
+needs. A removed design sketch recorded the design so the 1.x
 additive path is genuinely open and not accidentally closed.
 
 ### 4. `QueryCapability.filters` — removed
@@ -99,7 +99,7 @@ with the result.
 issue #18. Those providers are the intended forcing function: if writing them
 proves filters necessary, the design lands additively in 1.x with a real
 consumer behind it, which is a strictly better position than the one being
-abandoned here. `docs/sketches/query-filters.md` records the open design
+abandoned here. A removed design sketch recorded the open design
 questions.
 
 ## Downstream impact
@@ -121,7 +121,7 @@ questions.
 
 - Three fields removed from `contextgraph-types`, the JSON Schema, the
   examples, and `docs/`.
-- Three design sketches committed under `docs/sketches/` so each door is
+- Three design sketches recorded (since removed as stale) so each door was
   visibly open rather than silently shut.
 - `CHANGELOG.md` records all three removals under `[Unreleased]` as breaking.
 - The handshake surface now contains nothing a host cannot exercise, which is
