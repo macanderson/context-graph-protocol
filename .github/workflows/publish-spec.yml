@@ -82,12 +82,12 @@ jobs:
           # `repo:macanderson/context-graph-protocol:environment:production` —
           # so `environment: production` above is load-bearing rather than
           # decorative, and the role can write only these two prefixes.
-          role-to-assume: arn:aws:iam::578673726240:role/gha-deploy-context-graph-protocol
+          role-to-assume: arn:aws:iam::916294258235:role/gha-deploy-context-graph-protocol
           aws-region: us-east-1
 
       - name: publish the schemas
         env:
-          BUCKET: cgp-site-578673726240
+          BUCKET: cgp-site-916294258235
         run: |
           set -euo pipefail
 
@@ -115,7 +115,7 @@ jobs:
 
       - name: publish the specification
         env:
-          BUCKET: cgp-site-578673726240
+          BUCKET: cgp-site-916294258235
         run: |
           set -euo pipefail
 
@@ -135,7 +135,7 @@ jobs:
 
       - name: invalidate the CDN
         env:
-          DISTRIBUTION: EPNX5MRWY4Y58
+          DISTRIBUTION: E3FOT1HB57C89U
         run: |
           set -euo pipefail
           # Scoped to the two prefixes this repository owns. A `/*`
