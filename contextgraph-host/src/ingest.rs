@@ -1689,7 +1689,7 @@ impl Artifact {
         let cost = budget_tokens(&content);
         let mut frame = ContextFrame::full(
             self.id.clone(),
-            self.kind,
+            self.kind.clone(),
             self.title.clone(),
             content,
             self.score,
@@ -1709,7 +1709,7 @@ impl Artifact {
         let cost = budget_tokens(&inline);
         let mut frame = ContextFrame::full(
             self.id.clone(),
-            self.kind,
+            self.kind.clone(),
             self.title.clone(),
             inline.clone(),
             self.score,
@@ -1731,7 +1731,7 @@ impl Artifact {
     fn as_reference(&self, provider_id: &str) -> ContextFrame {
         let mut frame = ContextFrame::reference(
             self.id.clone(),
-            self.kind,
+            self.kind.clone(),
             self.title.clone(),
             self.content_ref(provider_id),
             self.address_hash.clone(),
@@ -1787,7 +1787,7 @@ impl IngestProvider {
         let id = id.into();
         let mut kinds: Vec<String> = artifacts
             .iter()
-            .map(|a| frame_kind_name(a.kind).to_string())
+            .map(|a| frame_kind_name(&a.kind).to_string())
             .collect();
         kinds.sort();
         kinds.dedup();

@@ -81,3 +81,33 @@ It does not specify tool invocation — that is
 [MCP](https://modelcontextprotocol.io)'s scope — and will not absorb it. An
 agent that needs both composes them: Context Graph Protocol frames feed the prompt, MCP tools do
 the work. See ["How Context Graph Protocol relates to MCP"](./docs/overview.md).
+
+### The consent boundary
+
+**The host enforces local consent, not organizational policy.**
+
+`contextgraph-host` answers one question: may *this* provider, on *this*
+machine, send *this* content to *this* class of destination, given a receipt
+*this* user or policy granted? Everything it needs to answer that lives on the
+machine. Fleet-level RBAC, org-wide policy distribution, aggregated audit
+records across many machines, and central revocation are **out of scope** — they
+belong to whatever product operates a fleet, and Oxagen is one such product
+([ADR 0007](./docs/adr/0007-protocol-product-boundary.md)).
+
+This line is written down before it is contested, because the pressure runs one
+way. Every request to make the host "just" read a policy file, "just" check a
+central registry, or "just" ship its receipts somewhere is individually
+reasonable and collectively fatal: a host that needs an organization behind it
+to function is no longer a protocol implementation an individual can run, and
+"conformant" would quietly come to mean "connected to someone's control plane."
+
+The protocol supplies the **primitives** an organizational layer is built from —
+[`ConsentReceipt`](./SPEC.md) as a portable, auditable artifact, `EgressScope` as
+a shared destination vocabulary, and provenance attestations (§6.5) as offline
+evidence. A fleet product consumes those primitives. It does not get to move
+into the host to reach them.
+
+A proposal that would put organizational policy inside the host is not rejected
+for being a bad idea — it may be an excellent product. It is rejected as
+**out of scope**, and the answer does not change because the proposer is the
+maintainer.

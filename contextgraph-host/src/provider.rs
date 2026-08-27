@@ -66,16 +66,14 @@ pub trait ContextProvider: Send + Sync {
 /// The snake_case wire name of a [`FrameKind`], matching its `serde`
 /// representation and the strings a provider lists in
 /// [`Capabilities::query`]'s `kinds`.
-pub fn frame_kind_name(kind: FrameKind) -> &'static str {
-    match kind {
-        FrameKind::Snippet => "snippet",
-        FrameKind::Symbol => "symbol",
-        FrameKind::Fact => "fact",
-        FrameKind::Doc => "doc",
-        FrameKind::Memory => "memory",
-        FrameKind::Episode => "episode",
-        FrameKind::Graph => "graph",
-    }
+///
+/// A thin delegation to [`FrameKind::as_str`], kept because several call sites
+/// read better as a function. It used to be a hand-written `match` returning
+/// `&'static str`; that duplicated the vocabulary in a second place and, worse,
+/// could not name a kind the host did not know. Now that the vocabulary is open
+/// the borrow is tied to the kind, because an unknown kind owns its string.
+pub fn frame_kind_name(kind: &FrameKind) -> &str {
+    kind.as_str()
 }
 
 /// Whether a provider is worth querying for a given request. A query with no
@@ -88,7 +86,7 @@ pub fn capability_matches(caps: &Capabilities, query: &ContextQuery) -> bool {
         return true;
     }
     query.kinds.iter().any(|requested| {
-        let name = frame_kind_name(*requested);
+        let name = frame_kind_name(requested);
         caps.query.kinds.iter().any(|served| served == name)
     })
 }
@@ -133,8 +131,8 @@ mod tests {
             (FrameKind::Episode, "episode"),
             (FrameKind::Graph, "graph"),
         ] {
-            assert_eq!(frame_kind_name(kind), name);
-            let serde_name = serde_json::to_value(kind).unwrap();
+            assert_eq!(frame_kind_name(&kind), name);
+            let serde_name = serde_json::to_value(&kind).unwrap();
             assert_eq!(serde_name, serde_json::Value::String(name.to_string()));
         }
     }

@@ -75,7 +75,7 @@ pub mod wire;
 pub use compose::{
     AuditEntry, Citation, ComposedPrompt, CompositionAudit, DedupDrop, Deduped, ExclusionReason,
     FrameDisposition, VerificationState, budget_split, compose_context, compose_for_prompt,
-    dedup_cross_provider, order_by_value,
+    dedup_cross_provider, fold_to_edges, order_by_value,
 };
 pub use consent::{ConsentDecision, ConsentRecord, ConsentStore};
 pub use error::HostError;

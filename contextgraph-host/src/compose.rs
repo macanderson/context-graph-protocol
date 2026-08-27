@@ -76,7 +76,7 @@ fn render_frame(provider_id: &str, frame: &ContextFrame) -> String {
         "<frame provider=\"{provider}\" id=\"{id}\" kind=\"{kind}\" cite=\"{cite}\">\n{content}\n</frame>\n",
         provider = escape_attribute(provider_id),
         id = escape_attribute(&frame.id),
-        kind = frame_kind_name(frame.kind),
+        kind = frame_kind_name(&frame.kind),
         cite = escape_attribute(cite),
         // A `reference` frame carries no inline content — it must be resolved
         // (`context/resolve`, a later phase) before composition; here it renders
@@ -354,6 +354,24 @@ fn merge_provenance(base: &[Provenance], extra: &[Provenance]) -> Vec<Provenance
 /// identical bytes every time; it does **not** promise the stricter
 /// score-independence of [`compose_context`], because placing by value is
 /// exactly a choice to let score matter.
+///
+/// # Ranking across providers is this host's policy, not a protocol guarantee
+///
+/// `score` is **provider-local and ordinal** (`SPEC.md` §6.6, F10): the protocol
+/// defines no shared scale, so one provider's `0.8` and another's are not the
+/// same claim. Ranking a mixed set by raw `score` therefore favors whichever
+/// provider scores most generously.
+///
+/// This function does it anyway, deliberately, as a documented default for a
+/// host that has no better ranking policy — some total order is required to
+/// place frames at all, and an arbitrary one would be worse. A host that *has* a
+/// ranking policy — a reranker it controls, per-provider quotas, an explicit
+/// trust weighting — should apply it and call [`fold_to_edges`] directly, which
+/// is the placement without the ranking.
+///
+/// What F10 forbids is not this ordering but *laundering* it: a host must never
+/// apply a cross-provider `score` threshold, nor present a raw `score` to a user
+/// as a cross-provider measure of relevance.
 pub fn order_by_value(mut frames: Vec<(String, ContextFrame)>) -> Vec<(String, ContextFrame)> {
     // Rank best-first: score desc, then canonical FrameId asc as the tiebreak.
     frames.sort_by(|(pa, fa), (pb, fb)| {
@@ -366,7 +384,13 @@ pub fn order_by_value(mut frames: Vec<(String, ContextFrame)>) -> Vec<(String, C
 
 /// Deal an already-ranked (best-first) sequence to alternating ends: best at the
 /// top, second at the bottom, third just inside the top, and so on.
-fn fold_to_edges<T>(ranked: Vec<T>) -> Vec<T> {
+///
+/// This is the Lost-in-the-Middle *placement* separated from the *ranking*.
+/// [`order_by_value`] pairs the two, ranking by raw `score`; a host with its own
+/// reranker, per-provider quotas, or a trust weighting should rank the frames
+/// itself and call this directly, because ranking across providers by raw
+/// `score` is a policy choice and not a protocol guarantee (`SPEC.md` §6.6, F10).
+pub fn fold_to_edges<T>(ranked: Vec<T>) -> Vec<T> {
     let n = ranked.len();
     let mut slots: Vec<Option<T>> = Vec::with_capacity(n);
     slots.resize_with(n, || None);

@@ -12,7 +12,31 @@ from typing import Any, Literal, TypedDict
 
 PROTOCOL_VERSION = "contextgraph/1.0"
 
-FrameKind = Literal["snippet", "symbol", "fact", "doc", "memory", "episode", "graph"]
+#: The base frame kinds of ``contextgraph/1.0``.
+KnownFrameKind = Literal[
+    "snippet", "symbol", "fact", "doc", "memory", "episode", "graph"
+]
+
+#: Every base kind this revision names — a registry, not a restriction.
+KNOWN_FRAME_KINDS: tuple[str, ...] = (
+    "snippet",
+    "symbol",
+    "fact",
+    "doc",
+    "memory",
+    "episode",
+    "graph",
+)
+
+#: What kind of thing a frame represents.
+#:
+#: The vocabulary is **open**: a later ``contextgraph/1.x`` may add kinds, and
+#: SPEC.md §13 U2 requires a receiver to accept an unrecognised one, treat the
+#: frame as opaque evidence, and preserve the original string verbatim if it
+#: re-emits the frame. Typing this as a bare ``Literal`` would make a 1.1 frame
+#: a type error on a 1.0 consumer — the flag day the version promise rules out.
+#: Use :data:`KnownFrameKind` when you genuinely mean only the seven base kinds.
+FrameKind = str
 Representation = Literal["full", "compact", "reference"]
 ContentFidelity = Literal["exact", "normalized", "summarized", "omitted"]
 VerdictStatus = Literal["valid", "stale", "gone", "unknown"]

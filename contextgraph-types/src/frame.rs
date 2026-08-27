@@ -19,9 +19,54 @@ use crate::identity::FrameId;
 use crate::token::budget_tokens;
 use crate::validate::{is_protocol_timestamp, is_well_formed_digest};
 
-/// What kind of thing a frame represents.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+/// The wire strings of the seven base frame kinds.
+const KIND_SNIPPET: &str = "snippet";
+const KIND_SYMBOL: &str = "symbol";
+const KIND_FACT: &str = "fact";
+const KIND_DOC: &str = "doc";
+const KIND_MEMORY: &str = "memory";
+const KIND_EPISODE: &str = "episode";
+const KIND_GRAPH: &str = "graph";
+
+/// What kind of thing a frame represents (`SPEC.md` §6).
+///
+/// # Why this is not a closed enum
+///
+/// The protocol guarantees no flag day inside a major family: a `contextgraph/1.0`
+/// host and a `contextgraph/1.1` host interoperate, and minor versions may add
+/// vocabulary. A closed enum contradicts that guarantee twice over. A frame
+/// carrying a kind introduced in 1.1 would fail to **deserialize** on a 1.0
+/// host — not degrade, *fail* — and every exhaustive `match` in downstream Rust
+/// would break the day a variant was added.
+///
+/// So `FrameKind` follows the same shape as [`EgressScope`](crate::EgressScope):
+/// a closed base vocabulary of seven kinds, plus an
+/// [`Unknown`](Self::Unknown) variant that **preserves the original string**.
+/// A host that does not recognize a kind can still parse the frame, route it,
+/// budget it, cite it, and re-serialize it byte-identically.
+///
+/// That last property is why `Unknown` carries a `String` rather than being a
+/// bare unit variant with `#[serde(other)]`. `#[serde(other)]` collapses every
+/// unrecognized value into one variant and *discards* the original, so a host
+/// relaying a frame it did not fully understand would silently rewrite
+/// `"kind": "trajectory"` to something else on the way out. A forward-compat
+/// mechanism that corrupts data in a relay is worse than the failure it
+/// replaces.
+///
+/// # `#[non_exhaustive]`
+///
+/// The attribute forces downstream `match` expressions to carry a wildcard arm,
+/// which makes every *future* kind addition a non-breaking change for every
+/// consumer. It is a one-time cost paid now so the version promise holds
+/// forever after.
+///
+/// # Not `Copy`
+///
+/// Preserving an unknown kind's string means the type owns an allocation, so it
+/// cannot be `Copy`. Forward compatibility is a protocol guarantee; `Copy` was
+/// an ergonomic convenience. When the two conflict the guarantee wins.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum FrameKind {
     Snippet,
     Symbol,
@@ -30,6 +75,82 @@ pub enum FrameKind {
     Memory,
     Episode,
     Graph,
+    /// A kind this revision does not define — most likely one introduced by a
+    /// later minor version of the same major family. The original wire string
+    /// is retained verbatim so the frame round-trips unchanged.
+    ///
+    /// A host **MUST NOT** reject a frame for carrying an unknown kind. It may
+    /// decline to *specialize* its handling — that is a rendering decision, not
+    /// a validity one.
+    Unknown(String),
+}
+
+impl FrameKind {
+    /// The canonical wire string of this kind.
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Snippet => KIND_SNIPPET,
+            Self::Symbol => KIND_SYMBOL,
+            Self::Fact => KIND_FACT,
+            Self::Doc => KIND_DOC,
+            Self::Memory => KIND_MEMORY,
+            Self::Episode => KIND_EPISODE,
+            Self::Graph => KIND_GRAPH,
+            Self::Unknown(kind) => kind,
+        }
+    }
+
+    /// Parse a wire string: a known base name maps to its variant, anything
+    /// else to [`Unknown`](Self::Unknown). Never fails — an unrecognized kind
+    /// is a frame a host cannot specialize, not a frame it must refuse.
+    pub fn from_wire(kind: impl Into<String>) -> Self {
+        let kind = kind.into();
+        match kind.as_str() {
+            KIND_SNIPPET => Self::Snippet,
+            KIND_SYMBOL => Self::Symbol,
+            KIND_FACT => Self::Fact,
+            KIND_DOC => Self::Doc,
+            KIND_MEMORY => Self::Memory,
+            KIND_EPISODE => Self::Episode,
+            KIND_GRAPH => Self::Graph,
+            _ => Self::Unknown(kind),
+        }
+    }
+
+    /// Whether this kind is one of the seven this revision defines.
+    pub fn is_known(&self) -> bool {
+        !matches!(self, Self::Unknown(_))
+    }
+
+    /// Every kind this revision names — a registry, not a restriction.
+    pub const KNOWN: &'static [&'static str] = &[
+        KIND_SNIPPET,
+        KIND_SYMBOL,
+        KIND_FACT,
+        KIND_DOC,
+        KIND_MEMORY,
+        KIND_EPISODE,
+        KIND_GRAPH,
+    ];
+}
+
+impl std::fmt::Display for FrameKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl Serialize for FrameKind {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for FrameKind {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let kind = String::deserialize(deserializer)?;
+        Ok(Self::from_wire(kind))
+    }
 }
 
 /// How a frame carries its content
@@ -838,5 +959,70 @@ mod tests {
         });
         frame.content = Some("summary…".into());
         assert!(frame.representation_invariants().is_ok());
+    }
+
+    #[test]
+    fn every_known_kind_round_trips_through_its_canonical_wire_string() {
+        for (kind, wire) in [
+            (FrameKind::Snippet, "snippet"),
+            (FrameKind::Symbol, "symbol"),
+            (FrameKind::Fact, "fact"),
+            (FrameKind::Doc, "doc"),
+            (FrameKind::Memory, "memory"),
+            (FrameKind::Episode, "episode"),
+            (FrameKind::Graph, "graph"),
+        ] {
+            assert_eq!(kind.as_str(), wire);
+            let json = serde_json::to_string(&kind).unwrap();
+            assert_eq!(json, format!("\"{wire}\""));
+            let back: FrameKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, kind);
+            assert!(kind.is_known());
+        }
+    }
+
+    #[test]
+    fn a_kind_from_a_later_minor_version_deserializes_instead_of_failing() {
+        // The bug this variant exists for: before it, a `contextgraph/1.1` frame
+        // carrying a kind added in 1.1 made a 1.0 host fail deserialization
+        // outright — which contradicts the protocol's own promise of no flag day
+        // inside a major family.
+        let back: FrameKind = serde_json::from_str("\"trajectory\"").unwrap();
+        assert_eq!(back, FrameKind::Unknown("trajectory".into()));
+        assert!(!back.is_known());
+    }
+
+    #[test]
+    fn an_unknown_kind_re_serializes_byte_identically() {
+        // Why `Unknown(String)` and not `#[serde(other)]`: a relaying host must
+        // hand on exactly what it received. Discarding the string would make a
+        // 1.0 host silently rewrite a 1.1 frame it was merely passing through —
+        // corruption dressed up as forward compatibility.
+        let json = "\"trajectory\"";
+        let kind: FrameKind = serde_json::from_str(json).unwrap();
+        assert_eq!(serde_json::to_string(&kind).unwrap(), json);
+    }
+
+    #[test]
+    fn a_whole_frame_with_an_unknown_kind_survives_a_round_trip() {
+        let wire = r#"{"id":"f1","kind":"trajectory","title":"Run 12","content":"…","score":0.5,"token_cost":1}"#;
+        let frame: ContextFrame = serde_json::from_str(wire).unwrap();
+        assert_eq!(frame.kind, FrameKind::Unknown("trajectory".into()));
+        // Everything else still works: a host can budget, order, and cite a
+        // frame whose kind it cannot specialize.
+        assert!(frame.has_valid_score());
+        let back: ContextFrame =
+            serde_json::from_str(&serde_json::to_string(&frame).unwrap()).unwrap();
+        assert_eq!(back, frame);
+    }
+
+    #[test]
+    fn an_unknown_kind_never_collides_with_a_known_one() {
+        assert_eq!(FrameKind::from_wire("doc"), FrameKind::Doc);
+        assert_ne!(FrameKind::Unknown("doc".into()), FrameKind::Doc);
+        for known in FrameKind::KNOWN {
+            assert!(FrameKind::from_wire(*known).is_known(), "{known}");
+        }
+        assert_eq!(FrameKind::KNOWN.len(), 7);
     }
 }

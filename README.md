@@ -1,4 +1,4 @@
-# Context Graph Protocol (draft v0.1.0)
+# Context Graph Protocol (`contextgraph/1.0`)
 
 [![CI](https://github.com/macanderson/context-graph-protocol/actions/workflows/ci.yml/badge.svg)](https://github.com/macanderson/context-graph-protocol/actions/workflows/ci.yml)
 [![contextgraph-types on crates.io](https://img.shields.io/crates/v/contextgraph-types.svg)](https://crates.io/crates/contextgraph-types) [![contextgraph-types docs](https://img.shields.io/docsrs/contextgraph-types)](https://docs.rs/contextgraph-types)
@@ -7,7 +7,9 @@
 
 https://contextgraphprotocol.org
 
-**The canonical architecture for building context graphs that agents use to reason over.**
+**The only context protocol whose conformance is machine-checked** — every
+guarantee below is enforced by an executable suite with an adversarial mode, not
+asserted in prose.
 
 > New to this codebase? Read the [Engineer's Guide](./docs/GUIDE.md) — one doc
 > covering the coding principles, the full schema, and every ADR, in plain English.
@@ -170,7 +172,7 @@ prompt. MCP tools do the work.
   check on purpose, so you know the checks are real.
 - **Stability you can pin.** The protocol version is `contextgraph/1.0`. Two versions
   interoperate when they share a major family, the part before the first dot. So
-  `contextgraph/1.0` and `contextgraph/1.0` both belong to family `contextgraph/1` and interoperate.
+  `contextgraph/1.0` and `contextgraph/1.1` both belong to family `contextgraph/1` and interoperate.
   When the draft freezes, every deployed provider keeps working. No flag day.
 
 ---
