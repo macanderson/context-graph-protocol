@@ -477,7 +477,8 @@
         "memory",
         "episode",
         "graph"
-      ]
+      ],
+      "$comment": "AUTHORING LINT, NOT THE INTEROP CONTRACT. These are the base kinds of contextgraph/1.0; the closed enum exists so a typo in a fixture ('dcc') fails CI. On the wire the vocabulary is OPEN: SPEC.md §13 U2 requires a receiver to accept an unrecognised kind (most likely one added by a later 1.x), treat the frame as opaque evidence, and preserve the original string verbatim if it re-emits the frame. Do NOT use this schema to validate messages from a peer — rejecting a frame here would break the family's no-flag-day guarantee. See contextgraph_types::FrameKind::Unknown."
     },
 
     "Representation": {

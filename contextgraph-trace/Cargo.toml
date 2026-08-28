@@ -26,7 +26,7 @@ publish = true
 [dependencies]
 # Floor requirement — see the note in contextgraph-host/Cargo.toml: caret reqs
 # break the release version stamp at the first minor bump.
-contextgraph-types = { path = "../contextgraph-types", version = ">=1.0.0" }
+contextgraph-types = { path = "../contextgraph-types", version = ">=2.0.0" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

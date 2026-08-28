@@ -11,8 +11,8 @@ homepage.workspace = true
 publish = false
 
 [dependencies]
-contextgraph-types = { path = "../contextgraph-types", version = ">=1.0.0" }
-contextgraph-host = { path = "../contextgraph-host", version = ">=1.0.0" }
+contextgraph-types = { path = "../contextgraph-types", version = ">=2.0.0" }
+contextgraph-host = { path = "../contextgraph-host", version = ">=2.0.0" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

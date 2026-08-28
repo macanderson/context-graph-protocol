@@ -7,11 +7,12 @@ conformant** — green on
 checkable report backing the claim. It exists so "conformant" stays a
 verifiable fact about a specific build, not a badge anyone can paste in.
 
-Listings here are also load-bearing for governance: the freeze from
-`contextgraph/1.0` to `contextgraph/1.0` requires **at least two
-independent implementations** passing the suite
-([GOVERNANCE.md](../GOVERNANCE.md#the-path-to-contextgraph10)). This registry
-is where that count becomes checkable.
+Listings here are also load-bearing for governance: the move from single-
+maintainer stewardship to a group drawn from independent implementers is
+triggered by **adoption** — independent implementations passing the suite —
+not by a calendar date
+([GOVERNANCE.md](../GOVERNANCE.md#governance-evolution)). This registry is
+where that count becomes checkable.
 
 ## Conformant providers
 

@@ -411,7 +411,7 @@ The **major family** is the substring up to (but not including) the first `.`
 — e.g. the family of `contextgraph/1.0` is `contextgraph/1`.
 
 Two version strings interoperate if and only if they share a major family.
-`contextgraph/1.0` and `contextgraph/1.0` both belong to family `contextgraph/1` and interoperate;
+`contextgraph/1.0` and `contextgraph/1.1` both belong to family `contextgraph/1` and interoperate;
 `contextgraph/2.0` does not interoperate with either. The `-draft` suffix marks a
 not-yet-frozen version within a family and does not affect interoperability.
 This rule is implemented by `contextgraph-host::wire::versions_compatible`; an

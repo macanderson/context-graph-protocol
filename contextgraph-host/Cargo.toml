@@ -21,7 +21,11 @@ publish = true
 # stops matching at the first minor bump (path deps must satisfy `version`
 # too). ">=" keeps the stamped build resolving at any version and remains a
 # valid crates.io requirement for the independent Context Graph Protocol publish (PUBLISHING.md).
-contextgraph-types = { path = "../contextgraph-types", version = ">=1.0.0" }
+#
+# The floor moved to 2.0.0 with the open-`FrameKind` break (ADR 0011): this
+# crate does not compile against `contextgraph-types` 1.x, so a floor of
+# ">=1.0.0" would let cargo resolve a pair that cannot build.
+contextgraph-types = { path = "../contextgraph-types", version = ">=2.0.0" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

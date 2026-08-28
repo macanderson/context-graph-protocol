@@ -15,8 +15,21 @@ categories = ["encoding", "api-bindings"]
 # industry-facing artifact meant to be published on its own (issue #19).
 publish = true
 
+[features]
+# Off by default so the crate's "zero dependencies beyond serde" promise holds
+# for the pure wire consumer. `ProvenanceAttestation` itself always compiles —
+# only the hashing and signature checking need real cryptography.
+default = []
+attestation = ["dep:sha2", "dep:ed25519-dalek"]
+
 [dependencies]
 serde.workspace = true
+sha2 = { workspace = true, optional = true }
+ed25519-dalek = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json.workspace = true
+
+[package.metadata.docs.rs]
+# docs.rs renders the attestation surface; ordinary builds still opt in.
+all-features = true

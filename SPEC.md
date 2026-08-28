@@ -95,7 +95,7 @@ minor          = 1*DIGIT
 
 The **major family** is the substring up to (not including) the first `.`. Two
 versions interoperate **if and only if** they share a major family.
-`contextgraph/1.0` and `contextgraph/1.0` both belong to `contextgraph/1`
+`contextgraph/1.0` and `contextgraph/1.1` both belong to `contextgraph/1`
 and interoperate; `contextgraph/2.0` does not.
 
 This is what lets the freeze drop `-draft` without a flag day. An
@@ -277,6 +277,11 @@ loud.
 | **F3** | `citation_label` **MUST** be non-empty — a host must be able to cite a frame by a human label, never a bare id. | `frame-validity` |
 | **F4** | `valid_from`, `valid_to`, `recorded_at`, and `as_of` **MUST** match `YYYY-MM-DDTHH:MM:SS(.f+)?Z`. | `frame-validity` |
 | **F5** | Provenance of kind `file` **MUST** carry a digest matching `sha256:<64 lowercase hex>`. | `frame-validity` |
+| **F6** | A `ProvenanceAttestation` **MUST** be detached — it **MUST NOT** appear inside the frame it signs, nor inside any hash preimage this spec defines. | `contextgraph_types::attest` |
+| **F7** | An attestation's `signed_commitment` **MUST** be the `sha256:<64 lowercase hex>` rendering of a commitment computed exactly as §6.5.2 or §6.5.3 specifies. | `contextgraph_types::attest` |
+| **F8** | A verifier that does not recognise an attestation's `algorithm` **MUST** report it as uncheckable and **MUST NOT** treat the frame as attested. "I cannot check this" is never "this is good". | `contextgraph_types::attest` |
+| **F9** | A host **MUST NOT** reject or drop a frame solely because it carries an attestation the host cannot verify; an unverifiable attestation degrades the frame to *unattested*, exactly as if it carried none. | `contextgraph_types::attest` |
+| **F10** | `score` is **provider-local and ordinal** — this spec defines no shared scale. A host **MUST NOT** apply a cross-provider `score` threshold, and **MUST NOT** present a raw `score` as a cross-provider measure of relevance. A host that *orders* frames from different providers by raw `score` **MUST** document it as its own policy choice, never as a protocol guarantee. | host composition |
 
 ### 6.1 Temporal profile (F4)
 
@@ -387,6 +392,187 @@ Freezing the representation *fields* now — they already travel on the wire —
 deferring the resolve *operation* keeps 1.0 honest: it ships no capability a host
 cannot use, and the operation arrives later as a clean additive minor rather than
 a breaking change.
+
+### 6.5 Provenance attestation (F6–F9)
+
+F5 makes a frame's provenance **tamper-evident**. It does not make it
+**evidence**. A digest proves the bytes have not changed since someone wrote
+that number down; it says nothing about who wrote it. The digest and the frame
+it describes come from the same unauthenticated party, so a provider willing to
+fabricate a frame is equally willing to fabricate its digest, and every check in
+§6.2 passes. Detecting *accidental* drift and proving *deliberate* honesty are
+different problems, and only a signature solves the second.
+
+A **provenance attestation** is a detached signature over a commitment to a
+frame's identity and its provenance chain. It is **optional**: a conformant
+provider may serve no attestations at all, and a conformant host may verify
+none. What is not optional is the construction — an attestation that exists must
+be computed exactly this way, or two implementations will disagree about whether
+the same evidence is genuine.
+
+#### 6.5.1 Canonical encoding
+
+Each provenance link encodes as its typed fields in **declaration order**, each
+length-prefixed:
+
+```text
+enc_str(s)   = uint32be(byte_length(utf8(s))) ‖ utf8(s)
+enc_opt(None)    = 0x00
+enc_opt(Some(s)) = 0x01 ‖ enc_str(s)
+
+encode(link) = enc_str(link.type)
+             ‖ enc_opt(link.uri)    ‖ enc_opt(link.range)
+             ‖ enc_opt(link.digest) ‖ enc_opt(link.method)
+             ‖ enc_opt(link.by)
+```
+
+Field order is **normative**. So is the length prefix: bare concatenation is
+ambiguous, and without prefixes a link with `uri: "ab", range: "c"` encodes
+identically to one with `uri: "a", range: "bc"` — a collision an adversary picks
+rather than searches for. The presence byte is equally load-bearing: without it
+`uri: null` and `uri: ""` collide, and a link's URI could be deleted from a
+signed chain without disturbing the hash.
+
+This encoding is deliberately **not** RFC 8785 (JCS), which the Context Exchange
+Provider profile uses for `record_hash`. JCS is right for a record, whose hash
+covers an open-ended JSON document. A provenance link is six optional strings,
+and for that shape JCS only adds a dependency on a conforming JSON canonicalizer
+— whose number formatting and Unicode escaping rules are precisely where
+cross-language implementations silently diverge. Any language can produce the
+encoding above from the typed fields with no library at all.
+
+#### 6.5.2 Chain head and frame commitment
+
+The links of `provenance` fold **source-first** — the order §6 already requires
+them to be carried in — into a hash chain:
+
+```text
+h₋₁  = SHA256("contextgraph/attest/1/genesis")
+hᵢ   = SHA256("contextgraph/attest/1/link" ‖ hᵢ₋₁ ‖ encode(linkᵢ))
+chain_head = hₙ₋₁ , or h₋₁ when provenance is empty
+```
+
+Because each step consumes the previous head, no link can be inserted, removed,
+reordered, or edited without changing the result — the property a set of
+independent per-link digests never had. An empty chain hashes to the genesis
+value rather than to zero, so "this frame claims no provenance" is a signed
+assertion rather than a gap.
+
+The signed preimage for a single frame binds that head to the frame's full
+identity:
+
+```text
+frame_commitment = SHA256(
+    "contextgraph/attest/1/frame"
+  ‖ enc_str(provider_id) ‖ enc_str(frame.id)
+  ‖ enc_opt(frame.content_digest)
+  ‖ chain_head )
+```
+
+**The identity binding is not optional.** Two frames citing the same source share
+a chain head, so a signature over the head alone can be lifted from one frame and
+stapled to another: it verifies, and the evidence is invented. Including the
+*(provider id, frame id, `content_digest`)* triple of §6.3 means a signature binds
+to one frame from one provider carrying one set of bytes, or it binds to nothing.
+`content_digest` is included as an *option* because a frame is permitted to carry
+none (D3); the encoding records that absence honestly rather than substituting a
+placeholder.
+
+#### 6.5.3 Result-set Merkle root
+
+A provider signing a whole answer commits to a Merkle root over its frames'
+commitments, taken in the canonical order of §6.3, using RFC 6962 hashing:
+
+```text
+leaf(c)       = SHA256(0x00 ‖ c)
+node(l, r)    = SHA256(0x01 ‖ l ‖ r)
+MTH({})       = SHA256("contextgraph/attest/1/merkle-empty")
+MTH({c})      = leaf(c)
+MTH(C)        = node( MTH(C[0..k]), MTH(C[k..n]) ),  k = largest power of 2 < n
+```
+
+The distinct leaf and interior prefixes are what stop an interior node's hash
+from being presented as a leaf — without them a subtree could masquerade as a
+single frame. The RFC 6962 split is chosen over the common "duplicate the last
+leaf on an odd level" shortcut because that shortcut admits two distinct leaf
+sets with the same root; acceptable for a checksum, disqualifying for evidence.
+
+An **inclusion proof** carries the leaf index, the leaf count, and the sibling
+hash at each level with the side it sits on. The leaf count is part of the proof
+because a root alone does not pin the tree's size, and a verifier that ignores it
+can be shown a proof from a differently-shaped tree. This is what makes a signed
+answer selectively disclosable: a host proves one frame was in the set without
+revealing the others.
+
+#### 6.5.4 Verification
+
+Verification is **offline and pure**: a commitment, an attestation, and a public
+key are sufficient. A verifier recomputes the commitment from the frame in hand,
+compares it to `signed_commitment` **before** examining the signature, and only
+then checks the signature over the commitment bytes.
+
+The comparison order is deliberate. A mismatch means the frame changed after
+signing; a signature failure means the key is wrong or the signature forged.
+Reporting the first as the second sends an operator hunting a key-management bug
+when the actual finding is tampering.
+
+Verifiers **MUST** distinguish these outcomes rather than collapsing them into a
+boolean — F8's "uncheckable" and "invalid" are different findings with opposite
+responses — and, per F9, an unverifiable attestation degrades a frame to
+*unattested* rather than disqualifying it. A host that dropped such frames would
+hand any peer a denial-of-service primitive: attach a malformed attestation and
+watch the evidence disappear.
+
+Implementations **SHOULD** use a strict Ed25519 verifier — one rejecting
+small-order public keys and non-canonical signature encodings. A signature two
+conforming verifiers can disagree about is not evidence.
+
+### 6.6 What `score` means, and does not (F10)
+
+F1 constrains `score` to `[0, 1]`. That is a **range**, not a **scale**, and the
+difference matters the moment a host composes frames from more than one
+provider. Nothing in this specification defines what `0.8` means, and nothing
+could: one provider's score is a cosine similarity, another's a BM25 rank
+normalized by its own corpus, a third's a hand-tuned blend. Two providers
+returning `0.8` are not making the same claim, and the same provider need not
+mean the same thing across two queries.
+
+So `score` is **provider-local and ordinal**: it orders *that provider's* frames
+against *that query*. It is not a measurement, and it is not comparable across
+sources.
+
+**Why this is stated rather than fixed.** The obvious alternative is to mandate
+calibration — require providers to map scores onto a shared scale. It is
+unenforceable, and unenforceable requirements are worse than absent ones. There
+is no reference corpus a conformance suite could score against without
+prescribing what relevance *is*, which would put this specification in the
+business of defining retrieval quality. A provider could satisfy any calibration
+rule we wrote while its numbers stayed meaningless, and the suite would certify
+it. §7 could make budget honesty checkable because token cost is a function of
+bytes both sides observe; relevance has no such anchor. Claiming comparability
+we cannot verify is exactly the self-attestation §11.1 exists to rule out.
+
+**What a host does instead.** Any cross-provider ordering is the *host's*
+policy, and it owns the consequences: per-provider quotas, round-robin
+interleaving, a reranker it controls, an explicit trust weighting it can defend
+— or, most simply, ranking by raw `score` and saying so. All are permitted. What
+F10 forbids is passing that choice off as something the protocol guaranteed.
+
+A host **MAY** apply a threshold to a **single** provider's scores, where the
+ordering is meaningful. Applying one uniformly across providers silently prefers
+whichever provider scores most generously — a ranking decided by an
+implementation detail of someone else's retriever, which is precisely the
+unaccountable behavior this protocol exists to eliminate.
+
+**The reference host, stated plainly.** `dedup_cross_provider` compares scores
+across providers, but only to pick a survivor among frames already proven to be
+*the same evidence* by content digest or overlapping file provenance — it breaks
+a tie between duplicates and never decides what is relevant. `order_by_value`
+*does* rank across providers by raw `score` to place frames at the
+attention-favored edges of the prompt. That is a deliberate, documented default
+for hosts that have no better ranking policy, not a claim that the scores are
+commensurable; a host with a reranker should order frames itself and use
+`fold_to_edges` for placement alone.
 
 ---
 
@@ -723,7 +909,7 @@ bias of §15 real rather than aspirational.
 | # | Requirement |
 | - | ----------- |
 | **U1** | A receiver **MUST** ignore an object member it does not recognise, in any envelope, capability set, frame, or nested object — it **MUST NOT** reject the message on that basis. This is what lets a `1.x` minor add an optional field that a `1.0` peer harmlessly drops. |
-| **U2** | The `FrameKind` set (`snippet`, `symbol`, `fact`, `doc`, `memory`, `episode`, `graph`) is **closed within a major family**; a new kind is a `1.x` addition. A host that receives an unrecognised `kind` **MUST** treat the frame as opaque evidence — it **MAY** ignore it, but **MUST NOT** crash. New *open* vocabularies (`rel`, error `code`, `egress_scope`) grow without a version bump; a receiver **MUST NOT** reject an unknown value in any of them (§8.1, §10 X1, §4.1). |
+| **U2** | The `FrameKind` set (`snippet`, `symbol`, `fact`, `doc`, `memory`, `episode`, `graph`) is the **base vocabulary of a major family**; a new kind is a `1.x` addition. A host that receives an unrecognised `kind` **MUST** treat the frame as opaque evidence — it **MAY** decline to specialise its handling, but **MUST NOT** fail to deserialise, reject, or crash — and if it re-emits the frame it **MUST** preserve the original `kind` string verbatim. New *open* vocabularies (`rel`, error `code`, `egress_scope`) grow without a version bump; a receiver **MUST NOT** reject an unknown value in any of them (§8.1, §10 X1, §4.1). |
 | **U3** | Names containing a `:` are **reserved for namespacing**: a vendor-specific `rel`, `egress_scope`, or error `code` **MUST** be namespaced (`vendor:name`, non-empty on both sides) so it can never collide with a base value this spec defines or later reserves. Unprefixed names in these vocabularies belong to the protocol. |
 | **U4** | A field this spec defines is never repurposed within `contextgraph/1`: its name, type, and meaning are stable. A field that is superseded is **deprecated** — kept parseable and documented as deprecated for the life of the major family — never deleted or redefined. Deletion or redefinition requires a new major family (§3.1). |
 

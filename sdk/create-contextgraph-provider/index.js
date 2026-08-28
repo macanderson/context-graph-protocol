@@ -28,10 +28,18 @@ import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-/** The published dependency each template resolves by default (see #59). */
+/**
+ * The published dependency each template resolves by default (see #59).
+ *
+ * Tracks the SDK majors, which move in lockstep with the crates: the
+ * open-`FrameKind` break (ADR 0011) widens `FrameKind` in both SDKs, so a
+ * scaffold pinned to a 1.x SDK would be generating code against the closed
+ * vocabulary this revision retired. The TypeScript entry had also fallen a
+ * major behind its own manifest, which shipped 1.0.0.
+ */
 const DEFAULT_SDK = {
-  typescript: "^0.1.0",
-  python: "contextgraph-sdk>=1.0.0",
+  typescript: "^2.0.0",
+  python: "contextgraph-sdk>=2.0.0",
 };
 
 function fail(message) {

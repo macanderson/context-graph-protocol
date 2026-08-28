@@ -17,6 +17,109 @@ drafts the missing entries from the merge's actual diff
 bot PR for review — the file never falls silently behind main, and no drafted
 text lands without a human merge.
 
+## [Unreleased]
+
+### Added
+- **Provenance attestation (`SPEC.md` §6.5, F6–F9;
+  [ADR 0010](./docs/adr/0010-provenance-attestation.md)).** A digest is
+  tamper-evident only to someone who already trusts whoever recorded it; the
+  digest and the frame it describes come from the same unauthenticated party, so
+  a provider willing to fabricate a frame will fabricate its digest too. A
+  detached Ed25519 signature closes that gap. `contextgraph_types::attest` adds a
+  source-first **hash chain** over a frame's provenance links (so no link can be
+  inserted, dropped, reordered, or edited undetectably), a **frame commitment**
+  binding that chain head to the frame's full `(provider_id, frame_id,
+  content_digest)` identity — without which a signature could be lifted off one
+  frame and stapled onto a fabricated one — and an **RFC 6962 Merkle root** with
+  inclusion proofs, so one frame can be proven a member of a signed answer
+  without disclosing its siblings. Verification is offline and pure, and returns
+  a *named* verdict rather than a boolean: "this frame was altered after signing"
+  and "I was handed a truncated key" call for opposite responses.
+- **`contextgraph-types` gains an off-by-default `attestation` feature**
+  (`sha2`, `ed25519-dalek`). The default dependency set is unchanged — serde
+  only — so the crate's zero-dependency promise still holds for the pure wire
+  consumer, and `ProvenanceAttestation` itself always compiles so a host can
+  relay an attestation it cannot check.
+- **`contextgraph-types/tests/attestation_vectors.rs`** publishes the byte
+  vectors a reimplementation in any language reconciles against. §6.5.1 defines a
+  normative encoding, and a normative encoding with no published vectors is a
+  rule two implementations can both believe they follow while computing different
+  hashes. A diff in that file is a wire-breaking change.
+- **`contextgraph_host::fold_to_edges` is now public** — the Lost-in-the-Middle
+  *placement* separated from the *ranking*, for hosts that rank frames with their
+  own reranker or per-provider quotas instead of raw `score`.
+- **TypeScript SDK:** `KnownFrameKind`, `KNOWN_FRAME_KINDS`, `isKnownFrameKind`.
+  **Python SDK:** `KnownFrameKind`, `KNOWN_FRAME_KINDS`.
+
+### Changed
+- **Crate version `1.0.0` → `2.0.0`; protocol version stays `contextgraph/1.0`.**
+  The first time the two axes in [docs/stability.md](./docs/stability.md) actually
+  disagree, and the reason they are documented as independent. The open-`FrameKind`
+  change below is breaking in Rust and invisible on the wire, so the crates take a
+  major and the protocol does not — a `1.x` peer and a `2.x` peer still interoperate
+  in both directions. All nine workspace crates inherit the bump from
+  `workspace.package`; the internal `contextgraph-*` floors move from `>=1.0.0` to
+  `>=2.0.0`, because `contextgraph-host` 2.0.0 does not compile against
+  `contextgraph-types` 1.x and the old floor would have let cargo resolve a pair
+  that cannot build. The Python and TypeScript SDK manifests move in lockstep for
+  the same break in their own type systems (`FrameKind` widens, so an exhaustive
+  `switch` relying on `never`-narrowing stops type-checking), as does
+  `create-contextgraph-provider` — whose TypeScript default pin had also fallen a
+  major behind its own manifest at `^0.1.0`. Source-level upgrade steps:
+  [MIGRATION.md §5](./MIGRATION.md). `docs/stability.md` previously said a breaking
+  redesign required "both `contextgraph/2.0` and crate version `2.0.0`", which would
+  have forbidden this bump two lines after declaring the axes independent; it now
+  states the implication in the one direction that holds.
+- **`FrameKind` is now an open vocabulary**
+  ([ADR 0011](./docs/adr/0011-open-frame-kind-vocabulary.md)). **Rust-semver
+  breaking, wire-compatible.** The closed enum contradicted the protocol's own
+  §3.1 no-flag-day promise and §13 U2: a frame carrying a kind added in a later
+  `1.x` did not degrade on a `1.0` host, it *failed to deserialize*, and every
+  exhaustive `match` downstream broke the day a variant was added. `FrameKind`
+  now carries `Unknown(String)` — preserving the original string, so a relaying
+  host re-emits it byte-identically, which `#[serde(other)]` cannot do — and is
+  `#[non_exhaustive]`, so every future kind addition is non-breaking. It is no
+  longer `Copy`. `contextgraph_host::frame_kind_name` becomes
+  `fn(&FrameKind) -> &str` delegating to `FrameKind::as_str`. On the wire nothing
+  changed except that a frame which previously failed to parse now parses.
+- **`score` semantics are stated normatively (`SPEC.md` §6.6, F10).** F1 bounds
+  `score` to `[0, 1]`, which is a *range*, not a *scale* — nothing defined what
+  `0.8` meant, and the host ranked across providers as if it were commensurable.
+  `score` is now specified as provider-local and ordinal: a host **MUST NOT**
+  apply a cross-provider threshold or present a raw score as a cross-provider
+  relevance measure, and a host that orders across providers by raw score **MUST**
+  document it as its own policy. Mandating calibration was considered and
+  rejected as unenforceable — §7 could make budget honesty checkable because
+  token cost is a function of bytes both sides observe, and relevance has no such
+  anchor. `order_by_value` now documents itself as exactly such a policy choice.
+- **`SPEC.md` §13 U2** additionally requires that a receiver re-emitting a frame
+  with an unrecognised `kind` preserve the original string verbatim.
+- **`GOVERNANCE.md` states the consent boundary**: the host enforces *local*
+  consent, not organizational policy. Fleet RBAC, central policy distribution,
+  and aggregated cross-machine audit are out of scope and belong to a product
+  built on the protocol's primitives. Written down before it is contested,
+  because the pressure runs one way and every individual request to relax it is
+  reasonable.
+- **README positioning.** "The canonical architecture" replaced with a
+  verifiable claim — the only context protocol whose conformance is
+  machine-checked. The title said "draft v0.1.0" while the protocol had frozen at
+  `contextgraph/1.0` and the crates shipped `1.0.0`.
+
+### Fixed
+- **The version-compatibility example illustrated nothing.** `contextgraph/1.0`
+  and `contextgraph/1.0` were given as two versions that interoperate — in
+  **seven** files (`README.md`, `SPEC.md`, `docs/overview.md`, `docs/index.md`,
+  `docs/registry.md`, `docs/protocol-surface.md`, `docs/protocol-advantages.md`),
+  the residue of a global rename. Now `contextgraph/1.0` and `contextgraph/1.1`.
+- **Stale pre-freeze language** in `docs/registry.md` and `docs/index.md`, which
+  described a "freeze from `contextgraph/1.0` to `contextgraph/1.0`" and a "path
+  to `contextgraph/1.0`" that has already happened, and linked a
+  `GOVERNANCE.md#the-path-to-contextgraph10` anchor that no longer exists.
+- **`schema/contextgraph-envelope.schema.json`** now carries a `$comment` at
+  `FrameKind` stating that the closed `enum` is an authoring lint and **not** the
+  interop contract — the one place a reader is most likely to mistake the schema
+  for the wire rule.
+
 ## [0.1.2] — 2026-08-01 (crate release)
 
 All four crates published from `main`: `contextgraph-types`,

@@ -57,10 +57,11 @@ Reference documentation for the **Context Graph Protocol (CGP)** crates:
   and how to get your own provider listed.
 - [**Stability**](./stability.md) — the crate-semver vs. protocol-version
   relationship, and what changes (and doesn't) as the protocol moves from
-  `contextgraph/1.0` to `contextgraph/1.0`.
+  `contextgraph/1.0` to a later `contextgraph/1.x`.
 
 Also at the repo root: [`GOVERNANCE.md`](../GOVERNANCE.md) (how the protocol is
-maintained, what counts as a normative change, and the path to `contextgraph/1.0`),
+maintained, what counts as a normative change, and the path to shared
+stewardship),
 [`SECURITY.md`](../SECURITY.md) (vulnerability reporting),
 [`CODE_OF_CONDUCT.md`](../CODE_OF_CONDUCT.md),
 [`schema/`](../schema/) (machine-readable JSON Schema for the wire types), and

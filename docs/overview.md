@@ -161,7 +161,7 @@ prompt. MCP tools do the work.
   check on purpose, so you know the checks are real.
 - **Stability you can pin.** The protocol version is `contextgraph/1.0`. Two versions
   interoperate when they share a major family, the part before the first dot. So
-  `contextgraph/1.0` and `contextgraph/1.0` both belong to family `contextgraph/1` and interoperate.
+  `contextgraph/1.0` and `contextgraph/1.1` both belong to family `contextgraph/1` and interoperate.
   When the draft freezes, every deployed provider keeps working. No flag day.
 
 ---

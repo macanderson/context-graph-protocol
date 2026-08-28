@@ -845,13 +845,13 @@ async fn check_kinds_filter(host: &Host, id: &str, caps: &Capabilities) -> Check
         return CheckResult::skip(
             CHECK_KINDS_FILTER,
             format!(
-                "provider declares kind `{declared}`, which is outside the closed FrameKind vocabulary, so §Q1 cannot be probed"
+                "provider declares kind `{declared}`, which is outside the base FrameKind vocabulary, so §Q1 cannot be probed"
             ),
         );
     };
 
     let query = ContextQuery {
-        kinds: vec![kind],
+        kinds: vec![kind.clone()],
         ..sample_query()
     };
     match host.query_provider(id, &query).await {
@@ -860,7 +860,7 @@ async fn check_kinds_filter(host: &Host, id: &str, caps: &Capabilities) -> Check
                 .frames
                 .iter()
                 .filter(|frame| frame.kind != kind)
-                .map(|frame| format!("{} (kind={})", frame.id, frame_kind_name(frame.kind)))
+                .map(|frame| format!("{} (kind={})", frame.id, frame_kind_name(&frame.kind)))
                 .collect();
             if off_kind.is_empty() {
                 CheckResult::pass(
@@ -888,20 +888,19 @@ async fn check_kinds_filter(host: &Host, id: &str, caps: &Capabilities) -> Check
     }
 }
 
-/// Parse a declared capability kind string back into the closed [`FrameKind`]
+/// Parse a declared capability kind string back into the **base** [`FrameKind`]
 /// vocabulary. `None` for anything outside it — a provider may declare an
 /// extension kind, and §Q1 simply has nothing to say about it.
+///
+/// [`FrameKind::from_wire`] never fails: since the kind vocabulary was opened
+/// for forward compatibility, an unrecognized string parses to
+/// [`FrameKind::Unknown`] rather than erroring. This check wants the narrower
+/// question — "is this one of the seven kinds §Q1 is written about?" — so it
+/// parses and then filters on [`FrameKind::is_known`]. Restating the seven
+/// names here would put the vocabulary in a second place and let the two drift.
 fn frame_kind_from_wire(kind: &str) -> Option<FrameKind> {
-    match kind {
-        "snippet" => Some(FrameKind::Snippet),
-        "symbol" => Some(FrameKind::Symbol),
-        "fact" => Some(FrameKind::Fact),
-        "doc" => Some(FrameKind::Doc),
-        "memory" => Some(FrameKind::Memory),
-        "episode" => Some(FrameKind::Episode),
-        "graph" => Some(FrameKind::Graph),
-        _ => None,
-    }
+    let parsed = FrameKind::from_wire(kind);
+    parsed.is_known().then_some(parsed)
 }
 
 /// **§G3/§G4** — a graph-declaring provider must actually do something with

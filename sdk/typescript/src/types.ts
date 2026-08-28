@@ -10,8 +10,8 @@
 /** The protocol version this SDK speaks. */
 export const PROTOCOL_VERSION = "contextgraph/1.0" as const;
 
-/** What kind of thing a frame represents. */
-export type FrameKind =
+/** The base frame kinds of `contextgraph/1.0`. */
+export type KnownFrameKind =
   | "snippet"
   | "symbol"
   | "fact"
@@ -19,6 +19,37 @@ export type FrameKind =
   | "memory"
   | "episode"
   | "graph";
+
+/**
+ * What kind of thing a frame represents.
+ *
+ * The vocabulary is **open**. A later `contextgraph/1.x` may add kinds, and
+ * SPEC.md §13 U2 requires a receiver to accept an unrecognised one, treat the
+ * frame as opaque evidence, and preserve the original string verbatim if it
+ * re-emits the frame. A closed union would make a 1.1 frame a type error on a
+ * 1.0 consumer — the flag day the version promise rules out.
+ *
+ * The `(string & {})` arm keeps editor autocomplete for the seven base kinds
+ * while accepting any string; narrow with {@link isKnownFrameKind} when you need
+ * to branch on a kind you understand.
+ */
+export type FrameKind = KnownFrameKind | (string & {});
+
+/** Every base kind this revision names — a registry, not a restriction. */
+export const KNOWN_FRAME_KINDS: readonly KnownFrameKind[] = [
+  "snippet",
+  "symbol",
+  "fact",
+  "doc",
+  "memory",
+  "episode",
+  "graph",
+] as const;
+
+/** Whether `kind` is one of the seven base kinds this revision defines. */
+export function isKnownFrameKind(kind: string): kind is KnownFrameKind {
+  return (KNOWN_FRAME_KINDS as readonly string[]).includes(kind);
+}
 
 /** How a frame carries its content. Absent on the wire ⇒ `full`. */
 export type Representation = "full" | "compact" | "reference";
