@@ -223,7 +223,7 @@ checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
 
 [[package]]
 name = "contextgraph-conformance"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "async-trait",
  "clap",
@@ -239,7 +239,7 @@ dependencies = [
 
 [[package]]
 name = "contextgraph-host"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "async-trait",
  "contextgraph-types",
@@ -256,7 +256,7 @@ dependencies = [
 
 [[package]]
 name = "contextgraph-mcp-bridge"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "clap",
  "contextgraph-host",
@@ -269,7 +269,7 @@ dependencies = [
 
 [[package]]
 name = "contextgraph-mcp-server"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "async-trait",
  "contextgraph-host",
@@ -281,7 +281,7 @@ dependencies = [
 
 [[package]]
 name = "contextgraph-refprov"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "contextgraph-host",
  "contextgraph-types",
@@ -291,7 +291,7 @@ dependencies = [
 
 [[package]]
 name = "contextgraph-ripgrep"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "contextgraph-refprov",
  "contextgraph-types",
@@ -299,7 +299,7 @@ dependencies = [
 
 [[package]]
 name = "contextgraph-trace"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "contextgraph-types",
  "serde",
@@ -309,7 +309,7 @@ dependencies = [
 
 [[package]]
 name = "contextgraph-treesitter"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "contextgraph-refprov",
  "contextgraph-types",
@@ -317,7 +317,7 @@ dependencies = [
 
 [[package]]
 name = "contextgraph-types"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "ed25519-dalek",
  "serde",

@@ -1,6 +1,6 @@
 {
   "name": "create-contextgraph-provider",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Scaffold a conformant Context Graph Protocol provider (TypeScript or Python) with contextgraph-inspect running in its CI from day one.",
   "license": "MIT OR Apache-2.0",
   "type": "module",

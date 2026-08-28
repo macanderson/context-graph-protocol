@@ -52,6 +52,24 @@ text lands without a human merge.
   **Python SDK:** `KnownFrameKind`, `KNOWN_FRAME_KINDS`.
 
 ### Changed
+- **Crate version `1.0.0` → `2.0.0`; protocol version stays `contextgraph/1.0`.**
+  The first time the two axes in [docs/stability.md](./docs/stability.md) actually
+  disagree, and the reason they are documented as independent. The open-`FrameKind`
+  change below is breaking in Rust and invisible on the wire, so the crates take a
+  major and the protocol does not — a `1.x` peer and a `2.x` peer still interoperate
+  in both directions. All nine workspace crates inherit the bump from
+  `workspace.package`; the internal `contextgraph-*` floors move from `>=1.0.0` to
+  `>=2.0.0`, because `contextgraph-host` 2.0.0 does not compile against
+  `contextgraph-types` 1.x and the old floor would have let cargo resolve a pair
+  that cannot build. The Python and TypeScript SDK manifests move in lockstep for
+  the same break in their own type systems (`FrameKind` widens, so an exhaustive
+  `switch` relying on `never`-narrowing stops type-checking), as does
+  `create-contextgraph-provider` — whose TypeScript default pin had also fallen a
+  major behind its own manifest at `^0.1.0`. Source-level upgrade steps:
+  [MIGRATION.md §5](./MIGRATION.md). `docs/stability.md` previously said a breaking
+  redesign required "both `contextgraph/2.0` and crate version `2.0.0`", which would
+  have forbidden this bump two lines after declaring the axes independent; it now
+  states the implication in the one direction that holds.
 - **`FrameKind` is now an open vocabulary**
   ([ADR 0011](./docs/adr/0011-open-frame-kind-vocabulary.md)). **Rust-semver
   breaking, wire-compatible.** The closed enum contradicted the protocol's own

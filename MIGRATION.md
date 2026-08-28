@@ -152,3 +152,74 @@ which lives in a private repository — unresolvable for anyone outside it.
 All normative text now lives in [`SPEC.md`](./SPEC.md) in this repository, with
 stable anchors (`H1`, `B3`, `F5`, …) that will not be renumbered within the
 `contextgraph/1` family. Cite those.
+
+## 5. Crate `1.x` → `2.0.0` — a Rust break, not a wire break
+
+**Nothing changes on the wire.** `PROTOCOL_VERSION` is still `contextgraph/1.0`,
+the bytes are unchanged, and a `1.x` peer and a `2.x` peer interoperate in both
+directions. The major is spent entirely on the Rust API, because
+[ADR 0011](./docs/adr/0011-open-frame-kind-vocabulary.md) opens the `FrameKind`
+vocabulary and there is no way to do that compatibly in an `enum`. See
+[docs/stability.md](./docs/stability.md) for why the two axes are allowed to
+disagree.
+
+Take the bump with:
+
+```toml
+contextgraph-types = "2"
+contextgraph-host  = "2"
+```
+
+Then fix three call-site shapes. Each is a compile error, so the compiler
+enumerates the work for you — none of this fails silently at runtime.
+
+### 5.1 `match` on `FrameKind` needs a wildcard arm
+
+`FrameKind` gained an `Unknown(String)` variant and is now `#[non_exhaustive]`,
+so an exhaustive match no longer compiles:
+
+```rust
+match frame.kind {
+    FrameKind::Snippet => …,
+    // …the other six…
+    FrameKind::Unknown(ref kind) => render_opaque(kind),  // if you can use it
+    _ => render_opaque(frame.kind.as_str()),              // otherwise
+}
+```
+
+The wildcard is not boilerplate you are being made to write: per SPEC.md §13 U2
+a receiver **MUST NOT** reject a frame for carrying a kind it does not know. The
+arm is where that obligation now lives, and the type system is what stops you
+from forgetting it when `contextgraph/1.1` names an eighth kind.
+
+### 5.2 `FrameKind` is no longer `Copy`
+
+An unknown kind owns its wire string, and a `String` cannot be `Copy`. Where you
+relied on the implicit copy, borrow — or `.clone()` when you need an owned value:
+
+```rust
+let kind = frame.kind.clone();     // was: let kind = frame.kind;
+if matches!(&frame.kind, FrameKind::Doc) { … }
+```
+
+Prefer `frame.kind.as_str()` where you only wanted the name; it borrows and
+allocates nothing.
+
+### 5.3 `frame_kind_name` takes a reference
+
+```rust
+contextgraph_host::frame_kind_name(&kind)   // was: frame_kind_name(kind)
+```
+
+It used to return `&'static str`, which duplicated the vocabulary in a second
+place and could not name a kind the host did not know. The returned lifetime is
+now tied to the kind, because an unknown kind owns its string.
+
+### 5.4 SDKs move in lockstep
+
+`contextgraph-sdk` (Python) and `@contextgraph/sdk` (TypeScript) also go to
+`2.0.0`, for the same reason in their own type systems: `FrameKind` widens to
+accept any string, so an exhaustive `switch` that relied on `never`-narrowing
+stops type-checking. Narrow with the exported `isKnownFrameKind` /
+`KNOWN_FRAME_KINDS` when you need to branch only on kinds you understand. The
+Go SDK is unchanged in this release — porting it is tracked in issue #93.
