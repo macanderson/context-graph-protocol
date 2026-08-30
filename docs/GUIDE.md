@@ -86,8 +86,10 @@ style guide.
 - Update docs in the same PR as the code change.
 - Dual-licensed MIT OR Apache-2.0.
 - This repo does not host a public website. Don't invent new hosted URLs — only
-  link to `raw.githubusercontent.com` or the paths the public site actually
-  syncs from this repo. See [ADR 0008](#adr-0008).
+  link to `raw.githubusercontent.com` or the prefixes this repo actually
+  publishes to the public site (`/schema/`, `/schema/v1/`, `/spec/`).
+  `.github/scripts/check-deploy-hygiene.py` enforces it. See
+  [ADR 0008](#adr-0008), amended by ADR 0013 for the schemas' `$id`.
 
 ---
 
@@ -204,8 +206,14 @@ Read the full ADR before changing anything it covers.
 | [0006](./adr/0006-prompt-ingestion-as-a-local-provider.md) | Prompt ingestion as a local provider | Text a user pastes into chat is now treated like any other provider's output: split, classified, budgeted, and hashed — no more free pass around the rules. |
 | [0007](./adr/0007-protocol-product-boundary.md) | The protocol/product boundary | Drew a hard line between the protocol's small atomic frame and one downstream app's much bigger task-specific bundle — they were both sloppily called "ContextFrame" before this. |
 | [0008](./adr/0008-deploy-topology-and-advertised-urls.md) | Deploy topology and advertised URLs | This repo does not run a website (a separate repo, `cgp-website`, does) — nailed down which host serves what, so we stop advertising broken links. |
+| [0013](./adr/0013-schema-identity-on-a-branded-versioned-url.md) | Schema identity on a branded, versioned URL | The JSON Schemas are now known by a URL on the protocol's own domain, numbered by wire family (`/schema/v1/`) rather than tracking a git branch. The old URLs keep working and implementers need do nothing. |
 
-<a id="adr-0002"></a><a id="adr-0003"></a><a id="adr-0004"></a><a id="adr-0005"></a><a id="adr-0006"></a><a id="adr-0007"></a><a id="adr-0008"></a>
+<a id="adr-0002"></a><a id="adr-0003"></a><a id="adr-0004"></a><a id="adr-0005"></a><a id="adr-0006"></a><a id="adr-0007"></a><a id="adr-0008"></a><a id="adr-0013"></a>
+
+<!-- 0009–0011 are missing from this table: they were added without rows, before
+     this entry. The gap is tracked in #129 — the jump from 0008 to 0013 is that
+     gap, not a numbering error. -->
+
 
 ---
 

@@ -52,11 +52,15 @@ locally before you push):
    gitignored, so a stray link is invisible in review — and one `vercel --prod`
    from a linked checkout replaces the public apex with this repo's docs site.
    That has already happened, in both directions.
-2. **Advertise artifact URLs only on a host this repo serves.** Today that is
-   `raw.githubusercontent.com/macanderson/context-graph-protocol/main/…` and
-   nothing else. A `contextgraphprotocol.org/schema/…` or
-   `cgp.oxagen.sh/badges/…` URL looks canonical and 404s. Prose links to the
-   protocol homepage are fine on the apex — it serves those.
+2. **Advertise artifact URLs only on a prefix this repo serves.** Today those
+   are `raw.githubusercontent.com/macanderson/context-graph-protocol/main/…`
+   and — since #78 — `contextgraphprotocol.org/schema/…`, `…/schema/v1/…`
+   (the schemas' `$id`, ADR 0013) and `…/spec/…`, which `publish-spec.yml`
+   syncs on every merge. Nothing else on that apex: a `cgp.oxagen.sh/badges/…`
+   or `contextgraphprotocol.org/badges/…` URL looks canonical and 404s. Prose
+   links to the protocol homepage are fine on the apex — it serves those.
+   `.github/scripts/check-deploy-hygiene.py` decides, and its
+   `SERVED_PREFIXES` is the list.
 
 ## Issues and labels
 
