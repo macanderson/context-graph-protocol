@@ -1,0 +1,158 @@
+{
+  "$comment": [
+    "Cross-language reference vectors for provenance attestation (SPEC.md 6.5).",
+    "The normative encoding is SPEC.md 6.5.1; the reference implementation is",
+    "contextgraph_types::attest. This file is the single copy every language",
+    "suite reads, so a port cannot reconcile against a stale transcription.",
+    "contextgraph-types/tests/attestation_vectors.rs asserts that these values",
+    "equal the ones it publishes inline, so the two can never disagree.",
+    "A diff to any value here is a wire-breaking change (SPEC.md 15)."
+  ],
+  "domain_tags": {
+    "genesis": "contextgraph/attest/1/genesis",
+    "link": "contextgraph/attest/1/link",
+    "frame": "contextgraph/attest/1/frame",
+    "merkle_empty": "contextgraph/attest/1/merkle-empty",
+    "merkle_leaf_prefix_hex": "00",
+    "merkle_node_prefix_hex": "01"
+  },
+  "links": {
+    "ascii_minimal": {
+      "type": "file",
+      "uri": "a"
+    },
+    "file": {
+      "type": "file",
+      "uri": "src/retry.rs",
+      "range": "L10-L20",
+      "digest": "sha256:abababababababababababababababababababababababababababababababab"
+    },
+    "derivation": {
+      "type": "derivation",
+      "method": "extractive_summary",
+      "by": "refprov/1.0"
+    },
+    "unicode": {
+      "type": "file",
+      "uri": "docs/naïve/日本語.md",
+      "range": "L1-L2",
+      "method": "résumé",
+      "by": "𝄞-agent"
+    }
+  },
+  "links_note": "A field absent from a link object is the encoding's None (presence byte 0x00). An explicit empty string is Some(\"\") and encodes differently — that distinction is normative, so a reader must not collapse the two.",
+  "link_encodings_hex": {
+    "ascii_minimal": "0000000466696c6501000000016100000000",
+    "unicode": "0000000466696c650100000018646f63732f6e61c3af76652fe697a5e69cace8aa9e2e6d6401000000054c312d4c3200010000000872c3a973756dc3a9010000000af09d849e2d6167656e74"
+  },
+  "unicode_length_trap": {
+    "$comment": "The three answers a port can give for the same two strings. Only utf8_bytes is correct; the other two are what a native length property returns in JavaScript and Python.",
+    "uri": {
+      "utf8_bytes": 24,
+      "code_points": 17,
+      "utf16_code_units": 17
+    },
+    "by": {
+      "utf8_bytes": 10,
+      "code_points": 7,
+      "utf16_code_units": 8
+    }
+  },
+  "chain_heads": {
+    "empty": "sha256:2ab226c884ffeb5ac95d300a8d8ee726cb4488fb59a19047d21da7170e9b63d6",
+    "file": "sha256:ac5418d723088033179a2671d17cd08d3e082eefa783e3eeb1a5145f83592178",
+    "file_then_derivation": "sha256:2245cb46807d55e9e89479b2948d7887fbba95430dd315d63972744a47a18410",
+    "unicode": "sha256:af8acb1dd4bd884f03cfcb21983b680b906f92733d905c3f22949fe90c8de065"
+  },
+  "frame_commitment": {
+    "provider_id": "repo-graph",
+    "frame": {
+      "id": "retry-policy",
+      "content_digest": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "provenance": [
+        "file"
+      ]
+    },
+    "frame_note": "provenance names keys of `links`; no other frame field enters the commitment.",
+    "commitment": "sha256:cba5cb083177e61ce370ab586dbf7096508e5224ad18d213c902e014796c88ea"
+  },
+  "merkle": {
+    "provider_id": "repo-graph",
+    "leaf_frames": [
+      {
+        "id": "f0",
+        "content_digest": "sha256:0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e",
+        "provenance": []
+      },
+      {
+        "id": "f1",
+        "content_digest": "sha256:0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e",
+        "provenance": []
+      },
+      {
+        "id": "f2",
+        "content_digest": "sha256:0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e",
+        "provenance": []
+      },
+      {
+        "id": "f3",
+        "content_digest": "sha256:0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e",
+        "provenance": []
+      },
+      {
+        "id": "f4",
+        "content_digest": "sha256:0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e",
+        "provenance": []
+      },
+      {
+        "id": "f5",
+        "content_digest": "sha256:0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e",
+        "provenance": []
+      },
+      {
+        "id": "f6",
+        "content_digest": "sha256:0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e",
+        "provenance": []
+      }
+    ],
+    "roots_by_leaf_count": {
+      "0": "sha256:1d7896160c99d216069525861650366067ae242de9ee5e86730a36c80e57bcc2",
+      "1": "sha256:ca097914b0d358813bf20c3916fe1fcbc92695bf26cc94cae2df6bfc049072ae",
+      "3": "sha256:bb7a2c794a3f8de323372acf692a4cf95ea4015487caf761ff964d41e4eb15b2",
+      "4": "sha256:a29d4042e68ee59dd8713ec5361031add15e4814353da0bfca7a5bf59a96c869",
+      "7": "sha256:4b421f5b2831079accda2aea30aaa989e5dfb3cb01a01fdc3855f7d1d1ff1cb3"
+    },
+    "roots_note": "A root for count N is taken over the first N entries of leaf_frames. Three and seven are the counts that separate RFC 6962's split from the duplicate-the-last-leaf shortcut; four cannot, because the two agree on a power of two.",
+    "inclusion_proof": {
+      "leaf_count": 7,
+      "leaf_index": 3,
+      "path": [
+        {
+          "sibling": "sha256:dc1ae14ddfe6bd0fdc1b030179837fe1b8154201fe1060d4511bc07099536629",
+          "sibling_is_left": true
+        },
+        {
+          "sibling": "sha256:4162de7a1474da412cf29c4ff2f687122feb66d1cb554aaf743fdbe762f58d4b",
+          "sibling_is_left": true
+        },
+        {
+          "sibling": "sha256:761a1b093e5a4c6f5f1a2eb2d5378377e6b62291ec11ec0a9b99822121659cc3",
+          "sibling_is_left": false
+        }
+      ]
+    }
+  },
+  "signature": {
+    "$comment": "Ed25519 is deterministic, so this signature is reproducible by anyone holding the seed. The seed is 32 bytes of 0x07 and signs nothing outside these suites.",
+    "signing_key_seed_hex": "0707070707070707070707070707070707070707070707070707070707070707",
+    "public_key_hex": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "attestation": {
+      "signed_commitment": "sha256:cba5cb083177e61ce370ab586dbf7096508e5224ad18d213c902e014796c88ea",
+      "key_id": "key-1",
+      "algorithm": "ed25519",
+      "attester_id": "oxagen",
+      "signature": "2f8af919196862e7f946a0117d65522da36592344cf46ffe00ab8e6ec0a6b5cdb132800b71b5cd161609378d8ebd789a0adc971cdb8856cd195c9154fe2b2d04",
+      "issued_at": "2026-08-27T00:00:00Z"
+    }
+  }
+}
