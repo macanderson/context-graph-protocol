@@ -46,8 +46,8 @@ use tokio::task::JoinHandle;
 use crate::error::HostError;
 use crate::provider::ContextProvider;
 use crate::wire::{
-    Envelope, decode_line, encode_line, envelope_kind, next_correlation_id, verify_correlation,
-    versions_compatible,
+    AttesterKey, Envelope, decode_line, encode_line, envelope_kind, next_correlation_id,
+    verify_correlation, versions_compatible,
 };
 
 /// How long the handshake waits for a provider's ack before giving up —
@@ -162,6 +162,10 @@ pub struct RawStdioConnection {
     /// A stable label for error messages before the handshake names the
     /// provider.
     label: String,
+    /// The attester public keys the handshake declared (`SPEC.md` §6.5).
+    /// Empty until [`handshake`](Self::handshake) runs, and empty afterwards
+    /// for the many providers that sign nothing.
+    attester_keys: Vec<AttesterKey>,
 }
 
 impl RawStdioConnection {
@@ -227,6 +231,7 @@ impl RawStdioConnection {
             child,
             pgid,
             label: program.to_string(),
+            attester_keys: Vec::new(),
         })
     }
 
@@ -304,6 +309,7 @@ impl RawStdioConnection {
                 protocol_version,
                 provider,
                 capabilities,
+                attester_keys,
             } => {
                 if !versions_compatible(PROTOCOL_VERSION, &protocol_version) {
                     return Err(HostError::VersionMismatch {
@@ -312,6 +318,7 @@ impl RawStdioConnection {
                         provider_version: protocol_version,
                     });
                 }
+                self.attester_keys = attester_keys;
                 Ok((provider, capabilities))
             }
             other => Err(HostError::UnexpectedEnvelope {
@@ -320,6 +327,17 @@ impl RawStdioConnection {
                 got: envelope_kind(&other).into(),
             }),
         }
+    }
+
+    /// The attester public keys this provider declared at the handshake
+    /// (`SPEC.md` §6.5), empty before the handshake and for a provider that
+    /// signs nothing.
+    ///
+    /// Kept on the connection rather than returned from
+    /// [`handshake`](Self::handshake) so the attestation conformance probe can
+    /// reach them without every other caller having to widen a tuple.
+    pub fn attester_keys(&self) -> &[AttesterKey] {
+        &self.attester_keys
     }
 
     /// Send `shutdown` and wait a bounded grace for the child to exit,
@@ -777,7 +795,9 @@ impl ContextProvider for StdioProvider {
             }
         };
         match reply {
-            Envelope::Frames { id: echoed, result } => {
+            Envelope::Frames {
+                id: echoed, result, ..
+            } => {
                 // The reader matched this reply to us by id, so the echo already
                 // agrees; verifying keeps the §H4 guarantee explicit and local.
                 verify_correlation(&self.id, Some(sent_id.as_str()), echoed.as_deref())?;
@@ -876,6 +896,7 @@ mod tests {
                 },
                 ..Capabilities::default()
             },
+            attester_keys: vec![],
         };
         serde_json::to_string(&ack).unwrap()
     }
@@ -915,6 +936,7 @@ mod tests {
                 dropped_estimate: None,
                 ..Default::default()
             },
+            attestations: vec![],
         };
         serde_json::to_string(&env).unwrap()
     }
@@ -941,6 +963,7 @@ mod tests {
                 correlation: true,
                 ..Capabilities::default()
             },
+            attester_keys: vec![],
         };
         serde_json::to_string(&ack).unwrap()
     }
@@ -983,6 +1006,7 @@ mod tests {
                 dropped_estimate: None,
                 ..Default::default()
             },
+            attestations: vec![],
         };
         serde_json::to_string(&env).unwrap()
     }

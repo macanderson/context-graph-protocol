@@ -94,7 +94,10 @@ pub use ingest::{
 pub use provider::{ContextProvider, capability_matches, frame_kind_name};
 pub use stdio::{RawStdioConnection, StdioProvider};
 pub use verify::{DigestVerification, verify_file_provenance, verify_provenance_digest};
-pub use wire::{Envelope, decode_line, encode_line, envelope_kind, versions_compatible};
+pub use wire::{
+    AttesterKey, Envelope, FrameAttestation, decode_line, encode_line, envelope_kind,
+    versions_compatible,
+};
 
 /// The Context Graph Protocol version this host speaks, re-exported from `contextgraph-types`
 /// (`SPEC.md`).

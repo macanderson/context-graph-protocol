@@ -4,7 +4,7 @@
     {
       "name": "handshake",
       "status": "pass",
-      "evidence": "provider 'contextgraph-example-docs' v0.1.0 — data-flow reads=true writes=false egress=false; query kinds=[\"doc\", \"snippet\"], graph=true"
+      "evidence": "provider 'contextgraph-example-docs' v2.0.0 — data-flow reads=true writes=false egress=false; query kinds=[\"doc\", \"snippet\"], graph=true"
     },
     {
       "name": "consent-scope",
@@ -65,6 +65,11 @@
       "name": "correlation",
       "status": "pass",
       "evidence": "provider declares correlation and echoed the request id verbatim on its `frames` reply (§H4)"
+    },
+    {
+      "name": "attestation",
+      "status": "pass",
+      "evidence": "recomputed and verified 2 detached attestation(s) over 2 served frame(s) against the handshake-published key(s) (§6.5)"
     }
   ]
 }

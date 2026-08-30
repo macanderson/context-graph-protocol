@@ -16,13 +16,14 @@ use std::io::{BufRead, Write};
 use clap::{Parser, ValueEnum};
 use sha2::{Digest, Sha256};
 
-use contextgraph_host::wire::Envelope;
+use contextgraph_host::wire::{AttesterKey, Envelope, FrameAttestation};
 use contextgraph_types::capability::{QueryCapability, fingerprint_dimensions};
 use contextgraph_types::frame::rel;
 use contextgraph_types::{
-    Capabilities, ContextFrame, ContextQuery, ContextQueryResult, DataFlow, EgressScope, ErrorCode,
-    FrameKind, FrameVerdict, PROTOCOL_VERSION, Provenance, ProviderInfo, Relation, Representation,
-    Verdict, VerifyRequest, VerifyResponse, budget_tokens,
+    ALGORITHM_ED25519, Capabilities, ContextFrame, ContextQuery, ContextQueryResult, DataFlow,
+    EgressScope, ErrorCode, FrameKind, FrameVerdict, PROTOCOL_VERSION, Provenance,
+    ProvenanceAttestation, ProviderInfo, Relation, Representation, Verdict, VerifyRequest,
+    VerifyResponse, budget_tokens, public_key_for, sign_frame_attestation,
 };
 
 /// The embedding space this fixture declares it indexes (`SPEC.md` §E1). Its
@@ -114,6 +115,51 @@ enum Misbehave {
     /// Declare `capabilities.graph` but ignore `query.anchors`, dropping the
     /// anchored frame instead of boosting it (trips `anchor-relevance`).
     IgnoreAnchors,
+    /// Sign an honestly-computed frame commitment with a key that is not the
+    /// one published at the handshake (trips `attestation`).
+    ///
+    /// The commitment matches the frame byte for byte, so §6.5.4's
+    /// compare-then-verify order reports `BadSignature` rather than a
+    /// mismatch — "the evidence is intact, the signer is not who they say".
+    ForgeSignature,
+    /// Staple frame A's genuine attestation onto frame B (trips
+    /// `attestation`).
+    ///
+    /// This is the forgery the `FrameId` binding of §6.5.2 exists to stop, and
+    /// the one mode here that a plausible implementation really does get
+    /// wrong: signing the bare provenance chain head instead of the head bound
+    /// to the frame's identity. Both frames are served from the *same* backing
+    /// file with the *same* `content_digest`, so their chain heads are equal
+    /// and their commitments differ in the frame id alone. Get that wrong and
+    /// the mode fails for an unrelated reason while proving nothing, which is
+    /// why `an_attestation_lift_differs_only_in_the_frame_id` asserts the
+    /// precondition instead of trusting it.
+    LiftSignature,
+    /// Sign a chain that records the frame was summarised, then serve the
+    /// chain with that `derivation` link removed (trips `attestation`).
+    ///
+    /// Nothing is re-signed, so the served frame's recomputed commitment no
+    /// longer matches: `CommitmentMismatch`. A per-link digest set never caught
+    /// this — dropping a whole link left every surviving digest correct — and
+    /// it is why §6.5.2 folds the links into a chain.
+    TruncateChain,
+    /// Serve a frame under its signed id with a different `content_digest`
+    /// (trips `attestation`).
+    ///
+    /// The digest is well-formed and the provider vouches for it under
+    /// `context/verify`, so every other check is satisfied; only the signature
+    /// covering the *bytes* rather than merely the *name* catches the swap
+    /// (`CommitmentMismatch`).
+    SwapContent,
+    /// Attach an unparseable attestation to an otherwise valid frame (trips
+    /// `attestation`).
+    ///
+    /// The verdict is `MalformedCommitment`, and the frame **must still be
+    /// served**: F9 degrades an unverifiable attestation to *unattested* rather
+    /// than dropping the frame, because a host that dropped it would hand any
+    /// peer a denial-of-service primitive — attach garbage, watch the evidence
+    /// disappear.
+    MalformedAttestation,
 }
 
 #[derive(Parser)]
@@ -185,6 +231,7 @@ fn main() {
                         protocol_version,
                         provider: provider_info(args.misbehave),
                         capabilities: capabilities(),
+                        attester_keys: attester_keys(),
                     },
                 );
             }
@@ -249,6 +296,10 @@ fn main() {
                 {
                     frames.retain(|f| !f.valid_from.as_deref().is_some_and(|vf| vf > as_of));
                 }
+                // Detached, per F6: the attestations are computed over the
+                // frames as finally filtered, and ride beside them rather than
+                // inside one.
+                let attestations = attestations_for(&frames, args.misbehave);
                 write_envelope(
                     &mut stdout,
                     &Envelope::Frames {
@@ -259,6 +310,7 @@ fn main() {
                             dropped_estimate: None,
                             ..Default::default()
                         },
+                        attestations,
                     },
                 );
             }
@@ -364,6 +416,192 @@ fn embedding_dimension_error(query: &ContextQuery, id: Option<String>) -> Option
     })
 }
 
+// ---------------------------------------------------------------------------
+// Provenance attestation (`SPEC.md` §6.5, F6–F9)
+// ---------------------------------------------------------------------------
+
+/// The Ed25519 seed this fixture signs with.
+///
+/// A hardcoded constant, in a file that is otherwise a test fixture: it signs
+/// nothing outside this binary, and the conformance suite needs the signatures
+/// to be reproducible across runs and machines. A real provider holds its seed
+/// in an HSM or a KMS and calls `frame_commitment` itself — the protocol
+/// specifies the preimage, never the custody of the key.
+const ATTESTER_SEED: [u8; 32] = [42u8; 32];
+
+/// A second seed, used by [`Misbehave::ForgeSignature`] and by nothing else.
+/// Distinct from [`ATTESTER_SEED`], so a signature it produces cannot verify
+/// under the key the handshake published.
+const FORGERY_SEED: [u8; 32] = [43u8; 32];
+
+/// The id under which [`ATTESTER_SEED`]'s public key is published. Rotation
+/// would be a new id, never a reuse of this one.
+const ATTESTER_KEY_ID: &str = "example-docs-ed25519-1";
+
+/// Who is accountable for the claim, as distinct from which key produced it.
+const ATTESTER_ID: &str = "contextgraph-example-docs";
+
+/// A fixed issuance instant, so two runs of this fixture emit byte-identical
+/// attestations.
+const ATTESTATION_ISSUED_AT: &str = "2026-08-29T00:00:00Z";
+
+/// The `provider_id` this fixture binds into every frame commitment
+/// (`SPEC.md` §6.5.2).
+///
+/// It is the provider's handshake-declared `provider.name`, which is the one
+/// identifier both sides of the wire observe — a host-chosen local id (the
+/// suite's `provider-under-test`) is not visible to the provider, so signing
+/// against it is not something a provider could do.
+fn attestation_provider_id() -> String {
+    provider_info(None).name
+}
+
+/// Render raw bytes as the lowercase hex [`AttesterKey::public_key`] and
+/// [`ProvenanceAttestation::signature`] both use.
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// The attester keys this fixture publishes at the handshake.
+///
+/// Published *before* any frame moves, and always the honest key — including
+/// under [`Misbehave::ForgeSignature`], which signs with [`FORGERY_SEED`]
+/// instead. A provider that could republish its key with every answer could
+/// make a forged signature verify simply by publishing the forger's key, which
+/// is why the declaration lives on the handshake.
+fn attester_keys() -> Vec<AttesterKey> {
+    vec![AttesterKey {
+        key_id: ATTESTER_KEY_ID.into(),
+        algorithm: ALGORITHM_ED25519.into(),
+        public_key: hex_encode(&public_key_for(&ATTESTER_SEED)),
+    }]
+}
+
+/// Sign `frame`'s commitment with `seed`.
+fn attest(frame: &ContextFrame, seed: &[u8; 32]) -> ProvenanceAttestation {
+    sign_frame_attestation(
+        &attestation_provider_id(),
+        frame,
+        seed,
+        ATTESTER_KEY_ID,
+        ATTESTER_ID,
+        ATTESTATION_ISSUED_AT,
+    )
+}
+
+/// The `derivation` link [`Misbehave::TruncateChain`] signs and then hides: the
+/// admission that a frame was *summarised* rather than quoted verbatim.
+///
+/// Truncation is the interesting attack because the surviving links stay
+/// individually correct — every per-link digest still matches its bytes — so
+/// only a chain that folds each link into the next records that a link was ever
+/// there (§6.5.2).
+fn summarisation_link() -> Provenance {
+    Provenance {
+        kind: "derivation".into(),
+        uri: None,
+        range: None,
+        digest: None,
+        method: Some("summarize".into()),
+        by: Some(ATTESTER_ID.into()),
+    }
+}
+
+/// The detached attestations this fixture serves beside `frames` (§6.5).
+///
+/// Honest modes sign each frame exactly as served, so every misbehaviour that
+/// is *not* about attestation leaves the `attestation` check green and stays
+/// attributable to the check that owns it. The five attestation modes each sign
+/// one thing and serve another.
+fn attestations_for(
+    frames: &[ContextFrame],
+    misbehave: Option<Misbehave>,
+) -> Vec<FrameAttestation> {
+    let staple = |frame: &ContextFrame, attestation: ProvenanceAttestation| FrameAttestation {
+        frame_id: frame.id.clone(),
+        attestation,
+    };
+    match misbehave {
+        // A commitment computed honestly over the served frame, signed by a key
+        // the handshake never published.
+        Some(Misbehave::ForgeSignature) => frames
+            .iter()
+            .map(|frame| staple(frame, attest(frame, &FORGERY_SEED)))
+            .collect(),
+        // Frame A's genuine attestation, stapled to frame B. `canned_frames`
+        // has already given B A's provenance and A's `content_digest`, so the
+        // two commitments differ in the frame id and in nothing else.
+        Some(Misbehave::LiftSignature) => {
+            let Some((first, rest)) = frames.split_first() else {
+                return Vec::new();
+            };
+            let genuine = attest(first, &ATTESTER_SEED);
+            std::iter::once(staple(first, genuine.clone()))
+                .chain(rest.iter().map(|frame| staple(frame, genuine.clone())))
+                .collect()
+        }
+        // Sign the truth (the chain including the summarisation link), serve
+        // the lie (the chain without it). Nothing is re-signed.
+        Some(Misbehave::TruncateChain) => frames
+            .iter()
+            .enumerate()
+            .map(|(index, frame)| {
+                if index == 0 {
+                    let mut full = frame.clone();
+                    full.provenance.push(summarisation_link());
+                    staple(frame, attest(&full, &ATTESTER_SEED))
+                } else {
+                    staple(frame, attest(frame, &ATTESTER_SEED))
+                }
+            })
+            .collect(),
+        // Sign the honest bytes, serve a different `content_digest` under the
+        // same frame id. `canned_frames` served the swapped digest; restoring
+        // the honest one here is what the provider signed.
+        Some(Misbehave::SwapContent) => frames
+            .iter()
+            .enumerate()
+            .map(|(index, frame)| {
+                if index == 0 {
+                    let mut honest = frame.clone();
+                    honest.content_digest = Some(fixture_digest("getting-started.md"));
+                    staple(frame, attest(&honest, &ATTESTER_SEED))
+                } else {
+                    staple(frame, attest(frame, &ATTESTER_SEED))
+                }
+            })
+            .collect(),
+        // Garbage on the first frame, an honest attestation on the rest — so
+        // the check can report one frame still attested beside the one that
+        // degraded to unattested (F9).
+        Some(Misbehave::MalformedAttestation) => frames
+            .iter()
+            .enumerate()
+            .map(|(index, frame)| {
+                if index == 0 {
+                    staple(
+                        frame,
+                        ProvenanceAttestation::new(
+                            "not-a-commitment",
+                            ATTESTER_KEY_ID,
+                            ALGORITHM_ED25519,
+                            ATTESTER_ID,
+                            "zzzz",
+                            "whenever",
+                        ),
+                    )
+                } else {
+                    staple(frame, attest(frame, &ATTESTER_SEED))
+                }
+            })
+            .collect(),
+        _ => frames
+            .iter()
+            .map(|frame| staple(frame, attest(frame, &ATTESTER_SEED)))
+            .collect(),
+    }
+}
+
 /// The directory holding this reference provider's on-disk backing files,
 /// resolved at compile time so a digest is computed over the same bytes no
 /// matter where the fixture is spawned from (`SPEC.md` §6.2).
@@ -386,11 +624,7 @@ fn fixture_uri(file: &str) -> String {
 /// grammar, since the flood mode's violation is its frame count, not its digest.
 fn fixture_digest(file: &str) -> String {
     let bytes = std::fs::read(format!("{FIXTURE_DIR}/{file}")).unwrap_or_default();
-    let hex: String = Sha256::digest(&bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
-    format!("sha256:{hex}")
+    format!("sha256:{}", hex_encode(&Sha256::digest(&bytes)))
 }
 
 /// Flip the last hex digit of a well-formed digest, yielding one that still
@@ -422,18 +656,65 @@ fn declared_digest(file: &str, misbehave: Option<Misbehave>) -> String {
     }
 }
 
-/// The digest this fixture serves for a frame id *right now*, or `None` if it
-/// does not serve that frame at all. Threaded through `misbehave` so
-/// `stale-digest` stays internally *consistent* over the wire: the provider
-/// vouches for the very (forged) digest it served, so `verify-honesty` still
-/// passes and the forgery is left for `provenance-fixture-consistency` alone to
-/// catch by re-reading the file.
-fn current_digest(frame_id: &str, misbehave: Option<Misbehave>) -> Option<String> {
+/// The `content_digest` a frame declares, which is [`declared_digest`] except
+/// under [`Misbehave::SwapContent`].
+///
+/// That mode re-serves *different bytes* under a signed frame id: the
+/// `content_digest` moves while the `file` provenance digest stays the real one
+/// over the real bytes. Splitting the two is what keeps the swap attributable —
+/// `provenance-fixture-consistency` re-reads the file and is satisfied, §D1's
+/// grammar is satisfied, and only the signature covering the frame's bytes
+/// rather than merely its name catches it.
+fn declared_content_digest(file: &str, misbehave: Option<Misbehave>) -> String {
+    let declared = declared_digest(file, misbehave);
+    if misbehave == Some(Misbehave::SwapContent) && file == PRIMARY_FILE {
+        stale_digest(&declared)
+    } else {
+        declared
+    }
+}
+
+/// The backing file of the frame the attestation modes tamper with. Naming it
+/// once keeps [`declared_content_digest`] and [`attestations_for`] pointed at
+/// the same frame — if they disagreed, a mode would fail for a reason it does
+/// not claim.
+const PRIMARY_FILE: &str = "getting-started.md";
+
+/// The file each canned frame is served from.
+///
+/// Ordinarily one file per frame. Under [`Misbehave::LiftSignature`] the second
+/// frame is served from the *first* frame's file, so the two frames carry
+/// identical provenance and an identical `content_digest` and their commitments
+/// differ in the frame id alone — the one difference the §6.5.2 identity
+/// binding exists to catch.
+fn backing_file(
+    frame_id: &str,
+    misbehave: Option<Misbehave>,
+) -> Option<(&'static str, &'static str)> {
     match frame_id {
-        "frm_getting_started" => Some(declared_digest("getting-started.md", misbehave)),
-        "frm_configuration" => Some(declared_digest("configuration.md", misbehave)),
+        "frm_getting_started" => Some((PRIMARY_FILE, "L1-40")),
+        "frm_configuration" if misbehave == Some(Misbehave::LiftSignature) => {
+            Some((PRIMARY_FILE, "L1-40"))
+        }
+        "frm_configuration" => Some(("configuration.md", "L1-25")),
+        // The synthetic frame the flood mode clones. `flood.md` is a name this
+        // fixture does not ship, which is deliberate: the flood mode's
+        // violation is its frame count, and a link to a file no host can read
+        // is skipped by the byte-consistency check rather than failed by it.
+        "frm_flood" => Some(("flood.md", "L1")),
         _ => None,
     }
+}
+
+/// The digest this fixture serves for a frame id *right now*, or `None` if it
+/// does not serve that frame at all. Threaded through `misbehave` so every
+/// digest-moving mode stays internally *consistent* over the wire: the provider
+/// vouches for the very (forged) digest it served, so `verify-honesty` still
+/// passes and the forgery is left for the check that owns it — the file bytes
+/// for `stale-digest`, the signature for `swap-content`.
+fn current_digest(frame_id: &str, misbehave: Option<Misbehave>) -> Option<String> {
+    let (file, _) = backing_file(frame_id, misbehave)?;
+    Some(declared_content_digest(file, misbehave))
 }
 
 /// Answer a `context/verify` request honestly, by comparing each presented
@@ -509,8 +790,6 @@ fn canned_frames(misbehave: Option<Misbehave>) -> Vec<ContextFrame> {
             "Getting Started",
             "Install the reference binding with `cargo add contextgraph-types`, then implement \
              the four required methods.",
-            "getting-started.md",
-            "L1-40",
             "2026-01-01T00:00:00Z",
             0.82,
             misbehave,
@@ -530,8 +809,6 @@ fn canned_frames(misbehave: Option<Misbehave>) -> Vec<ContextFrame> {
                 "frm_configuration",
                 "Configuration example",
                 "let host = Host::new().with_provider(\"docs\", provider);",
-                "configuration.md",
-                "L1-25",
                 "2026-09-01T00:00:00Z",
                 0.61,
                 misbehave,
@@ -568,20 +845,23 @@ fn canned_frames(misbehave: Option<Misbehave>) -> Vec<ContextFrame> {
 
 /// A frame with the defect selected by `misbehave` applied, if any.
 ///
+/// The backing file and range come from [`backing_file`] rather than from the
+/// caller, because [`Misbehave::LiftSignature`] re-points the second frame at
+/// the first frame's file and both this frame and `context/verify` have to
+/// agree about that.
+///
 /// `valid_from` is the instant the frame's content became true in the world
 /// (§6.1); callers give the two canned frames *disjoint* windows so an `as_of`
 /// pin between them is observable — the `as-of-temporal` probe depends on it.
-#[allow(clippy::too_many_arguments)]
 fn doc_frame(
     id: &str,
     title: &str,
     content: &str,
-    file: &str,
-    range: &str,
     valid_from: &str,
     score: f32,
     misbehave: Option<Misbehave>,
 ) -> ContextFrame {
+    let (file, range) = backing_file(id, misbehave).unwrap_or((PRIMARY_FILE, "L1-40"));
     let honest_cost = budget_tokens(content);
     ContextFrame {
         id: id.into(),
@@ -592,7 +872,7 @@ fn doc_frame(
         // frame's file-provenance digest, so a host re-reading the file confirms
         // both (§6.2, §F5). `stale-digest` flips one hex digit (well-formed but
         // wrong bytes); `malformed-digest` replaces it with an ungrammatical stub.
-        content_digest: Some(declared_digest(file, misbehave)),
+        content_digest: Some(declared_content_digest(file, misbehave)),
         uri: Some(fixture_uri(file)),
         // This fixture serves inline `full` frames only.
         representation: Representation::Full,
@@ -655,8 +935,6 @@ fn base_frame(
         "frm_flood",
         "Flood",
         "x",
-        "flood.md",
-        "L1",
         "2026-01-01T00:00:00Z",
         0.5,
         misbehave.filter(|m| !matches!(m, Misbehave::FloodFrames)),

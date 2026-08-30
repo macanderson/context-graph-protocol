@@ -90,6 +90,34 @@ text lands without a human merge.
   signature nobody checks teaches an implementer to produce forgeries. As a side
   effect the §6.5 constructions now compile and run under `cargo test`, which
   nothing in CI did before.
+- **An adversarial conformance check for provenance attestation
+  (`attestation`, `SPEC.md` §6.5 F6–F9).** F6–F9 shipped with their "Verified
+  by" column pointing at `contextgraph_types::attest` — the implementation's own
+  unit tests. Every other guarantee in this protocol earns its credibility from
+  a suite with an adversarial mode behind it, and a guarantee whose only witness
+  is the implementation asserting about itself is the self-attestation §11.1
+  exists to rule out. The suite now recomputes each served frame's commitment
+  from the frame in hand and verifies the signature over it, against a key the
+  handshake published. `contextgraph-example-docs` grows five `--misbehave`
+  modes, one per forgery the constructions exist to stop: `forge-signature`
+  (wrong key ⇒ `BadSignature`), `lift-signature` (a genuine attestation stapled
+  to a second frame with identical provenance and an identical `content_digest`
+  ⇒ `CommitmentMismatch`, and the one a plausible implementation really does get
+  wrong), `truncate-chain` (a hidden `derivation` link ⇒ `CommitmentMismatch`),
+  `swap-content` (different bytes under a signed frame id ⇒
+  `CommitmentMismatch`), and `malformed-attestation` (garbage ⇒
+  `MalformedCommitment`, with the frame still served as *unattested* per F9).
+  Removing the frame-identity binding from `frame_commitment` makes
+  `lift-signature` pass and turns `conformance-red.sh` red, which is the whole
+  point of having the mode.
+- **Attestations travel on the wire** through two optional envelope members
+  (`SPEC.md` §6.5.5): `handshake_ack.attester_keys` publishes the public keys a
+  provider signs with, and `frames.attestations` carries one detached
+  attestation per attested frame — beside the frames, never inside one (F6).
+  Both are additive within `contextgraph/1`: a peer that knows nothing about
+  them drops them and behaves as before. §6.5.2 now also pins `provider_id` to
+  the handshake-declared `provider.name`, the only identifier both ends of the
+  wire observe.
 - **Provenance attestation (`SPEC.md` §6.5, F6–F9;
   [ADR 0010](./docs/adr/0010-provenance-attestation.md)).** A digest is
   tamper-evident only to someone who already trusts whoever recorded it; the

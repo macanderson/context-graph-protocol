@@ -681,6 +681,7 @@ pub fn run_stdio(config: &BridgeConfig) -> Result<(), String> {
                         protocol_version: PROTOCOL_VERSION.to_string(),
                         provider: info.clone(),
                         capabilities: caps.clone(),
+                        attester_keys: vec![],
                     },
                 );
             }
@@ -693,7 +694,14 @@ pub fn run_stdio(config: &BridgeConfig) -> Result<(), String> {
                 }
                 let result = answer_query(&base_frames, &query);
                 // Echo the correlation id so the host can demultiplex (§H4).
-                write_envelope(&mut stdout, &Envelope::Frames { id, result });
+                write_envelope(
+                    &mut stdout,
+                    &Envelope::Frames {
+                        id,
+                        result,
+                        attestations: vec![],
+                    },
+                );
             }
             Envelope::Verify { request } => {
                 write_envelope(

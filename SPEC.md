@@ -277,10 +277,10 @@ loud.
 | **F3** | `citation_label` **MUST** be non-empty — a host must be able to cite a frame by a human label, never a bare id. | `frame-validity` |
 | **F4** | `valid_from`, `valid_to`, `recorded_at`, and `as_of` **MUST** match `YYYY-MM-DDTHH:MM:SS(.f+)?Z`. | `frame-validity` |
 | **F5** | Provenance of kind `file` **MUST** carry a digest matching `sha256:<64 lowercase hex>`. | `frame-validity` |
-| **F6** | A `ProvenanceAttestation` **MUST** be detached — it **MUST NOT** appear inside the frame it signs, nor inside any hash preimage this spec defines. | `contextgraph_types::attest` |
-| **F7** | An attestation's `signed_commitment` **MUST** be the `sha256:<64 lowercase hex>` rendering of a commitment computed exactly as §6.5.2 or §6.5.3 specifies. | `contextgraph_types::attest` |
-| **F8** | A verifier that does not recognise an attestation's `algorithm` **MUST** report it as uncheckable and **MUST NOT** treat the frame as attested. "I cannot check this" is never "this is good". | `contextgraph_types::attest` |
-| **F9** | A host **MUST NOT** reject or drop a frame solely because it carries an attestation the host cannot verify; an unverifiable attestation degrades the frame to *unattested*, exactly as if it carried none. | `contextgraph_types::attest` |
+| **F6** | A `ProvenanceAttestation` **MUST** be detached — it **MUST NOT** appear inside the frame it signs, nor inside any hash preimage this spec defines. | `attestation` |
+| **F7** | An attestation's `signed_commitment` **MUST** be the `sha256:<64 lowercase hex>` rendering of a commitment computed exactly as §6.5.2 or §6.5.3 specifies. | `attestation` |
+| **F8** | A verifier that does not recognise an attestation's `algorithm` **MUST** report it as uncheckable and **MUST NOT** treat the frame as attested. "I cannot check this" is never "this is good". | `attestation` |
+| **F9** | A host **MUST NOT** reject or drop a frame solely because it carries an attestation the host cannot verify; an unverifiable attestation degrades the frame to *unattested*, exactly as if it carried none. | `attestation` |
 | **F10** | `score` is **provider-local and ordinal** — this spec defines no shared scale. A host **MUST NOT** apply a cross-provider `score` threshold, and **MUST NOT** present a raw `score` as a cross-provider measure of relevance. A host that *orders* frames from different providers by raw `score` **MUST** document it as its own policy choice, never as a protocol guarantee. | host composition |
 | **F11** | An attestation **MUST** travel beside the frames it covers, in the result's `frame_attestations` / `result_attestation` members, and **MUST NOT** appear as a member of a `ContextFrame` (F6 on the wire). A `frame_attestations` entry **MUST** name the full *(provider id, frame id, `content_digest`)* identity it attests rather than implying it by array position, and **MUST** name a frame the same result carries. | `attestation_wire` suite; envelope schema |
 | **F12** | A `result_attestation`'s `signed_commitment` **MUST** be the §6.5.3 Merkle root over the commitments of **exactly** the frames carried in `result.frames`, in canonical order — never over a larger candidate set the provider truncated away. | `attestation_wire` suite; `contextgraph_types::attest::result_set_root` |
@@ -480,6 +480,43 @@ to one frame from one provider carrying one set of bytes, or it binds to nothing
 `content_digest` is included as an *option* because a frame is permitted to carry
 none (D3); the encoding records that absence honestly rather than substituting a
 placeholder.
+
+`provider_id` is the provider's handshake-declared `provider.name` (§3). A host
+also keeps a local id for each provider it has configured, and that one is not a
+string the provider ever sees — so it is not one a provider could sign against.
+The declared name is the only identifier both ends of the wire observe.
+
+#### 6.5.5 Carrying an attestation
+
+An attestation travels **beside** the thing it signs, never inside it (F6).
+Two optional members carry it:
+
+* `handshake_ack.attester_keys` — the public keys the provider signs with. A
+  provider that publishes none offers no attestation, which is conformant.
+* `frames.attestations` — one entry per attested frame, naming its frame by id.
+
+```jsonc
+{
+  "type": "handshake_ack",
+  "protocol_version": "contextgraph/1.0",
+  "provider": { "name": "example-docs", "version": "1.0.0",
+                "data_flow": { "reads": true, "writes": false, "egress": false } },
+  "capabilities": { "query": { "kinds": ["doc"] } },
+  "attester_keys": [
+    { "key_id": "example-docs-ed25519-1", "algorithm": "ed25519",
+      "public_key": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a" }
+  ]
+}
+```
+
+A published key settles whether an attestation is **built** the way this section
+requires. It settles nothing about *who* signed: it comes from the party under
+audit. A deployment that needs the second answer resolves `key_id` against its
+own trust store and ignores what the handshake said.
+
+Both members are optional additions within `contextgraph/1`, so a peer that
+knows nothing about them drops them and behaves exactly as it did before (§13
+U1).
 
 #### 6.5.3 Result-set Merkle root
 

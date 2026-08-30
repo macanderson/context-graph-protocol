@@ -4,10 +4,10 @@
 //! proving the suite catches a broken provider (task deliverable).
 
 use contextgraph_conformance::{
-    CHECK_ANCHOR_RELEVANCE, CHECK_AS_OF, CHECK_BUDGET_HONESTY, CHECK_CONSENT_SCOPE,
-    CHECK_CORRELATION, CHECK_EMBEDDING_FINGERPRINT, CHECK_FRAME_VALIDITY, CHECK_HANDSHAKE,
-    CHECK_KINDS_FILTER, CHECK_MALFORMED, CHECK_PROVENANCE_FIXTURE_CONSISTENCY, CHECK_SHUTDOWN,
-    CHECK_VERIFY_HONESTY, CheckStatus, ProviderTarget, run_conformance,
+    CHECK_ANCHOR_RELEVANCE, CHECK_AS_OF, CHECK_ATTESTATION, CHECK_BUDGET_HONESTY,
+    CHECK_CONSENT_SCOPE, CHECK_CORRELATION, CHECK_EMBEDDING_FINGERPRINT, CHECK_FRAME_VALIDITY,
+    CHECK_HANDSHAKE, CHECK_KINDS_FILTER, CHECK_MALFORMED, CHECK_PROVENANCE_FIXTURE_CONSISTENCY,
+    CHECK_SHUTDOWN, CHECK_VERIFY_HONESTY, CheckStatus, ProviderTarget, run_conformance,
 };
 
 /// Path to the fixture binary, built automatically for integration tests.
@@ -40,7 +40,7 @@ async fn a_well_behaved_provider_is_fully_conformant() {
         report.failures().collect::<Vec<_>>()
     );
     // Every check ran and passed (none skipped for a stdio provider).
-    assert_eq!(report.checks.len(), 13);
+    assert_eq!(report.checks.len(), 14);
     for name in [
         CHECK_HANDSHAKE,
         CHECK_CONSENT_SCOPE,
@@ -55,6 +55,7 @@ async fn a_well_behaved_provider_is_fully_conformant() {
         CHECK_MALFORMED,
         CHECK_EMBEDDING_FINGERPRINT,
         CHECK_CORRELATION,
+        CHECK_ATTESTATION,
     ] {
         assert_eq!(status_of(&report, name), CheckStatus::Pass, "{name}");
     }
@@ -258,5 +259,125 @@ async fn ignoring_anchors_fails_the_anchor_relevance_check() {
     assert_eq!(
         status_of(&report, CHECK_ANCHOR_RELEVANCE),
         CheckStatus::Fail
+    );
+}
+
+/// The `attestation` check's evidence string, so a mode's test can assert the
+/// **named verdict** rather than merely "something went red". A mode that fails
+/// for the wrong reason is a test that will pass over a real regression.
+fn evidence_of(report: &contextgraph_conformance::ConformanceReport, name: &str) -> String {
+    report
+        .checks
+        .iter()
+        .find(|check| check.name == name)
+        .unwrap_or_else(|| panic!("report is missing the `{name}` check"))
+        .evidence
+        .clone()
+}
+
+/// Run one attestation misbehaviour and assert it trips `attestation`, that
+/// `attestation` is the **only** check it trips, and that the verdict named in
+/// the evidence is `expected_verdict`.
+async fn attestation_mode_is_caught(mode: &str, expected_verdict: &str) -> String {
+    let report = run_conformance(target(&["--misbehave", mode])).await;
+    assert_eq!(
+        status_of(&report, CHECK_ATTESTATION),
+        CheckStatus::Fail,
+        "`{mode}` must trip `attestation`"
+    );
+    // Attributability. A forgery caught by an unrelated check leaves the check
+    // that owns §6.5 free to stop working unnoticed — the hole
+    // `conformance-red.sh` grew its expected-check matching to close.
+    let others: Vec<&str> = report
+        .failures()
+        .map(|check| check.name.as_str())
+        .filter(|name| *name != CHECK_ATTESTATION)
+        .collect();
+    assert!(
+        others.is_empty(),
+        "`{mode}` should trip `attestation` alone, also tripped: {others:?}"
+    );
+    let evidence = evidence_of(&report, CHECK_ATTESTATION);
+    assert!(
+        evidence.contains(expected_verdict),
+        "`{mode}` should report `{expected_verdict}`, got: {evidence}"
+    );
+    evidence
+}
+
+#[tokio::test]
+async fn signing_with_an_undeclared_key_is_a_bad_signature() {
+    // §6.5.4 compares commitments BEFORE examining the signature, so an intact
+    // frame signed by the wrong key must report the key problem and not a
+    // tampering one — the two send an operator to opposite places.
+    attestation_mode_is_caught("forge-signature", "BadSignature").await;
+}
+
+#[tokio::test]
+async fn a_lifted_signature_does_not_validate_the_frame_it_was_stapled_to() {
+    // The forgery the §6.5.2 identity binding exists to stop, and the only one
+    // here a plausible implementation really does ship: sign the bare chain
+    // head and every frame citing the same source shares a valid signature.
+    // `an_attestation_lift_differs_only_in_the_frame_id` proves the two frames
+    // are otherwise identical, so this mismatch is attributable to the frame id
+    // and to nothing else.
+    let evidence = attestation_mode_is_caught("lift-signature", "CommitmentMismatch").await;
+    assert!(
+        evidence.contains("frm_configuration"),
+        "the mismatch must name the frame the signature was lifted ONTO: {evidence}"
+    );
+    assert!(
+        !evidence.contains("frm_getting_started"),
+        "the frame the signature genuinely covers must still verify: {evidence}"
+    );
+}
+
+#[tokio::test]
+async fn truncating_the_provenance_chain_is_a_commitment_mismatch() {
+    // Drop the `derivation` link and the frame reads as quoted rather than
+    // summarised. Every surviving link's digest is still correct, which is
+    // exactly why §6.5.2 folds the links into a chain instead of trusting a set
+    // of independent digests.
+    attestation_mode_is_caught("truncate-chain", "CommitmentMismatch").await;
+}
+
+#[tokio::test]
+async fn re_serving_different_bytes_under_a_signed_frame_id_is_caught() {
+    // The `content_digest` moves while the frame id stays. `frame-validity`,
+    // `verify-honesty` and `provenance-fixture-consistency` are all satisfied —
+    // the provider vouches for the digest it served and the file's own bytes
+    // still hash correctly — so only the signature covering the frame's bytes
+    // rather than merely its name catches it.
+    attestation_mode_is_caught("swap-content", "CommitmentMismatch").await;
+}
+
+#[tokio::test]
+async fn a_garbage_attestation_leaves_the_frame_served_but_unattested() {
+    // F9. The attestation is unverifiable, so the check goes red — and the
+    // frame must still be there. A host that dropped it would hand any peer a
+    // denial-of-service primitive: attach garbage, watch the evidence
+    // disappear. The probe asks the reference host directly and would append an
+    // F9 violation to this evidence if the frame had gone missing.
+    let evidence = attestation_mode_is_caught("malformed-attestation", "MalformedCommitment").await;
+    assert!(
+        !evidence.contains("F9"),
+        "the frame must survive as unattested, not be dropped: {evidence}"
+    );
+
+    // The frame is served, and served as an ordinary usable frame: everything
+    // else about this provider is conformant.
+    let report = run_conformance(target(&["--misbehave", "malformed-attestation"])).await;
+    for name in [
+        CHECK_FRAME_VALIDITY,
+        CHECK_BUDGET_HONESTY,
+        CHECK_VERIFY_HONESTY,
+        CHECK_PROVENANCE_FIXTURE_CONSISTENCY,
+    ] {
+        assert_eq!(status_of(&report, name), CheckStatus::Pass, "{name}");
+    }
+    assert!(
+        evidence_of(&report, CHECK_FRAME_VALIDITY).starts_with("2 frame(s)"),
+        "both frames must still be served: {}",
+        evidence_of(&report, CHECK_FRAME_VALIDITY)
     );
 }

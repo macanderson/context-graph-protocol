@@ -24,7 +24,13 @@ dist = false
 [dependencies]
 # Floor requirements — see the note in contextgraph-host/Cargo.toml: caret reqs break
 # the release version stamp at the first minor bump.
-contextgraph-types = { path = "../contextgraph-types", version = ">=2.0.0" }
+# `attestation` is ON here, not off-by-default as it is for the pure wire
+# consumer: the `attestation` check verifies real Ed25519 signatures over real
+# SHA-256 commitments, and a conformance suite that could not run the verifier
+# would be asserting §6.5 rather than checking it.
+contextgraph-types = { path = "../contextgraph-types", version = ">=2.0.0", features = [
+  "attestation",
+] }
 contextgraph-host = { path = "../contextgraph-host", version = ">=2.0.0" }
 serde.workspace = true
 serde_json.workspace = true

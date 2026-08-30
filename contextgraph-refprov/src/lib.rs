@@ -119,6 +119,7 @@ pub fn serve(mut source: impl FrameSource) {
                         protocol_version: PROTOCOL_VERSION.to_string(),
                         provider: provider_info(&config),
                         capabilities: capabilities(&config),
+                        attester_keys: vec![],
                     },
                 );
             }
@@ -192,6 +193,7 @@ fn handle_query(
             dropped_estimate,
             ..Default::default()
         },
+        attestations: vec![],
     }
 }
 
