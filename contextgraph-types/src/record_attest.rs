@@ -150,7 +150,8 @@ fn raw_digest(digest: &str) -> Result<[u8; 32], RecordHashError> {
         .map(|(_, hex)| hex)
         .ok_or_else(|| RecordHashError::MalformedDigest(digest.to_string()))?;
     let mut out = [0u8; 32];
-    for (slot, pair) in out.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
+    let (pairs, _) = hex.as_bytes().as_chunks::<2>();
+    for (slot, pair) in out.iter_mut().zip(pairs) {
         let hi = (pair[0] as char)
             .to_digit(16)
             .ok_or_else(|| RecordHashError::MalformedDigest(digest.to_string()))?;
@@ -364,7 +365,8 @@ mod crypto {
             return None;
         }
         let mut out = Vec::with_capacity(s.len() / 2);
-        for pair in s.as_bytes().chunks_exact(2) {
+        let (pairs, _) = s.as_bytes().as_chunks::<2>();
+        for pair in pairs {
             let hi = (pair[0] as char).to_digit(16)?;
             let lo = (pair[1] as char).to_digit(16)?;
             out.push((hi * 16 + lo) as u8);

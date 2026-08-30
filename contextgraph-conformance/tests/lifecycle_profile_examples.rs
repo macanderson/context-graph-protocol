@@ -369,16 +369,28 @@ fn the_detached_attestation_round_trips_and_signs_the_observation_record() {
 /// is exactly what this fixture used to be.
 fn attestation_key() -> (serde_json::Value, [u8; 32]) {
     let key = read_json(&fixtures_dir().join(ATTESTATION_KEY_FIXTURE));
-    let hex = key["signing_key_seed"]
+    let seed = hex32(&key, "signing_key_seed");
+    (key, seed)
+}
+
+/// Decode a 32-byte lowercase-hex member of the key fixture.
+fn hex32(key: &serde_json::Value, member: &str) -> [u8; 32] {
+    let text = key[member]
         .as_str()
-        .expect("signing_key_seed is a string");
-    let mut seed = [0u8; 32];
-    for (slot, pair) in seed.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
+        .unwrap_or_else(|| panic!("{member} is a string"));
+    let (pairs, rest) = text.as_bytes().as_chunks::<2>();
+    assert!(
+        rest.is_empty() && pairs.len() == 32,
+        "{member} must be 32 bytes of lowercase hex, found {} characters",
+        text.len()
+    );
+    let mut out = [0u8; 32];
+    for (slot, pair) in out.iter_mut().zip(pairs) {
         let hi = (pair[0] as char).to_digit(16).expect("hex");
         let lo = (pair[1] as char).to_digit(16).expect("hex");
         *slot = (hi * 16 + lo) as u8;
     }
-    (key, seed)
+    out
 }
 
 /// The attestation example is a **verifiable vector**, not a shape example.
@@ -411,16 +423,7 @@ fn the_attestation_example_verifies_under_its_published_key() {
         return;
     }
 
-    let public_key_hex = key["public_key"].as_str().expect("public_key is a string");
-    let mut public_key = [0u8; 32];
-    for (slot, pair) in public_key
-        .iter_mut()
-        .zip(public_key_hex.as_bytes().chunks_exact(2))
-    {
-        let hi = (pair[0] as char).to_digit(16).expect("hex");
-        let lo = (pair[1] as char).to_digit(16).expect("hex");
-        *slot = (hi * 16 + lo) as u8;
-    }
+    let public_key = hex32(&key, "public_key");
 
     assert_eq!(
         verify_signed_record_hash(&observation_hash, &attestation, &public_key),

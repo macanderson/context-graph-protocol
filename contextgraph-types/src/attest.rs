@@ -326,8 +326,11 @@ fn from_hex(s: &str) -> Option<Vec<u8>> {
         return None;
     }
     let mut out = Vec::with_capacity(s.len() / 2);
-    let bytes = s.as_bytes();
-    for pair in bytes.chunks_exact(2) {
+    // `as_chunks::<2>()` over `chunks_exact(2)`: the length check above already
+    // rules out a remainder, and the fixed-size chunk lets the compiler see both
+    // indexes are in bounds.
+    let (pairs, _) = s.as_bytes().as_chunks::<2>();
+    for pair in pairs {
         let hi = (pair[0] as char).to_digit(16)?;
         let lo = (pair[1] as char).to_digit(16)?;
         out.push((hi * 16 + lo) as u8);
