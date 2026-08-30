@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
-from typing import Iterable, Optional, Sequence, Union
+from typing import Any, Iterable, Mapping, Optional, Sequence, Union
 
 from . import _ed25519
 from .types import Provenance
@@ -46,6 +46,8 @@ __all__ = [
     "AttestationVerdict",
     "InclusionProof",
     "InclusionStep",
+    "LinkLike",
+    "FrameLike",
     "ProvenanceAttestation",
     "Verdict",
     "digest_string",
@@ -62,6 +64,15 @@ __all__ = [
 
 #: The signature algorithm this revision defines (``SPEC.md`` §6.5).
 ALGORITHM_ED25519 = "ed25519"
+
+#: A provenance link, as the typed :class:`~contextgraph_sdk.types.Provenance`
+#: or as any decoded JSON mapping with the same members. A missing key and an
+#: explicit ``None`` are both the encoding's absent; ``""`` is present.
+LinkLike = Union[Provenance, Mapping[str, Any]]
+
+#: A frame, as :class:`AttestableFrame` or as any mapping carrying ``id``,
+#: ``content_digest`` and ``provenance``.
+FrameLike = Union["AttestableFrame", Mapping[str, Any]]
 
 # The domain-separation tags and Merkle prefixes the hashing rules use
 # (``SPEC.md`` §6.5.1). These exact byte strings are normative — a port that
@@ -104,7 +115,7 @@ class ProvenanceAttestation:
     issued_at: str
 
     @classmethod
-    def from_wire(cls, obj: dict) -> "ProvenanceAttestation":
+    def from_wire(cls, obj: Mapping[str, Any]) -> "ProvenanceAttestation":
         """Build one from a decoded JSON object, ignoring unknown members."""
         return cls(
             signed_commitment=obj["signed_commitment"],
@@ -230,7 +241,7 @@ def _enc_opt(s: Optional[str]) -> bytes:
     return b"\x01" + _enc_str(s)
 
 
-def _link_field(link: Union[Provenance, dict], name: str) -> Optional[str]:
+def _link_field(link: LinkLike, name: str) -> Optional[str]:
     """Read one optional field from a link.
 
     A missing key and an explicit ``None`` are both absent; ``""`` is present.
@@ -239,7 +250,7 @@ def _link_field(link: Union[Provenance, dict], name: str) -> Optional[str]:
     return None if value is None else str(value)
 
 
-def encode_provenance_link(link: Union[Provenance, dict]) -> bytes:
+def encode_provenance_link(link: LinkLike) -> bytes:
     """The canonical encoding of one provenance link (``SPEC.md`` §6.5.1).
 
     Field order is normative: ``type``, ``uri``, ``range``, ``digest``,
@@ -305,7 +316,7 @@ def parse_digest(digest: str) -> Optional[bytes]:
 # ---------------------------------------------------------------------------
 
 
-def provenance_chain_head(links: Iterable[Union[Provenance, dict]] = ()) -> bytes:
+def provenance_chain_head(links: Iterable[LinkLike] = ()) -> bytes:
     """The head of a frame's provenance hash chain (``SPEC.md`` §6.5.2).
 
     Links fold **source-first**, in the order §6 requires them to be carried,
@@ -320,9 +331,7 @@ def provenance_chain_head(links: Iterable[Union[Provenance, dict]] = ()) -> byte
     return head
 
 
-def frame_commitment(
-    provider_id: str, frame: Union[AttestableFrame, dict]
-) -> bytes:
+def frame_commitment(provider_id: str, frame: FrameLike) -> bytes:
     """The commitment binding one frame's identity to its provenance chain.
 
     The ``(provider_id, frame id, content_digest)`` triple is not optional
@@ -393,7 +402,7 @@ def inclusion_proof(
 
 
 def _collect_path(
-    commitments: Sequence[bytes], index: int, path: list
+    commitments: Sequence[bytes], index: int, path: list[InclusionStep]
 ) -> None:
     """Walk down the tree accumulating sibling hashes, leaf-upward."""
     if len(commitments) <= 1:
@@ -485,7 +494,7 @@ def verify_commitment(
 
 def verify_frame_attestation(
     provider_id: str,
-    frame: Union[AttestableFrame, dict],
+    frame: FrameLike,
     attestation: ProvenanceAttestation,
     public_key: bytes,
 ) -> AttestationVerdict:
