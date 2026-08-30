@@ -217,9 +217,10 @@ now tied to the kind, because an unknown kind owns its string.
 
 ### 5.4 SDKs move in lockstep
 
-`contextgraph-sdk` (Python) and `@contextgraph/sdk` (TypeScript) also go to
-`2.0.0`, for the same reason in their own type systems: `FrameKind` widens to
-accept any string, so an exhaustive `switch` that relied on `never`-narrowing
-stops type-checking. Narrow with the exported `isKnownFrameKind` /
-`KNOWN_FRAME_KINDS` when you need to branch only on kinds you understand. The
-Go SDK is unchanged in this release — porting it is tracked in issue #93.
+`contextgraph-sdk` (Python) and `@contextgraphprotocol/typescript-sdk`
+(TypeScript) also go to `2.0.0`, for the same reason in their own type systems:
+`FrameKind` widens to accept any string, so an exhaustive `switch` that relied
+on `never`-narrowing stops type-checking. Narrow with the exported
+`isKnownFrameKind` / `KNOWN_FRAME_KINDS` when you need to branch only on kinds
+you understand. The Go SDK is unchanged in this release — porting it is tracked
+in issue #93.
