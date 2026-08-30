@@ -50,6 +50,19 @@ text lands without a human merge.
   own reranker or per-provider quotas instead of raw `score`.
 - **TypeScript SDK:** `KnownFrameKind`, `KNOWN_FRAME_KINDS`, `isKnownFrameKind`.
   **Python SDK:** `KnownFrameKind`, `KNOWN_FRAME_KINDS`.
+- **CI typechecks both typed SDKs.** `sdk (typescript) typechecks` runs
+  `tsc --noEmit`, and `sdk (python) typechecks` runs `mypy --strict` — the
+  Python SDK ships `py.typed`, so its annotations are a promise downstream
+  typecheckers act on, and nothing checked them. The `FrameKind` types above
+  shipped on a claim rather than a run (#94).
+- **CI catches a version pin that has drifted from the manifest it names**
+  ([ADR 0012](./docs/adr/0012-sdk-version-pins-share-a-major.md)).
+  `.github/scripts/check-sdk-version-pins.py` holds the scaffolder's
+  `DEFAULT_SDK` pins to the major each SDK manifest ships, and holds the two
+  SDK manifests and the crates to one major between them. The TypeScript pin
+  had sat at `^0.1.0` against a shipped `1.0.0` for an unknown length of time,
+  and the scaffold job overrides both published pins with local paths so it
+  could never have seen it (#98).
 
 ### Changed
 - **Crate version `1.0.0` → `2.0.0`; protocol version stays `contextgraph/1.0`.**
