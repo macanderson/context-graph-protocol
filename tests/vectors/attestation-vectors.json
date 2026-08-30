@@ -46,7 +46,6 @@
     "unicode": "0000000466696c650100000018646f63732f6e61c3af76652fe697a5e69cace8aa9e2e6d6401000000054c312d4c3200010000000872c3a973756dc3a9010000000af09d849e2d6167656e74"
   },
   "unicode_length_trap": {
-    "$comment": "The three answers a port can give for the same two strings. Only utf8_bytes is correct; the other two are what a native length property returns in JavaScript and Python.",
     "uri": {
       "utf8_bytes": 24,
       "code_points": 17,
@@ -58,6 +57,7 @@
       "utf16_code_units": 8
     }
   },
+  "unicode_length_trap_note": "The three answers a port can give for the same two strings. Only utf8_bytes is correct; the other two are what a native length property returns in JavaScript and Python.",
   "chain_heads": {
     "empty": "sha256:2ab226c884ffeb5ac95d300a8d8ee726cb4488fb59a19047d21da7170e9b63d6",
     "file": "sha256:ac5418d723088033179a2671d17cd08d3e082eefa783e3eeb1a5145f83592178",

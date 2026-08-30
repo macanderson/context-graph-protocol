@@ -458,6 +458,32 @@ fn the_shared_fixture_publishes_exactly_these_values() {
         s("/link_encodings_hex/unicode"),
         hex(&encode_provenance_link(&unicode_link()))
     );
+    let n = |pointer: &str| -> u64 {
+        v.pointer(pointer)
+            .and_then(|x| x.as_u64())
+            .unwrap_or_else(|| panic!("the fixture has no number at {pointer}"))
+    };
+    let uri = unicode_link().uri.expect("uri is present");
+    assert_eq!(n("/unicode_length_trap/uri/utf8_bytes"), uri.len() as u64);
+    assert_eq!(
+        n("/unicode_length_trap/uri/code_points"),
+        uri.chars().count() as u64
+    );
+    assert_eq!(
+        n("/unicode_length_trap/uri/utf16_code_units"),
+        uri.encode_utf16().count() as u64
+    );
+    let by = unicode_link().by.expect("by is present");
+    assert_eq!(n("/unicode_length_trap/by/utf8_bytes"), by.len() as u64);
+    assert_eq!(
+        n("/unicode_length_trap/by/code_points"),
+        by.chars().count() as u64
+    );
+    assert_eq!(
+        n("/unicode_length_trap/by/utf16_code_units"),
+        by.encode_utf16().count() as u64
+    );
+
     assert_eq!(s("/chain_heads/empty"), EMPTY_CHAIN_HEAD);
     assert_eq!(
         s("/chain_heads/unicode"),

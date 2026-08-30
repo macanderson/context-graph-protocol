@@ -81,6 +81,52 @@ want to wire it into a framework yourself. A runnable HTTP example lives at
 `embedding-fingerprint`, and `correlation` probes report *skipped* over HTTP —
 they inspect raw framing this transport doesn't expose).
 
+## Verify a provenance attestation
+
+`SPEC.md` §6.5 makes a frame's provenance *evidence* rather than merely
+tamper-evident: a detached Ed25519 signature over a commitment to the frame's
+identity and its provenance chain. `contextgraph_sdk.attest` implements the
+whole construction — the length-prefixed link encoding, the source-first chain
+fold, the frame commitment, an RFC 6962 Merkle root over a result set with
+inclusion proofs, and verification.
+
+```python
+from contextgraph_sdk import verify_frame_attestation, Verdict
+
+result = verify_frame_attestation("repo-graph", frame, attestation, public_key)
+if result.verdict != Verdict.VALID:
+    # Never a boolean: "the frame changed after signing" and "the key is
+    # wrong" call for opposite responses, and F9 says an unverifiable
+    # attestation degrades a frame to unattested rather than disqualifying it.
+    print(result)
+```
+
+Signing is not here. The protocol specifies the preimage, never the custody of
+the key: a provider computes `frame_commitment(...)`, signs those 32 bytes with
+whatever backend holds its key, and assembles the attestation itself.
+
+Two things worth knowing:
+
+- **`len(s)` is not a UTF-8 byte count.** The §6.5.1 length prefix is bytes;
+  `len` on a `str` counts code points, which differs for every non-ASCII
+  string. This SDK measures what `s.encode("utf-8")` produced.
+- **Ed25519 verification carries no dependency.** The standard library has no
+  Ed25519 and this SDK promises no third-party packages, so
+  `contextgraph_sdk._ed25519` is a self-contained RFC 8032 **verifier** —
+  never a signer — matching `ed25519-dalek`'s `verify_strict`. It is checked
+  against RFC 8032 §7.1's own vectors, against a dalek-produced signature, and
+  differentially against the `cryptography` package wherever that happens to be
+  installed.
+
+The vectors are shared across every language:
+
+```sh
+cd sdk/python && python3 -m unittest discover -s tests -v
+```
+
+They come from `tests/vectors/attestation-vectors.json`, which the Rust
+reference publishes and pins.
+
 ## Prove it conformant
 
 From the repository root, with the Rust bins built:

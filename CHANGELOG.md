@@ -45,6 +45,35 @@ text lands without a human merge.
   normative encoding, and a normative encoding with no published vectors is a
   rule two implementations can both believe they follow while computing different
   hashes. A diff in that file is a wire-breaking change.
+- **Provenance attestation in the TypeScript, Python and Go SDKs**
+  (`sdk/typescript/src/attest.ts`, `contextgraph_sdk.attest`,
+  `sdk/go/contextgraph/attest`). Rust was the only implementation, so the
+  cross-language claim §6.5.1 makes was untested — an encoding rule with
+  exactly one implementation is indistinguishable from an implementation
+  detail. Each port covers the whole construction (link encoding, chain fold,
+  frame commitment, RFC 6962 root and inclusion proofs, strict Ed25519
+  verification with the named verdicts) and each reproduces the published
+  vectors in its own suite, wired into CI. Python's verifier is a
+  self-contained RFC 8032 implementation because the standard library has no
+  Ed25519 and the SDK promises no dependencies; it verifies and never signs.
+- **`tests/vectors/attestation-vectors.json`** — the vectors as data, read by
+  all four language suites, with the Rust reference asserting the file agrees
+  with the values it publishes inline. A digest transcribed into four
+  languages is four things that can drift.
+- **Vectors that can fail a wrong port.** The published set was ASCII-only, so
+  a length prefix counting UTF-16 code units or code points computed the same
+  bytes; its only multi-leaf Merkle vector had four leaves, where RFC 6962's
+  split and the duplicate-the-last-leaf shortcut agree; and it published no
+  signature and no inclusion proof, so §6.5.4 had no oracle at all. Added: a
+  link whose fields are multi-byte UTF-8 ending in an astral-plane character,
+  one-, three- and seven-leaf roots, a seven-leaf inclusion proof, a fixed
+  Ed25519 key with the signature it produces, the seven verdicts, and the
+  small-order key set §6.5.4's strictness rule names but does not enumerate.
+  No existing value changed.
+- **CI runs `cargo test -p contextgraph-types --features attestation`.** The
+  feature is off by default and no workspace member enables it, so the
+  attestation module and its vectors had never been compiled in CI, let alone
+  run — the oracle three ports now reconcile against was itself unchecked.
 - **`contextgraph_host::fold_to_edges` is now public** — the Lost-in-the-Middle
   *placement* separated from the *ranking*, for hosts that rank frames with their
   own reranker or per-provider quotas instead of raw `score`.

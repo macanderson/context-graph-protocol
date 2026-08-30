@@ -76,6 +76,50 @@ want to wire it into a router yourself. A runnable HTTP example lives at
 `embedding-fingerprint`, and `correlation` probes report *skipped* over HTTP —
 they inspect raw framing this transport doesn't expose).
 
+## Verify a provenance attestation
+
+`SPEC.md` §6.5 makes a frame's provenance *evidence* rather than merely
+tamper-evident: a detached Ed25519 signature over a commitment to the frame's
+identity and its provenance chain. Package `contextgraph/attest` implements the
+whole construction — the length-prefixed link encoding, the source-first chain
+fold, the frame commitment, an RFC 6962 Merkle root over a result set with
+inclusion proofs, and verification.
+
+```go
+result := attest.VerifyFrameAttestation("repo-graph", frame, attestation, publicKey)
+if !result.IsValid() {
+    // Never a bool: "the frame changed after signing" and "the key is wrong"
+    // call for opposite responses, and F9 says an unverifiable attestation
+    // degrades a frame to unattested rather than disqualifying it.
+    log.Printf("attestation: %s", result.Verdict)
+}
+```
+
+Signing is not here. The protocol specifies the preimage, never the custody of
+the key: a provider computes `attest.FrameCommitment(...)`, signs those 32
+bytes with whatever backend holds its key, and assembles the attestation
+itself.
+
+Two things worth knowing:
+
+- **`attest.Link` is not `contextgraph.Provenance`.** The wire struct carries
+  its optional fields as `string` with `omitempty` and so cannot tell an absent
+  URI from a present empty one — a distinction the §6.5.1 presence byte makes
+  normative. `attest.Link` uses pointers, and `LinkFromProvenance` states the
+  collapse it performs rather than hiding it.
+- **Go's `crypto/ed25519` accepts a small-order public key.** §6.5.4 asks for a
+  strict verifier, so `VerifyCommitment` declines those keys — and any key
+  whose `y` is not reduced — before the standard library sees them.
+
+The vectors are shared across every language:
+
+```sh
+cd sdk/go && go test ./contextgraph/attest/
+```
+
+They come from `tests/vectors/attestation-vectors.json`, which the Rust
+reference publishes and pins.
+
 ## Prove it conformant
 
 From the repository root, with the Rust bins built:
