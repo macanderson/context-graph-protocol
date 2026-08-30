@@ -207,9 +207,10 @@ Read the full ADR before changing anything it covers.
 | [0009](./adr/0009-adopt-standing-decisions-scr-corpus.md) | Standing decisions as a Steering Context Record corpus | The maintainer's recurring directives to coding agents live in `docs/scr/` as one versioned corpus, identical across the org's repos, instead of being retyped every session. |
 | [0010](./adr/0010-provenance-attestation.md) | Provenance attestation | A digest only proves nothing changed since someone wrote it down. A frame's provenance now folds into a signed hash chain bound to the frame's identity, so a third party can check a citation offline. |
 | [0011](./adr/0011-open-frame-kind-vocabulary.md) | `FrameKind` is an open vocabulary | A provider can name a frame kind this crate has never heard of and the frame still parses, so a new kind is an additive change rather than a wire break. |
+| [0012](./adr/0012-sdk-version-pins-share-a-major.md) | A version pin names its manifest's major | The scaffolder's default SDK pins had drifted a whole major behind the packages they name, invisibly, because every CI job overrides them with a local path. A guard now compares them. |
 | [0017](./adr/0017-record-hash-and-record-attestation.md) | `record_hash` and `RecordAttestation` | The record layer's identity, implemented: RFC 8785 canonicalization with the record's own hash removed from the preimage, and a domain-separated Ed25519 signature over it. Says why JCS is right here and wrong at the frame layer. |
 
-<a id="adr-0002"></a><a id="adr-0003"></a><a id="adr-0004"></a><a id="adr-0005"></a><a id="adr-0006"></a><a id="adr-0007"></a><a id="adr-0008"></a><a id="adr-0009"></a><a id="adr-0010"></a><a id="adr-0011"></a><a id="adr-0017"></a>
+<a id="adr-0002"></a><a id="adr-0003"></a><a id="adr-0004"></a><a id="adr-0005"></a><a id="adr-0006"></a><a id="adr-0007"></a><a id="adr-0008"></a><a id="adr-0009"></a><a id="adr-0010"></a><a id="adr-0011"></a><a id="adr-0012"></a><a id="adr-0017"></a>
 
 ---
 
