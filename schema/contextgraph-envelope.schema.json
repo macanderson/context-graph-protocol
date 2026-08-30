@@ -459,6 +459,15 @@
         },
         "dropped_estimate": {
           "$ref": "#/$defs/u32Nullable"
+        },
+        "frame_attestations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/FrameAttestation" },
+          "$comment": "Detached per-frame evidence (SPEC.md §6.5.5, F11). Optional and omitted when empty, so an unsigned answer is byte-identical to one from a provider written before attestation existed. It sits BESIDE the frames, never inside one (F6), so re-signing and key rotation cannot perturb a frame's content-addressed identity."
+        },
+        "result_attestation": {
+          "$ref": "#/$defs/ProvenanceAttestation",
+          "$comment": "One signature over the whole answer (SPEC.md §6.5.3, F12): signed_commitment is the RFC 6962 Merkle root over the commitments of EXACTLY the frames carried in `frames`, in the canonical FrameId order of §6.3 — never over a larger candidate set the provider truncated away."
         }
       },
       "required": [
@@ -467,6 +476,111 @@
       ],
       "additionalProperties": false
     },
+
+    "ProvenanceAttestation": {
+      "type": "object",
+      "description": "A detached signature over a commitment to a frame's identity and its provenance chain (SPEC.md §6.5). Optional: a conformant provider may serve none and a conformant host may verify none. What is NOT optional is the construction — an attestation that exists must be computed exactly as §6.5.1-§6.5.3 specify, or two implementations disagree about whether the same evidence is genuine.",
+      "properties": {
+        "signed_commitment": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "$comment": "The commitment this signature covers: a §6.5.2 frame_commitment on a FrameAttestation entry, or a §6.5.3 merkle_root on result_attestation (F7). Lowercase hex is mandated, not conventional — digests are compared byte-for-byte and a case disagreement is indistinguishable from tampering."
+        },
+        "key_id": {
+          "type": "string",
+          "minLength": 1,
+          "$comment": "Rotation is expressed by a NEW key_id, never by reusing one, so an archived attestation always names the exact key that produced it."
+        },
+        "algorithm": {
+          "type": "string",
+          "minLength": 1,
+          "$comment": "AUTHORING LINT ONLY, and deliberately not an enum. A verifier that does not recognise the value reports it as uncheckable and declines (F8) — 'I cannot check this' is never 'this is good'. Freezing the set would make adopting a post-quantum scheme a breaking wire change.",
+          "examples": ["ed25519"]
+        },
+        "attester_id": {
+          "type": "string",
+          "minLength": 1,
+          "$comment": "The accountable authority, as distinct from the key that mechanically produced the signature."
+        },
+        "signature": {
+          "type": "string",
+          "pattern": "^[0-9a-f]+$",
+          "$comment": "Lowercase hex, matching the sha256:<hex> convention every other digest in this protocol already uses. The length is algorithm-dependent and therefore not constrained here; an ed25519 signature is 128 hex characters."
+        },
+        "issued_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$",
+          "description": "RFC 3339 UTC timestamp, uppercase T and Z (SPEC.md F4)."
+        }
+      },
+      "required": [
+        "signed_commitment",
+        "key_id",
+        "algorithm",
+        "attester_id",
+        "signature",
+        "issued_at"
+      ],
+      "additionalProperties": false
+    },
+
+    "InclusionStep": {
+      "type": "object",
+      "description": "One level of a Merkle inclusion proof: the sibling subtree hash and which side it sits on. RFC 6962 lets a verifier recover the side from index arithmetic; CGP states it instead, so an off-by-one in a hand-written verifier produces a WRONG ROOT rather than a silently-accepted proof.",
+      "properties": {
+        "sibling": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "sibling_is_left": { "type": "boolean" }
+      },
+      "required": ["sibling", "sibling_is_left"],
+      "additionalProperties": false
+    },
+
+    "InclusionProof": {
+      "type": "object",
+      "description": "A proof that one frame commitment is a leaf of the signed result_attestation root (SPEC.md §6.5.3). This is what makes a signed answer selectively disclosable: a host proves one frame was in the set without revealing the others.",
+      "properties": {
+        "leaf_index": { "type": "integer", "minimum": 0 },
+        "leaf_count": {
+          "type": "integer",
+          "minimum": 1,
+          "$comment": "Part of the proof because a root alone does not pin the tree's SIZE, and a verifier that ignores it can be shown a proof from a differently-shaped tree."
+        },
+        "path": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/InclusionStep" },
+          "$comment": "Sibling hashes from the leaf upward. Empty for a single-leaf tree — a lone leaf needs no siblings."
+        }
+      },
+      "required": ["leaf_index", "leaf_count", "path"],
+      "additionalProperties": false
+    },
+
+    "FrameAttestation": {
+      "type": "object",
+      "description": "What a result set says about one frame's attestation (SPEC.md §6.5.5, F11). The identity is echoed in FULL rather than implied by array position, for the reason FrameVerdict already echoes it: a provider that reorders, omits, or duplicates entries cannot shift one frame's evidence onto another. It is also what a verifier needs — provider_id and content_digest are two of the three inputs to the frame commitment and are recoverable from nowhere else.",
+      "properties": {
+        "frame": { "$ref": "#/$defs/FrameId" },
+        "attestation": {
+          "$ref": "#/$defs/ProvenanceAttestation",
+          "$comment": "A detached signature over this frame's own §6.5.2 commitment. Absent when the provider signed only the result-set root: the frame is then attested THROUGH inclusion_proof, which is the cheapest honest shape — one signature instead of n."
+        },
+        "inclusion_proof": {
+          "$ref": "#/$defs/InclusionProof",
+          "$comment": "Optional (F13), and the reason is a host that keeps a SUBSET: once frames are dropped their sibling commitments are gone and the root can never be recomputed. A host retaining part of a signed answer derives and keeps the proofs before dropping the rest. See ADR 0014."
+        }
+      },
+      "required": ["frame"],
+      "anyOf": [
+        { "required": ["attestation"] },
+        { "required": ["inclusion_proof"] }
+      ],
+      "$comment": "An entry with neither a signature nor a proof names a frame and asserts nothing about it. This schema is authoring-strict, so it is rejected here; on the wire a host treats such an entry as unattested (F9) rather than rejecting the message.",
+      "additionalProperties": false
+    },
+
     "FrameKind": {
       "type": "string",
       "enum": [

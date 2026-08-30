@@ -26,6 +26,11 @@
 //!    answer without disclosing its siblings.
 //!
 //! [`ProvenanceAttestation`] is the detached Ed25519 signature over (1)–(3).
+//! It reaches a host on the `frames` envelope, in
+//! [`ContextQueryResult::frame_attestations`](crate::ContextQueryResult::frame_attestations)
+//! and
+//! [`ContextQueryResult::result_attestation`](crate::ContextQueryResult::result_attestation)
+//! — *beside* the frames, never inside one (`SPEC.md` §6.5.5, F6/F11).
 //!
 //! # Why the frame identity is inside the signed preimage
 //!
@@ -73,6 +78,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::frame::Provenance;
+use crate::identity::FrameId;
 
 /// The signature algorithm this revision defines. `algorithm` is a string, not
 /// an enum, precisely so a post-quantum successor is an additive change rather
@@ -218,6 +224,89 @@ pub struct InclusionProof {
     pub leaf_count: usize,
     /// Sibling hashes from the leaf upward.
     pub path: Vec<InclusionStep>,
+}
+
+/// What a result set says about one frame's attestation — the wire carrier that
+/// keeps a [`ProvenanceAttestation`] *beside* the frame it covers
+/// (`SPEC.md` §6.5.5, F11).
+///
+/// # Why the identity is echoed in full
+///
+/// A parallel array indexed by position would be smaller and unusable as
+/// evidence: a provider that reorders, omits, or duplicates a frame would shift
+/// an attestation onto the wrong one, and a host filtering the set — which is
+/// the normal case — would have to re-derive the mapping from an order nobody
+/// wrote down. Carrying the whole
+/// [`FrameId`] triple makes an entry self-describing, which is the same
+/// reasoning [`FrameVerdict`](crate::FrameVerdict) already applies to
+/// `context/verify`. It is also exactly what a verifier needs: `provider_id`
+/// and `content_digest` are two of the three inputs to
+/// [`frame_commitment`], and neither is recoverable from the frame body alone.
+///
+/// # Why both members are optional
+///
+/// The cheapest honest way to sign an answer is **one** signature over the
+/// result-set Merkle root, with a per-frame inclusion proof and no per-frame
+/// signature at all. Requiring `attestation` would make that shape
+/// unrepresentable and force a provider into *n* signatures to say what one
+/// says. Requiring `inclusion_proof` would tax a provider that signs frames
+/// individually and publishes no root. An entry carrying neither is noise, and
+/// [`carries_evidence`](Self::carries_evidence) is how a host says so.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FrameAttestation {
+    /// The frame this entry attests, named in full rather than by position.
+    pub frame: FrameId,
+    /// A detached signature over this frame's own [`frame_commitment`].
+    ///
+    /// Absent when the provider signed only the result-set root: the frame is
+    /// then attested *through* `inclusion_proof`, not on its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attestation: Option<ProvenanceAttestation>,
+    /// A proof that this frame's commitment is a leaf of the signed
+    /// `result_attestation` root (`SPEC.md` §6.5.3).
+    ///
+    /// Optional on the wire, and the reason is a host that keeps a *subset*:
+    /// once frames are dropped their sibling commitments are gone, and the root
+    /// can never be recomputed again. See
+    /// [ADR 0014](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0014-attestations-on-the-wire.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inclusion_proof: Option<InclusionProof>,
+}
+
+impl FrameAttestation {
+    /// A per-frame signature with no inclusion proof.
+    pub fn signed(frame: FrameId, attestation: ProvenanceAttestation) -> Self {
+        Self {
+            frame,
+            attestation: Some(attestation),
+            inclusion_proof: None,
+        }
+    }
+
+    /// Membership of a signed result set, with no per-frame signature.
+    pub fn proven(frame: FrameId, inclusion_proof: InclusionProof) -> Self {
+        Self {
+            frame,
+            attestation: None,
+            inclusion_proof: Some(inclusion_proof),
+        }
+    }
+
+    /// Whether this entry carries anything a verifier can act on.
+    ///
+    /// An entry with neither a signature nor a proof names a frame and asserts
+    /// nothing about it. A host **MUST NOT** read that as attested — it is
+    /// wire noise, and F9's "unverifiable degrades to unattested" covers it.
+    pub fn carries_evidence(&self) -> bool {
+        self.attestation.is_some() || self.inclusion_proof.is_some()
+    }
+
+    /// Attach an inclusion proof, so a per-frame signature and result-set
+    /// membership travel together.
+    pub fn with_inclusion_proof(mut self, proof: InclusionProof) -> Self {
+        self.inclusion_proof = Some(proof);
+        self
+    }
 }
 
 /// The outcome of checking a [`ProvenanceAttestation`] (`SPEC.md` §6.5.4).
@@ -417,6 +506,48 @@ mod crypto {
         enc_str(&mut preimage, &frame.id);
         enc_opt(&mut preimage, frame.content_digest.as_deref());
         sha256(&[domain::FRAME, &preimage, &chain_head])
+    }
+
+    /// Every frame of a result set paired with its commitment, in the
+    /// protocol's canonical [`FrameId`] order (`SPEC.md` §6.3, §6.5.3).
+    ///
+    /// The order is the whole point: a Merkle root is a function of leaf
+    /// *sequence*, so a provider and a verifier that sort differently compute
+    /// different roots from identical frames. Sorting by the identity triple —
+    /// the order deterministic composition already uses — means neither side
+    /// has to preserve, transmit, or agree on the order the frames happened to
+    /// arrive in.
+    pub fn result_set_commitments(
+        provider_id: &str,
+        frames: &[ContextFrame],
+    ) -> Vec<(FrameId, [u8; 32])> {
+        let mut ordered: Vec<(FrameId, &ContextFrame)> = frames
+            .iter()
+            .map(|frame| (frame.identity(provider_id), frame))
+            .collect();
+        ordered.sort_by(|(a, _), (b, _)| a.cmp(b));
+        ordered
+            .into_iter()
+            .map(|(id, frame)| {
+                let commitment = frame_commitment(provider_id, frame);
+                (id, commitment)
+            })
+            .collect()
+    }
+
+    /// The Merkle root a provider signs to attest a whole answer
+    /// (`SPEC.md` §6.5.3, F12).
+    ///
+    /// The leaves are exactly the frames carried in the result — never a larger
+    /// candidate set the provider truncated away. A root over frames the host
+    /// never received is unverifiable by construction, and an unverifiable root
+    /// is worse than none: it looks like evidence.
+    pub fn result_set_root(provider_id: &str, frames: &[ContextFrame]) -> [u8; 32] {
+        let commitments: Vec<[u8; 32]> = result_set_commitments(provider_id, frames)
+            .into_iter()
+            .map(|(_, commitment)| commitment)
+            .collect();
+        merkle_root(&commitments)
     }
 
     /// A Merkle leaf hash, RFC 6962 style: `SHA256(0x00 ‖ commitment)`.
@@ -640,8 +771,8 @@ mod crypto {
 #[cfg(feature = "attestation")]
 pub use crypto::{
     frame_commitment, inclusion_proof, merkle_root, provenance_chain_head, public_key_for,
-    root_from_proof, sign_commitment, sign_frame_attestation, verify_commitment,
-    verify_frame_attestation,
+    result_set_commitments, result_set_root, root_from_proof, sign_commitment,
+    sign_frame_attestation, verify_commitment, verify_frame_attestation,
 };
 
 #[cfg(all(test, feature = "attestation"))]

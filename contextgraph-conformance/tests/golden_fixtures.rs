@@ -284,6 +284,7 @@ fn assert_rejected_citation(frame: ContextFrame, label: &str) {
         frames: vec![frame],
         truncated: false,
         dropped_estimate: None,
+        ..Default::default()
     };
     let (passed, evidence) = check_frames(&result);
     assert!(!passed, "{label} citation unexpectedly passed conformance");
@@ -316,6 +317,7 @@ fn frame_validity_catches_a_relation_that_points_nowhere() {
             frames: vec![frame],
             truncated: false,
             dropped_estimate: None,
+            ..Default::default()
         }
     };
 
@@ -357,6 +359,7 @@ fn frame_validity_catches_a_malformed_content_digest() {
             frames: vec![frame],
             truncated: false,
             dropped_estimate: None,
+            ..Default::default()
         }
     };
 
@@ -487,6 +490,7 @@ fn frame_digest_cases_pin_default_materialization_jcs_and_array_order() {
         frames,
         truncated: false,
         dropped_estimate: None,
+        ..Default::default()
     };
     let (passed, evidence) = check_frames(&result);
     assert!(passed, "valid golden frames were rejected: {evidence}");
@@ -552,6 +556,7 @@ fn representation_vectors_are_honest_and_structurally_valid() {
         frames: vec![compact, reference],
         truncated: false,
         dropped_estimate: None,
+        ..Default::default()
     };
     let (passed, evidence) = check_frames(&result);
     assert!(

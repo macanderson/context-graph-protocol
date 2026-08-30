@@ -36,10 +36,11 @@ use std::path::PathBuf;
 use contextgraph_conformance::sample_query;
 use contextgraph_host::{Envelope, decode_line};
 use contextgraph_types::{
-    Capabilities, ContentFidelity, ContentRef, ContextFrame, ContextQuery, ContextQueryResult,
-    DataFlow, EgressScope, ErrorCode, FrameEmbedding, FrameId, FrameKind, FrameVerdict,
-    InlineContentRequirement, PROTOCOL_VERSION, Provenance, ProviderInfo, QueryCapability,
-    Relation, Representation, Transform, Verdict, VerifyRequest, VerifyResponse, budget_tokens,
+    ALGORITHM_ED25519, Capabilities, ContentFidelity, ContentRef, ContextFrame, ContextQuery,
+    ContextQueryResult, DataFlow, EgressScope, ErrorCode, FrameAttestation, FrameEmbedding,
+    FrameId, FrameKind, FrameVerdict, InclusionProof, InclusionStep, InlineContentRequirement,
+    PROTOCOL_VERSION, Provenance, ProvenanceAttestation, ProviderInfo, QueryCapability, Relation,
+    Representation, Transform, Verdict, VerifyRequest, VerifyResponse, budget_tokens,
 };
 
 /// Regenerate with: `REGENERATE_VECTORS=1 cargo test -p contextgraph-conformance --test reference_vectors`
@@ -52,6 +53,63 @@ const VECTOR_FILE: &str = "schema/reference-vectors.ndjson";
 const DIGEST_A: &str = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 const DIGEST_B: &str = "sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03";
 const DIGEST_C: &str = "sha256:6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b";
+
+/// The provider that serves and signs the attested vector.
+const ATTESTING_PROVIDER: &str = "repo-indexer";
+
+/// The `frames/attested` vector's root, commitments, and signatures
+/// (`SPEC.md` §6.5).
+///
+/// Written out rather than computed, for two reasons. The generator has to
+/// build the same bytes whether or not `contextgraph-types`' `attestation`
+/// feature is on, or the committed vector file would depend on a feature flag.
+/// And a literal is a *fixture*: recomputing these here would make the vector
+/// agree with whatever the code currently does, which is exactly the property a
+/// reference vector must not have.
+///
+/// They are not taken on trust either. `tests/attestation_wire.rs` recomputes
+/// every one of them from the frames in this file and verifies both signatures
+/// against the published example key, so editing an attested frame here without
+/// re-signing it turns that suite red.
+///
+/// Leaf order is canonical [`FrameId`] order (§6.3), which puts
+/// `frame:minimal` before `frame:policy:retry` — not the order the frames are
+/// carried in.
+mod attested {
+    /// The §6.5.3 Merkle root over both frames' commitments.
+    pub const ROOT: &str =
+        "sha256:e7c84f0a6b2a7f7a6f14b12baa276af1d9347d82561fa1a797b47a7334660b4f";
+    /// The detached signature over [`ROOT`].
+    pub const ROOT_SIGNATURE: &str = "78439a36f599aeecaa4e36c653b647ec1c02395a4563dfe89efbeff375f21a8ca58de0b7ce6779f3cc93f445fb18a91f6ef8ad0ca651853a17056b3da4633602";
+    /// The sibling leaf 0's proof climbs past — `maximal_frame`'s leaf hash.
+    pub const MINIMAL_SIBLING: &str =
+        "sha256:de4b8191386772610af0fcdb0c9908d38ae1feb5dc65aa0098f82bc18ebfa56e";
+    /// Leaf 1: `maximal_frame`'s §6.5.2 commitment.
+    pub const MAXIMAL_COMMITMENT: &str =
+        "sha256:78df51a8d632df287957f71a792aca4628542e9e2ef8ef677e1dea2b67e7c499";
+    /// The detached signature over [`MAXIMAL_COMMITMENT`].
+    pub const MAXIMAL_SIGNATURE: &str = "1d9bd851829a0c6c3ce5eb4933a1852db7ca09034f092ebd2937c111d48e0f992a28882a6c22b1c8beea92073914e5ffe141b820f2a153bdbb0134ed305c0a09";
+    /// The sibling leaf 1's proof climbs past — `minimal_frame`'s leaf hash.
+    pub const MAXIMAL_SIBLING: &str =
+        "sha256:6b1d8bc0f9f73a6ab9e84ccfaf35af23e83aa32441c75450783c699f9d8b2eae";
+    /// When the example provider issued them.
+    pub const ISSUED_AT: &str = "2026-08-29T12:00:00Z";
+    /// The signing key's id. Rotation mints a new id; it never reuses one.
+    pub const KEY_ID: &str = "repo-indexer-2026-08";
+}
+
+/// One attestation of the `frames/attested` vector, in the shape a provider
+/// assembles after signing a commitment with its own backend.
+fn attestation(signed_commitment: &str, signature: &str) -> ProvenanceAttestation {
+    ProvenanceAttestation::new(
+        signed_commitment,
+        attested::KEY_ID,
+        ALGORITHM_ED25519,
+        ATTESTING_PROVIDER,
+        signature,
+        attested::ISSUED_AT,
+    )
+}
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -288,6 +346,7 @@ fn vectors() -> Vec<(&'static str, Envelope)> {
                     frames: vec![],
                     truncated: false,
                     dropped_estimate: None,
+                    ..Default::default()
                 },
             },
         ),
@@ -304,6 +363,54 @@ fn vectors() -> Vec<(&'static str, Envelope)> {
                     ],
                     truncated: true,
                     dropped_estimate: Some(12),
+                    ..Default::default()
+                },
+            },
+        ),
+        // A signed answer (SPEC.md §6.5.5, F11-F13). It shows both shapes an
+        // entry can take: `frame:policy:retry` carries its own signature AND a
+        // proof, while `frame:minimal` is attested only through the root — the
+        // cheapest honest shape, one signature instead of n. `frame:minimal`
+        // also declares no `content_digest`, so the vector exercises the
+        // `enc_opt(None)` arm of the §6.5.2 preimage.
+        (
+            "frames/attested",
+            Envelope::Frames {
+                id: Some("req-2".into()),
+                result: ContextQueryResult {
+                    frames: vec![maximal_frame(), minimal_frame()],
+                    truncated: false,
+                    dropped_estimate: None,
+                    frame_attestations: vec![
+                        FrameAttestation::signed(
+                            FrameId::new(
+                                ATTESTING_PROVIDER,
+                                "frame:policy:retry",
+                                Some(DIGEST_A.into()),
+                            ),
+                            attestation(attested::MAXIMAL_COMMITMENT, attested::MAXIMAL_SIGNATURE),
+                        )
+                        .with_inclusion_proof(InclusionProof {
+                            leaf_index: 1,
+                            leaf_count: 2,
+                            path: vec![InclusionStep {
+                                sibling: attested::MAXIMAL_SIBLING.into(),
+                                sibling_is_left: true,
+                            }],
+                        }),
+                        FrameAttestation::proven(
+                            FrameId::new(ATTESTING_PROVIDER, "frame:minimal", None),
+                            InclusionProof {
+                                leaf_index: 0,
+                                leaf_count: 2,
+                                path: vec![InclusionStep {
+                                    sibling: attested::MINIMAL_SIBLING.into(),
+                                    sibling_is_left: false,
+                                }],
+                            },
+                        ),
+                    ],
+                    result_attestation: Some(attestation(attested::ROOT, attested::ROOT_SIGNATURE)),
                 },
             },
         ),

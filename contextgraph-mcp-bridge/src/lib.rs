@@ -571,6 +571,7 @@ pub fn answer_query(base_frames: &[ContextFrame], query: &ContextQuery) -> Conte
         frames,
         truncated,
         dropped_estimate: None,
+        ..Default::default()
     }
 }
 

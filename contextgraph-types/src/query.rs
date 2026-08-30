@@ -5,7 +5,9 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::attest::{FrameAttestation, ProvenanceAttestation};
 use crate::frame::{ContextFrame, FrameKind, Representation};
+use crate::identity::FrameId;
 
 /// A request to a CGP provider for context frames relevant to a goal.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -57,13 +59,37 @@ impl ContextQuery {
 }
 
 /// The response to a `context/query` call.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// # Where an attestation rides
+///
+/// [`frame_attestations`](Self::frame_attestations) and
+/// [`result_attestation`](Self::result_attestation) are the wire home of
+/// `SPEC.md` §6.5's evidence (§6.5.5, F11–F13). They sit on the *result* rather
+/// than on the `frames` envelope because an attestation is a property of the
+/// answer, exactly like `truncated`: the envelope carries only what the
+/// transport needs (`type`, the correlation `id`), and an in-process provider
+/// that returns a `ContextQueryResult` with no envelope at all must still be
+/// able to sign what it serves.
+///
+/// Both are optional and both are omitted when empty, so an unsigned answer is
+/// byte-identical to one from a provider written before this existed.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ContextQueryResult {
     pub frames: Vec<ContextFrame>,
     /// True if the provider had more candidates than fit the budget.
     pub truncated: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dropped_estimate: Option<u32>,
+    /// Detached per-frame evidence, one entry per attested frame
+    /// (`SPEC.md` §6.5.5). Never a parallel array: each entry names the
+    /// [`FrameId`] it covers in full.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frame_attestations: Vec<FrameAttestation>,
+    /// One signature over the whole answer: a detached attestation whose
+    /// `signed_commitment` is the §6.5.3 Merkle root over the commitments of
+    /// exactly the frames in [`frames`](Self::frames), in canonical order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_attestation: Option<ProvenanceAttestation>,
 }
 
 impl ContextQueryResult {
@@ -112,11 +138,51 @@ impl ContextQueryResult {
             .map(|f| f.expected_inline_token_cost() as u64)
             .sum()
     }
+
+    /// Whether this answer carries any detached evidence at all
+    /// (`SPEC.md` §6.5.5).
+    pub fn is_attested(&self) -> bool {
+        self.result_attestation.is_some()
+            || self.frame_attestations.iter().any(|a| a.carries_evidence())
+    }
+
+    /// The attestation entry covering one frame identity, if the provider sent
+    /// one.
+    ///
+    /// Matching is on the whole `(provider_id, frame_id, content_digest)`
+    /// triple, never on the frame id alone: two frames sharing an id but not a
+    /// digest are different bytes, and handing the first one's evidence to the
+    /// second is the substitution the identity binding exists to prevent
+    /// (`SPEC.md` §6.5.2).
+    pub fn attestation_for(&self, frame: &FrameId) -> Option<&FrameAttestation> {
+        self.frame_attestations.iter().find(|a| &a.frame == frame)
+    }
+
+    /// Attestation entries naming a frame this result does not carry
+    /// (`SPEC.md` §6.5.5, F11).
+    ///
+    /// An entry with no frame beside it is evidence for something the host was
+    /// never shown. It is not merely useless: a host that counted entries
+    /// rather than matching them would report an answer as more thoroughly
+    /// attested than it is. Returned as identities so a report can name them.
+    pub fn orphaned_attestations(&self, provider_id: &str) -> Vec<&FrameId> {
+        let present: Vec<FrameId> = self
+            .frames
+            .iter()
+            .map(|frame| frame.identity(provider_id))
+            .collect();
+        self.frame_attestations
+            .iter()
+            .map(|entry| &entry.frame)
+            .filter(|id| !present.contains(id))
+            .collect()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::attest::{InclusionProof, InclusionStep};
     use crate::frame::ContextFrame;
 
     fn frame_with_cost(id: &str, cost: u32) -> ContextFrame {
@@ -193,6 +259,7 @@ mod tests {
             frames: vec![frame_with_cost("a", 100), frame_with_cost("b", 200)],
             truncated: false,
             dropped_estimate: None,
+            ..Default::default()
         };
         assert_eq!(result.total_token_cost(), 300);
         assert!(result.respects_budget(300));
@@ -205,6 +272,7 @@ mod tests {
             frames: vec![frame_with_cost("a", 400)],
             truncated: false,
             dropped_estimate: None,
+            ..Default::default()
         };
         assert!(!result.respects_budget(300));
     }
@@ -228,6 +296,7 @@ mod tests {
                 .collect(),
             truncated: false,
             dropped_estimate: None,
+            ..Default::default()
         };
         assert!(flood.respects_budget(10_000), "the token budget is fine");
         assert!(!flood.respects_frame_limit(8), "but the frame cap is not");
@@ -240,6 +309,7 @@ mod tests {
             frames: vec![honest_frame("a", "abcd"), honest_frame("b", "abcdefgh")],
             truncated: false,
             dropped_estimate: None,
+            ..Default::default()
         };
         assert!(result.frames_with_dishonest_cost().is_empty());
         assert_eq!(result.total_token_cost(), result.canonical_token_cost());
@@ -253,6 +323,7 @@ mod tests {
             frames: vec![honest_frame("honest", "abcd"), liar],
             truncated: false,
             dropped_estimate: None,
+            ..Default::default()
         };
 
         assert_eq!(result.frames_with_dishonest_cost(), vec!["liar"]);
@@ -260,5 +331,197 @@ mod tests {
         assert_eq!(result.total_token_cost(), 2);
         assert_eq!(result.canonical_token_cost(), 1_001);
         assert!(result.respects_budget(100));
+    }
+
+    // -----------------------------------------------------------------------
+    // Attestations on the wire (`SPEC.md` §6.5.5, F11–F13; ADR 0014)
+    // -----------------------------------------------------------------------
+
+    fn sample_attestation(commitment: &str) -> ProvenanceAttestation {
+        ProvenanceAttestation::new(
+            commitment,
+            "key-1",
+            crate::ALGORITHM_ED25519,
+            "example-provider",
+            "ab".repeat(64),
+            "2026-08-29T00:00:00Z",
+        )
+    }
+
+    fn attested_result() -> ContextQueryResult {
+        let mut frame = frame_with_cost("frame:a", 4);
+        frame.content_digest = Some(format!("sha256:{}", "11".repeat(32)));
+        let identity = frame.identity("example-provider");
+        ContextQueryResult {
+            frames: vec![frame],
+            truncated: false,
+            dropped_estimate: None,
+            frame_attestations: vec![
+                FrameAttestation::signed(
+                    identity,
+                    sample_attestation(&format!("sha256:{}", "22".repeat(32))),
+                )
+                .with_inclusion_proof(InclusionProof {
+                    leaf_index: 0,
+                    leaf_count: 1,
+                    path: vec![],
+                }),
+            ],
+            result_attestation: Some(sample_attestation(&format!("sha256:{}", "33".repeat(32)))),
+        }
+    }
+
+    #[test]
+    fn an_attested_result_round_trips_byte_for_byte() {
+        // The whole point of putting the attestation on the result: it has to
+        // survive the trip. A shape that serializes but does not come back is
+        // evidence a host cannot store.
+        let result = attested_result();
+        let json = serde_json::to_string(&result).unwrap();
+        let back: ContextQueryResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, result);
+        assert_eq!(serde_json::to_string(&back).unwrap(), json);
+        assert!(result.is_attested());
+    }
+
+    #[test]
+    fn the_attestation_never_travels_inside_the_frame_it_covers() {
+        // F6/F11. Detachment is the reason re-signing and key rotation cannot
+        // perturb a frame's content-addressed identity, so it is checked on the
+        // serialized bytes rather than trusted to the struct layout.
+        let result = attested_result();
+        let value = serde_json::to_value(&result).unwrap();
+        let frame = &value["frames"][0];
+        for member in ["attestation", "frame_attestations", "result_attestation"] {
+            assert!(
+                frame.get(member).is_none(),
+                "a frame must carry no attestation member, found `{member}`: {frame}"
+            );
+        }
+        assert!(value.get("frame_attestations").is_some());
+        assert!(value.get("result_attestation").is_some());
+    }
+
+    #[test]
+    fn an_unsigned_answer_is_byte_identical_to_one_from_a_provider_that_predates_this() {
+        // Additive within contextgraph/1: a provider that signs nothing must
+        // emit exactly the bytes it emitted before these members existed, or
+        // every existing golden fixture and cache key moves.
+        let result = ContextQueryResult {
+            frames: vec![frame_with_cost("a", 1)],
+            truncated: false,
+            dropped_estimate: None,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(!json.contains("frame_attestations"), "{json}");
+        assert!(!json.contains("result_attestation"), "{json}");
+        assert!(!result.is_attested());
+    }
+
+    #[test]
+    fn an_old_consumer_ignoring_the_new_members_still_parses_the_envelope() {
+        // SPEC.md §13 U1 in the direction that matters here: the members are
+        // optional, so a 1.0 peer that drops them still reads a signed answer
+        // as a valid answer.
+        let attested = serde_json::to_value(attested_result()).unwrap();
+        let mut stripped = attested.as_object().unwrap().clone();
+        stripped.remove("frame_attestations");
+        stripped.remove("result_attestation");
+        let back: ContextQueryResult =
+            serde_json::from_value(serde_json::Value::Object(stripped)).unwrap();
+        assert!(!back.is_attested());
+        assert_eq!(back.frames, attested_result().frames);
+    }
+
+    #[test]
+    fn an_entry_is_matched_on_the_whole_identity_triple_not_the_frame_id() {
+        // The substitution §6.5.2's identity binding exists to prevent: two
+        // frames sharing an id but not a digest are different bytes, and one's
+        // evidence must not answer for the other.
+        let result = attested_result();
+        let served = result.frames[0].identity("example-provider");
+        assert!(result.attestation_for(&served).is_some());
+
+        let same_id_other_bytes = FrameId::new(
+            "example-provider",
+            "frame:a",
+            Some(format!("sha256:{}", "99".repeat(32))),
+        );
+        assert!(
+            result.attestation_for(&same_id_other_bytes).is_none(),
+            "different bytes must not inherit another frame's attestation"
+        );
+        let other_provider = FrameId::new(
+            "impostor",
+            "frame:a",
+            result.frames[0].content_digest.clone(),
+        );
+        assert!(result.attestation_for(&other_provider).is_none());
+    }
+
+    #[test]
+    fn an_attestation_for_a_frame_the_host_never_received_is_reported_as_orphaned() {
+        let mut result = attested_result();
+        assert!(result.orphaned_attestations("example-provider").is_empty());
+
+        let ghost = FrameId::new("example-provider", "frame:never-sent", None);
+        result.frame_attestations.push(FrameAttestation::signed(
+            ghost.clone(),
+            sample_attestation("sha256:00"),
+        ));
+        assert_eq!(
+            result.orphaned_attestations("example-provider"),
+            vec![&ghost],
+            "evidence for a frame nobody was shown is not evidence"
+        );
+    }
+
+    #[test]
+    fn an_entry_carrying_neither_a_signature_nor_a_proof_asserts_nothing() {
+        let entry = FrameAttestation {
+            frame: FrameId::new("example-provider", "frame:a", None),
+            attestation: None,
+            inclusion_proof: None,
+        };
+        assert!(!entry.carries_evidence());
+        let result = ContextQueryResult {
+            frames: vec![frame_with_cost("frame:a", 1)],
+            truncated: false,
+            dropped_estimate: None,
+            frame_attestations: vec![entry],
+            result_attestation: None,
+        };
+        assert!(
+            !result.is_attested(),
+            "a bare identity must not read as an attested answer"
+        );
+    }
+
+    #[test]
+    fn a_root_signed_set_needs_no_per_frame_signature() {
+        // The cheapest honest shape: one signature over the root, one proof per
+        // frame, no per-frame signatures. If `attestation` were required this
+        // would be unrepresentable and a provider would sign n times to say
+        // what one signature says.
+        let entry = FrameAttestation::proven(
+            FrameId::new("example-provider", "frame:a", None),
+            InclusionProof {
+                leaf_index: 0,
+                leaf_count: 2,
+                path: vec![InclusionStep {
+                    sibling: format!("sha256:{}", "44".repeat(32)),
+                    sibling_is_left: false,
+                }],
+            },
+        );
+        assert!(entry.carries_evidence());
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(
+            !json.contains("\"attestation\""),
+            "an absent per-frame signature must be omitted, not null: {json}"
+        );
+        let back: FrameAttestation = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, entry);
     }
 }

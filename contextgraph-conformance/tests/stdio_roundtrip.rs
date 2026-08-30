@@ -147,6 +147,7 @@ impl ContextProvider for HealthyProvider {
             }],
             truncated: false,
             dropped_estimate: None,
+            ..Default::default()
         })
     }
 }

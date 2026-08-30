@@ -143,6 +143,7 @@ impl ContextProvider for ExampleProvider {
             frames,
             truncated: false,
             dropped_estimate: None,
+            ..Default::default()
         })
     }
 }

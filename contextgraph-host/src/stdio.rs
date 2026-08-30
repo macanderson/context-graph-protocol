@@ -913,6 +913,7 @@ mod tests {
                 frames: vec![frame],
                 truncated: false,
                 dropped_estimate: None,
+                ..Default::default()
             },
         };
         serde_json::to_string(&env).unwrap()
@@ -980,6 +981,7 @@ mod tests {
                 frames: vec![frame],
                 truncated: false,
                 dropped_estimate: None,
+                ..Default::default()
             },
         };
         serde_json::to_string(&env).unwrap()

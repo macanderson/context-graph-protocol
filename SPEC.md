@@ -282,6 +282,9 @@ loud.
 | **F8** | A verifier that does not recognise an attestation's `algorithm` **MUST** report it as uncheckable and **MUST NOT** treat the frame as attested. "I cannot check this" is never "this is good". | `contextgraph_types::attest` |
 | **F9** | A host **MUST NOT** reject or drop a frame solely because it carries an attestation the host cannot verify; an unverifiable attestation degrades the frame to *unattested*, exactly as if it carried none. | `contextgraph_types::attest` |
 | **F10** | `score` is **provider-local and ordinal** — this spec defines no shared scale. A host **MUST NOT** apply a cross-provider `score` threshold, and **MUST NOT** present a raw `score` as a cross-provider measure of relevance. A host that *orders* frames from different providers by raw `score` **MUST** document it as its own policy choice, never as a protocol guarantee. | host composition |
+| **F11** | An attestation **MUST** travel beside the frames it covers, in the result's `frame_attestations` / `result_attestation` members, and **MUST NOT** appear as a member of a `ContextFrame` (F6 on the wire). A `frame_attestations` entry **MUST** name the full *(provider id, frame id, `content_digest`)* identity it attests rather than implying it by array position, and **MUST** name a frame the same result carries. | `attestation_wire` suite; envelope schema |
+| **F12** | A `result_attestation`'s `signed_commitment` **MUST** be the §6.5.3 Merkle root over the commitments of **exactly** the frames carried in `result.frames`, in canonical order — never over a larger candidate set the provider truncated away. | `attestation_wire` suite; `contextgraph_types::attest::result_set_root` |
+| **F13** | An `inclusion_proof` is **OPTIONAL**, and when present **MUST** recompute the `result_attestation` root. A host that retains a strict subset of a signed result set **MUST** derive and retain the proofs for the frames it keeps *before* dropping the rest; once the siblings are gone the root can never be recomputed. | `attestation_wire` suite; host composition |
 
 ### 6.1 Temporal profile (F4)
 
@@ -526,6 +529,96 @@ watch the evidence disappear.
 Implementations **SHOULD** use a strict Ed25519 verifier — one rejecting
 small-order public keys and non-canonical signature encodings. A signature two
 conforming verifiers can disagree about is not evidence.
+
+#### 6.5.5 Carrying an attestation on the wire (F11–F13)
+
+A `frames` envelope's `result` carries two optional members. Both are omitted
+when empty, so an unsigned answer is byte-identical to one from a provider
+written before attestation existed, and a 1.0 peer that ignores them still reads
+a signed answer as a valid answer (§13 U1).
+
+```jsonc
+{
+  "type": "frames",
+  "id": "q3",
+  "result": {
+    "frames": [
+      // the answer's frames, elided — see examples/reference-messages.json
+    ],
+    "truncated": false,
+
+    // One entry per attested frame, naming the identity it covers in full.
+    "frame_attestations": [
+      {
+        "frame": { "provider_id": "repo-graph", "frame_id": "repo-graph:retry-doc",
+                   "content_digest": "sha256:<64 hex>" },
+        "attestation": {
+          "signed_commitment": "sha256:<64 hex>",   // the §6.5.2 frame commitment
+          "key_id": "repo-graph-2026-08",
+          "algorithm": "ed25519",
+          "attester_id": "repo-graph",
+          "signature": "<128 hex>",
+          "issued_at": "2026-08-29T12:00:00Z"
+        },
+        "inclusion_proof": {
+          "leaf_index": 0,
+          "leaf_count": 2,
+          "path": [{ "sibling": "sha256:<64 hex>", "sibling_is_left": false }]
+        }
+      }
+    ],
+
+    // One signature over the whole answer: the §6.5.3 Merkle root.
+    "result_attestation": {
+      "signed_commitment": "sha256:<64 hex>",
+      "key_id": "repo-graph-2026-08",
+      "algorithm": "ed25519",
+      "attester_id": "repo-graph",
+      "signature": "<128 hex>",
+      "issued_at": "2026-08-29T12:00:00Z"
+    }
+  }
+}
+```
+
+They sit on the **result** rather than on the envelope for the same reason
+`truncated` does: an attestation is a property of the answer, not of the
+transport. The envelope carries only `type` and the correlation `id`, and an
+in-process provider that returns a result with no envelope at all must still be
+able to sign what it serves.
+
+**The identity is echoed in full, never implied by position.** A parallel array
+indexed against `frames` would be smaller and unusable: a provider that
+reorders, omits, or duplicates a frame would shift one frame's evidence onto
+another, which is the substitution §6.5.2's identity binding exists to prevent.
+It is also what a verifier needs — `provider_id` and `content_digest` are two of
+the three inputs to the frame commitment and are recoverable from nowhere else.
+This is the discipline §9's `FrameVerdict` already applies to `verify`.
+
+**Both members of an entry are optional, and an entry with neither asserts
+nothing.** The cheapest honest way to sign an answer is one signature over the
+root plus a per-frame inclusion proof, with no per-frame signature at all;
+requiring `attestation` would make that shape unrepresentable and force a
+provider into *n* signatures to say what one says. A provider that signs frames
+individually and publishes no root sends no proof. A host reading an entry that
+carries neither treats the frame as *unattested* (F9).
+
+**Inclusion proofs are carried, not derived, and F13 says why.** A host holding
+the *complete* result set can rebuild every proof itself: it has all the
+commitments. But a host that keeps a *subset* — after budget truncation,
+cross-provider dedup, or ordinary composition — cannot, because the dropped
+siblings' commitments are gone and no amount of later work recovers them. The
+retained frames are then attested by a root nothing can recompute. So the proofs
+have to be derivable at the one moment the whole set is in hand, and a provider
+that ships them makes a host's correctness the host's own affair rather than a
+step it has to know to take. The reasoning, and the wire-size argument against
+mandating them, are in
+[ADR 0014](./docs/adr/0014-attestations-on-the-wire.md).
+
+**A truncated answer signs what it returned.** F12's root covers exactly the
+frames in `result.frames`, never the candidate set the provider considered. A
+root over frames the host never received is unverifiable by construction, and an
+unverifiable root is worse than none: it looks like evidence.
 
 ### 6.6 What `score` means, and does not (F10)
 
