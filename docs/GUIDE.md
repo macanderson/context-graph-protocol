@@ -204,8 +204,12 @@ Read the full ADR before changing anything it covers.
 | [0006](./adr/0006-prompt-ingestion-as-a-local-provider.md) | Prompt ingestion as a local provider | Text a user pastes into chat is now treated like any other provider's output: split, classified, budgeted, and hashed — no more free pass around the rules. |
 | [0007](./adr/0007-protocol-product-boundary.md) | The protocol/product boundary | Drew a hard line between the protocol's small atomic frame and one downstream app's much bigger task-specific bundle — they were both sloppily called "ContextFrame" before this. |
 | [0008](./adr/0008-deploy-topology-and-advertised-urls.md) | Deploy topology and advertised URLs | This repo does not run a website (a separate repo, `cgp-website`, does) — nailed down which host serves what, so we stop advertising broken links. |
+| [0009](./adr/0009-adopt-standing-decisions-scr-corpus.md) | Standing decisions as a Steering Context Record corpus | The maintainer's recurring directives to coding agents live in `docs/scr/` as one versioned corpus, identical across the org's repos, instead of being retyped every session. |
+| [0010](./adr/0010-provenance-attestation.md) | Provenance attestation | A digest only proves nothing changed since someone wrote it down. A frame's provenance now folds into a signed hash chain bound to the frame's identity, so a third party can check a citation offline. |
+| [0011](./adr/0011-open-frame-kind-vocabulary.md) | `FrameKind` is an open vocabulary | A provider can name a frame kind this crate has never heard of and the frame still parses, so a new kind is an additive change rather than a wire break. |
+| [0017](./adr/0017-record-hash-and-record-attestation.md) | `record_hash` and `RecordAttestation` | The record layer's identity, implemented: RFC 8785 canonicalization with the record's own hash removed from the preimage, and a domain-separated Ed25519 signature over it. Says why JCS is right here and wrong at the frame layer. |
 
-<a id="adr-0002"></a><a id="adr-0003"></a><a id="adr-0004"></a><a id="adr-0005"></a><a id="adr-0006"></a><a id="adr-0007"></a><a id="adr-0008"></a>
+<a id="adr-0002"></a><a id="adr-0003"></a><a id="adr-0004"></a><a id="adr-0005"></a><a id="adr-0006"></a><a id="adr-0007"></a><a id="adr-0008"></a><a id="adr-0009"></a><a id="adr-0010"></a><a id="adr-0011"></a><a id="adr-0017"></a>
 
 ---
 

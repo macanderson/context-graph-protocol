@@ -1,5 +1,5 @@
 //! Cross-language reference vectors for record content addressing and record
-//! attestation (lifecycle profile §3 and §7, ADR 0012).
+//! attestation (lifecycle profile §3 and §7, ADR 0017).
 //!
 //! The sibling of [`attestation_vectors`](./attestation_vectors.rs) one layer
 //! down. `record_hash` and the record attestation preimage are **normative**

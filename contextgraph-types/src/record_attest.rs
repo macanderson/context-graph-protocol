@@ -1,7 +1,7 @@
 //! Record content addressing and record attestation — the lifecycle profile's
 //! `record_hash` and [`RecordAttestation`], implemented
 //! ([`docs/profiles/context-exchange-provider.md`][profile] §3 and §7,
-//! [ADR 0012](../../docs/adr/0012-record-hash-and-record-attestation.md)).
+//! [ADR 0017](../../docs/adr/0017-record-hash-and-record-attestation.md)).
 //!
 //! [profile]: https://github.com/macanderson/context-graph-protocol/blob/main/docs/profiles/context-exchange-provider.md
 //!
@@ -62,13 +62,17 @@
 //! Both halves are fixed length, so the encoding is injective without a length
 //! prefix, and any language can build it from the digest string alone.
 
+// Only the signing and verifying code names the type; the hashing half and the
+// ungated constants below do not, so an import at file scope would be unused in
+// a default build.
+#[cfg(feature = "record-attestation")]
 use crate::record::RecordAttestation;
 
 /// The envelope member a record's own hash lives in, and the one member removed
 /// from its preimage (profile LH1).
 pub const RECORD_HASH_MEMBER: &str = "record_hash";
 
-/// The domain-separation tag a [`RecordAttestation`]
+/// The domain-separation tag a [record attestation](crate::record::RecordAttestation)
 /// signs under.
 ///
 /// Normative: the signed message is these bytes followed by the 32 raw bytes of

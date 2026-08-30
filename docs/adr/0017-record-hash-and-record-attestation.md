@@ -1,4 +1,4 @@
-# 0012 — `record_hash` and `RecordAttestation`: implementing the record layer's identity
+# 0017 — `record_hash` and `RecordAttestation`: implementing the record layer's identity
 
 **Status:** Accepted (`contextgraph/lifecycle/1.0-draft`, additive)
 

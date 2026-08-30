@@ -22,7 +22,7 @@ text lands without a human merge.
 ### Added
 - **Record content addressing and record attestation, implemented (lifecycle
   profile `LH1`/`LC3`;
-  [ADR 0012](./docs/adr/0012-record-hash-and-record-attestation.md)).** The
+  [ADR 0017](./docs/adr/0017-record-hash-and-record-attestation.md)).** The
   profile has always defined `record_hash` as `sha256:<hex>` over the RFC 8785
   (JCS) canonicalization of a record with its own `record_hash` removed, and
   `RecordAttestation` as a detached Ed25519 signature over it. Both were prose

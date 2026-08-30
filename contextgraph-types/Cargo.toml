@@ -24,14 +24,14 @@ default = []
 # Frame-layer provenance attestation (`SPEC.md` §6.5, ADR 0010). Its preimage is
 # a length-prefixed encoding of typed fields, so it needs no JSON canonicalizer.
 attestation = ["dep:sha2", "dep:ed25519-dalek"]
-# Record-layer content addressing (lifecycle profile LH1, ADR 0012):
+# Record-layer content addressing (lifecycle profile LH1, ADR 0017):
 # `record_hash` over the RFC 8785 (JCS) canonicalization of a record. A record
 # is an open-ended JSON document, so this half genuinely needs a conforming
 # canonicalizer and a JSON value model — which is why it is a feature of its own
 # rather than a widening of `attestation`, and why a frame-only consumer never
 # pays for it.
 record-hash = ["dep:sha2", "dep:serde_json", "dep:serde_json_canonicalizer"]
-# Record-layer attestation (profile LC3, ADR 0012): a detached Ed25519 signature
+# Record-layer attestation (profile LC3, ADR 0017): a detached Ed25519 signature
 # over a `record_hash`. Implies `attestation` because the two layers share one
 # verdict vocabulary and one hex/digest parser.
 record-attestation = ["record-hash", "attestation"]
