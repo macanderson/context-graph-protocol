@@ -112,6 +112,16 @@ pub struct ContextQueryResult {
     pub frames: Vec<ContextFrame>,
     pub truncated: bool,                 // true if more candidates existed than fit the budget
     pub dropped_estimate: Option<u32>,
+    // Detached evidence, omitted when empty (SPEC.md §6.5.5). Beside the frames,
+    // never inside one, so re-signing never perturbs a frame's identity.
+    pub frame_attestations: Vec<FrameAttestation>,
+    pub result_attestation: Option<ProvenanceAttestation>,
+}
+
+pub struct FrameAttestation {
+    pub frame: FrameId,                             // the identity signed, echoed in full
+    pub attestation: Option<ProvenanceAttestation>, // signature over this frame's commitment
+    pub inclusion_proof: Option<InclusionProof>,    // membership of the signed result set
 }
 ```
 

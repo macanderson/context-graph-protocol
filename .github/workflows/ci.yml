@@ -49,9 +49,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
-      # `attestation` is off by default and no workspace member enables
-      # it, so the line above compiles neither contextgraph_types::attest
-      # nor the cross-language vectors the SDK suites reconcile against.
+      # `attestation` is off by default, so the line above reaches
+      # contextgraph_types::attest and the cross-language vectors the SDK
+      # suites reconcile against only through feature unification with
+      # contextgraph-conformance's dev-dependency. That is a resolver detail,
+      # and a guarantee resting on one is not a guarantee: ask for the feature
+      # by name, so those constructions are checked whatever the resolver
+      # decides and whatever any other crate happens to request.
       - run: cargo test -p contextgraph-types --features attestation
 
   features:

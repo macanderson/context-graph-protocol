@@ -49,10 +49,22 @@ path = "src/bin/contextgraph-example-docs.rs"
 
 [dev-dependencies]
 serde_json_canonicalizer.workspace = true
-# The lifecycle-profile suite checks the *library's* record hashing and record
-# attestation rather than a private copy of the rule, so a fixture and
-# `contextgraph_types::record_attest` can never describe two different hashes
-# (profile LF3). Repeating the dependency here adds only the feature.
+# Both suites check the *library's* constructions rather than a private copy of
+# either rule, so a fixture and `contextgraph_types` can never describe two
+# different hashes.
+#
+# `record-attestation` is for the lifecycle-profile suite, which exercises
+# record hashing and record attestation (profile LF3).
+#
+# `attestation` is for `tests/attestation_wire.rs`, which recomputes every
+# commitment and checks every signature on the attestations shipped in
+# `examples/` — verified, not asserted.
+#
+# Both are DEV features, so the published crate's ordinary dependency set is
+# unchanged and contextgraph-types keeps its off-by-default cryptography, while
+# `cargo test` still compiles the §6.5 constructions that nothing in CI reached
+# before.
 contextgraph-types = { path = "../contextgraph-types", version = ">=2.0.0", features = [
+  "attestation",
   "record-attestation",
 ] }

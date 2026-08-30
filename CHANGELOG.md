@@ -63,6 +63,33 @@ text lands without a human merge.
   hexadecimal byte listing, §3.2.3's property-sorting data, and Appendix B's
   table of IEEE 754 bit patterns and their required ECMAScript text, including
   the `-0` case and the `1e+21` / `0.000001` exponent thresholds.
+- **Attestations travel on the wire (`SPEC.md` §6.5.5, F11–F13;
+  [ADR 0014](./docs/adr/0014-attestations-on-the-wire.md)).**
+  `ProvenanceAttestation` existed with no envelope to carry it, so a provider
+  that signed a frame had nowhere to put the signature and the feature was
+  reachable only by out-of-band agreement. A `frames` result now carries
+  `frame_attestations` — one entry per attested frame, naming the
+  `(provider_id, frame_id, content_digest)` identity it covers in full rather
+  than by array position — and `result_attestation`, one signature over the
+  Merkle root of exactly the frames returned. They sit on the *result* rather
+  than the envelope because an attestation is a property of the answer, like
+  `truncated`, and an in-process provider that never builds an envelope must
+  still be able to sign what it serves. Both are optional and omitted when
+  empty, so an unsigned answer serializes to the same bytes as before and a
+  1.0 peer that ignores them still parses a signed one. **Inclusion proofs are
+  optional on the wire**, and a host that keeps only part of a signed answer
+  derives and retains them before dropping the rest — once the siblings are
+  gone the root can never be recomputed, and selective disclosure is destroyed
+  by ordinary composition.
+- **Every attestation this repository ships is verified, not asserted.**
+  `examples/` gains a signed exchange, `schema/reference-vectors.ndjson` gains a
+  `frames/attested` vector, and
+  `contextgraph-conformance/tests/attestation_wire.rs` recomputes every
+  commitment, rebuilds every root, replays every inclusion proof, and checks
+  every signature against the published example key. A wire example whose
+  signature nobody checks teaches an implementer to produce forgeries. As a side
+  effect the §6.5 constructions now compile and run under `cargo test`, which
+  nothing in CI did before.
 - **Provenance attestation (`SPEC.md` §6.5, F6–F9;
   [ADR 0010](./docs/adr/0010-provenance-attestation.md)).** A digest is
   tamper-evident only to someone who already trusts whoever recorded it; the

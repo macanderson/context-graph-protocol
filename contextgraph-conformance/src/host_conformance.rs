@@ -757,6 +757,7 @@ fn frames_line() -> String {
             frames: vec![frame("stdio-frame", 100)],
             truncated: false,
             dropped_estimate: None,
+            ..Default::default()
         },
     };
     serde_json::to_string(&env).expect("a fixed frames envelope always serializes")
@@ -851,6 +852,7 @@ impl ContextProvider for ProbeProvider {
             frames: self.frames.clone(),
             truncated: false,
             dropped_estimate: None,
+            ..Default::default()
         })
     }
 }

@@ -1904,6 +1904,7 @@ impl ContextProvider for IngestProvider {
             frames,
             truncated: dropped > 0,
             dropped_estimate: (dropped > 0).then_some(dropped),
+            ..Default::default()
         })
     }
 

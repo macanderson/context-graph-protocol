@@ -126,6 +126,7 @@ ENVELOPE_TYPES = {
 
 PLACEHOLDERS = [
     (re.compile(r"sha256:<64 hex>"), "sha256:" + "a" * 64),  # §F5 digest form
+    (re.compile(r"<128 hex>"), "a" * 128),                   # §6.5 ed25519 signature
     (re.compile(r'"…"'), '"placeholder"'),                   # elided string value
 ]
 

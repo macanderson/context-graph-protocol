@@ -292,6 +292,7 @@ mod tests {
                     frames: vec![],
                     truncated: false,
                     dropped_estimate: None,
+                    ..Default::default()
                 },
             },
             Envelope::Shutdown,

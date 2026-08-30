@@ -257,6 +257,7 @@ fn main() {
                             frames,
                             truncated: false,
                             dropped_estimate: None,
+                            ..Default::default()
                         },
                     },
                 );

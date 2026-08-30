@@ -189,3 +189,7 @@ same evidence is genuine.
   `--misbehave` mode, attestations carried in the `frames` envelope and the JSON
   Schema, and key distribution/rotation — which is deliberately out of scope
   here, since the protocol specifies the preimage and not the PKI.
+
+  The wire carriage on that list has since landed:
+  [ADR 0014](./0014-attestations-on-the-wire.md) puts the attestation on the
+  `frames` result, in the JSON Schema, and in `examples/`.

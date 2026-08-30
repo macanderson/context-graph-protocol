@@ -434,6 +434,7 @@ mod tests {
                 }],
                 truncated: false,
                 dropped_estimate: None,
+                ..Default::default()
             },
         })
         .unwrap()

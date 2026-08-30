@@ -27,14 +27,14 @@ pub mod validate;
 pub mod verify;
 
 pub use attest::{
-    ALGORITHM_ED25519, AttestationVerdict, InclusionProof, InclusionStep, ProvenanceAttestation,
-    digest_string, encode_provenance_link,
+    ALGORITHM_ED25519, AttestationVerdict, FrameAttestation, InclusionProof, InclusionStep,
+    ProvenanceAttestation, digest_string, encode_provenance_link,
 };
 #[cfg(feature = "attestation")]
 pub use attest::{
     frame_commitment, inclusion_proof, merkle_root, provenance_chain_head, public_key_for,
-    root_from_proof, sign_commitment, sign_frame_attestation, verify_commitment,
-    verify_frame_attestation,
+    result_set_commitments, result_set_root, root_from_proof, sign_commitment,
+    sign_frame_attestation, verify_commitment, verify_frame_attestation,
 };
 pub use attribution::{AttributionReport, ContextUse};
 pub use capability::{

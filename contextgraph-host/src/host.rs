@@ -871,6 +871,7 @@ mod tests {
                     frames: frames.clone(),
                     truncated: false,
                     dropped_estimate: None,
+                    ..Default::default()
                 }),
                 Behavior::Fail(message) => Err(HostError::Provider {
                     id: self.id.clone(),
@@ -883,6 +884,7 @@ mod tests {
                         frames: vec![],
                         truncated: false,
                         dropped_estimate: None,
+                        ..Default::default()
                     })
                 }
             }
@@ -1164,6 +1166,7 @@ mod tests {
             frames: flood.clone(),
             truncated: false,
             dropped_estimate: None,
+            ..Default::default()
         };
         assert!(as_result.respects_budget(query.max_tokens));
         assert!(!as_result.respects_frame_limit(query.max_frames));
@@ -1412,6 +1415,7 @@ mod tests {
                 frames: vec![],
                 truncated: false,
                 dropped_estimate: None,
+                ..Default::default()
             })
         }
         async fn verify(&self, request: &VerifyRequest) -> Result<VerifyResponse, HostError> {

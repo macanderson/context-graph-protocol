@@ -190,6 +190,7 @@ fn handle_query(
             frames,
             truncated,
             dropped_estimate,
+            ..Default::default()
         },
     }
 }
