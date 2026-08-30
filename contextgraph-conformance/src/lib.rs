@@ -1084,8 +1084,12 @@ fn decode_hex(hex: &str) -> Option<Vec<u8>> {
     if !hex.len().is_multiple_of(2) {
         return None;
     }
+    // The even-length check above leaves no remainder, so `.0` drops nothing.
+    // `as_chunks` yields `&[u8; 2]`, which indexes without a bounds check.
     hex.as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             let hi = (pair[0] as char).to_digit(16)?;
             let lo = (pair[1] as char).to_digit(16)?;
