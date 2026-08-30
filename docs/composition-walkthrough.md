@@ -55,7 +55,7 @@ contextgraph-inspect stdio --query "how do we roll out and roll back a deploy" \
      -- ./target/debug/contextgraph-mcp-fixture
 ```
 
-The bridge passes the full conformance suite — all thirteen checks, no skips —
+The bridge passes the full conformance suite — all fourteen checks, no skips —
 exactly as the reference provider does, because it negotiates and honors the
 whole surface (`verify`, `graph`, `correlation`, an embedding fingerprint, and
 byte-verifiable `file` provenance):
@@ -63,7 +63,7 @@ byte-verifiable `file` provenance):
 ```sh
 ./.github/scripts/conformance-external.sh \
   -- ./target/debug/contextgraph-mcp-bridge -- ./target/debug/contextgraph-mcp-fixture
-# All 13 checks passed — external provider is conformant.
+# All 14 checks passed — external provider is conformant.
 ```
 
 ### Query it through a host, with a budget audit

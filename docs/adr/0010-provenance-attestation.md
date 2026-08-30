@@ -184,6 +184,13 @@ same evidence is genuine.
 - `contextgraph-types/tests/attestation_vectors.rs` publishes the byte vectors a
   reimplementation in another language reconciles against. A diff in that file is
   a wire-breaking change requiring a new major family.
+- The `attestation` conformance check now probes F6–F9 on the wire, against a
+  reference fixture with five adversarial `--misbehave` modes — one per forgery
+  the constructions above exist to stop. F6–F9's "Verified by" column in
+  `SPEC.md` points at that check rather than at this crate's own unit tests,
+  which is the difference between a guarantee and a self-attestation (§11.1).
+- Attestations reach a verifier through two optional envelope members
+  (`handshake_ack.attester_keys`, `frames.attestations`, `SPEC.md` §6.5.5).
 - Not yet done, and tracked as follow-up work: host-side verification wired into
   composition, an `attestation` conformance check with an adversarial
   `--misbehave` mode, attestations carried in the `frames` envelope and the JSON

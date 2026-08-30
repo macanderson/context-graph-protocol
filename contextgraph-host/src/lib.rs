@@ -105,7 +105,9 @@ pub use trust::{
     FrameAttestationOutcome, TrustStore, TrustedKey,
 };
 pub use verify::{DigestVerification, verify_file_provenance, verify_provenance_digest};
-pub use wire::{Envelope, decode_line, encode_line, envelope_kind, versions_compatible};
+pub use wire::{
+    AttesterKey, Envelope, decode_line, encode_line, envelope_kind, versions_compatible,
+};
 
 /// The Context Graph Protocol version this host speaks, re-exported from `contextgraph-types`
 /// (`SPEC.md`).

@@ -12,7 +12,7 @@ second and third conformant provider to point at.
 | `contextgraph-treesitter` | `Symbol` + `Graph` frames | a symbol-graph extraction over Rust source |
 
 Both speak the same newline-delimited [`Envelope`](./protocol-surface.md) stdio
-protocol as `contextgraph-example-docs`, and both are green on all thirteen
+protocol as `contextgraph-example-docs`, and both are green on all fourteen
 provider-side conformance checks — including the ones that only bite a provider
 touching real files: `provenance-fixture-consistency` (every `file` provenance
 digest is re-read and re-hashed off disk, `SPEC.md` §6.2) and `anchor-relevance`
@@ -42,7 +42,7 @@ $ ./.github/scripts/conformance-external.sh -- ./target/debug/contextgraph-ripgr
   OK budget-honesty: 4 frame(s), 69 tokens within the 4096 budget; every declared cost matches its canonical count
   OK provenance-fixture-consistency: re-read and re-hashed 4 file-provenance digest(s) against the bytes on disk — all match (§6.2)
   ...
-All 13 checks passed — external provider is conformant.
+All 14 checks passed — external provider is conformant.
 ```
 
 Or drive one directly with `contextgraph-inspect stdio -- <binary>`.

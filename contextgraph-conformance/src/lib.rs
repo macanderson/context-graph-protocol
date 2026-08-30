@@ -46,6 +46,16 @@
 //!   grammatically valid digest that hashes *wrong* — a stale or forged claim —
 //!   is caught here, where §F5's grammar check cannot see it. Host-local: a link
 //!   to files this host cannot read is skipped, not failed.
+//! - **attestation** — every detached [provenance
+//!   attestation](contextgraph_types::ProvenanceAttestation) a provider serves
+//!   is recomputed from the frame in hand and verified against a key the
+//!   handshake published (`SPEC.md` §6.5, F6–F9). Where
+//!   `provenance-fixture-consistency` proves a digest matches its bytes, this
+//!   proves somebody *signed* for those bytes — the digest and the frame come
+//!   from the same unauthenticated party, so §6.2 is satisfied in full by a
+//!   provider that fabricated both. A provider that publishes no attester key
+//!   and serves no attestation passes: §6.5 makes the construction mandatory
+//!   and the signing optional.
 //!
 //! The suite is deliberately adversarial: pointed at a provider that lies
 //! about costs, emits an out-of-range score, omits a citation label, or dies
@@ -71,13 +81,13 @@
 //! [`ReferenceComposingHost`] is the worked example that passes it.
 
 use contextgraph_host::{
-    ConsentRecord, ContextProvider, DigestVerification, DropReason, Host, HostError,
+    AttesterKey, ConsentRecord, ContextProvider, DigestVerification, DropReason, Host, HostError,
     RawStdioConnection, frame_kind_name, verify_file_provenance,
 };
 use contextgraph_types::capability::fingerprint_dimensions;
 use contextgraph_types::{
-    Capabilities, ConsentReceipt, ContextQuery, ContextQueryResult, ErrorCode, FrameId, FrameKind,
-    Grantor, ProviderInfo,
+    AttestationVerdict, Capabilities, ConsentReceipt, ContextQuery, ContextQueryResult, ErrorCode,
+    FrameId, FrameKind, Grantor, ProviderInfo, verify_frame_attestation,
 };
 
 pub mod composition_conformance;
@@ -109,6 +119,7 @@ pub const CHECK_CORRELATION: &str = "correlation";
 pub const CHECK_KINDS_FILTER: &str = "kinds-filter";
 pub const CHECK_ANCHOR_RELEVANCE: &str = "anchor-relevance";
 pub const CHECK_PROVENANCE_FIXTURE_CONSISTENCY: &str = "provenance-fixture-consistency";
+pub const CHECK_ATTESTATION: &str = "attestation";
 
 /// How to reach the provider under test. `contextgraph-inspect` builds one of these
 /// from its CLI arguments; tests build them directly.
@@ -198,6 +209,7 @@ pub async fn run_conformance(target: ProviderTarget) -> ConformanceReport {
             checks.push(malformed_stdio_probe(&program, &args).await);
             checks.push(embedding_fingerprint_stdio_probe(&program, &args).await);
             checks.push(correlation_stdio_probe(&program, &args).await);
+            checks.push(attestation_stdio_probe(&program, &args).await);
         }
         None => {
             checks.push(CheckResult::skip(
@@ -211,6 +223,10 @@ pub async fn run_conformance(target: ProviderTarget) -> ConformanceReport {
             checks.push(CheckResult::skip(
                 CHECK_CORRELATION,
                 "wire-level §H4 id-echo probe applies to stdio providers only",
+            ));
+            checks.push(CheckResult::skip(
+                CHECK_ATTESTATION,
+                "wire-level §6.5 attestation probe applies to stdio providers only",
             ));
         }
     }
@@ -766,6 +782,320 @@ async fn correlation_stdio_probe(program: &str, args: &[String]) -> CheckResult 
             format!("provider answered the §H4 probe with an unexpected `{kind}` envelope"),
         ),
     }
+}
+
+/// **§6.5 (F6–F9)** — a provenance attestation is checked, never taken on
+/// trust.
+///
+/// A digest proves the bytes have not moved since somebody wrote that number
+/// down. It says nothing about *who* wrote it, and the digest and the frame come
+/// from the same unauthenticated party — so §6.2 is satisfied in full by a
+/// provider that fabricated both. A signature is the only thing that closes
+/// that, and until this check existed the four guarantees over it were verified
+/// by `contextgraph_types::attest`'s own unit tests and by nothing on the wire.
+/// Every other guarantee in this protocol earns its credibility from a suite
+/// with an adversarial mode behind it; a guarantee whose only witness is the
+/// implementation asserting about itself is the self-attestation §11.1 rules
+/// out.
+///
+/// The probe:
+///
+/// 1. reads the [attester keys](contextgraph_host::AttesterKey) the handshake
+///    published — a *construction* anchor, not a trust one (see that type);
+/// 2. queries, and takes the detached attestations from the `frames` envelope;
+/// 3. recomputes each named frame's commitment from the frame in hand and
+///    verifies the signature over it, exactly as §6.5.4 orders the two steps;
+/// 4. when anything fails to verify, re-asks the same provider **through the
+///    reference [`Host`]** and asserts the affected frame still arrives —
+///    F9's rule that an unverifiable attestation degrades a frame to
+///    *unattested* rather than removing it.
+///
+/// **`provider_id` in the commitment is the handshake-declared `provider.name`.**
+/// §6.5.2 binds a commitment to a provider id without saying which one, and the
+/// host-chosen local id (`provider-under-test` here) is not a string the
+/// provider ever sees — so it is not one a provider could sign against. The
+/// declared name is the only identifier both ends observe. Pinning that in
+/// SPEC.md is tracked separately; until it is, an implementation reading only
+/// the spec could pick differently and fail this check for the wrong reason.
+///
+/// Raw-stdio like the §R1, §E1 and §H4 probes, and for the same reason: the
+/// attestations ride the envelope, and [`Host::query_provider`] hands back a
+/// [`ContextQueryResult`] with the envelope already discarded.
+///
+/// Passing outcomes, in order of how a provider reaches them:
+///
+/// - publishes no key and serves no attestation ⇒ **pass**. §6.5 makes the
+///   construction mandatory and the signing optional, so a provider that signs
+///   nothing is conformant and this check has nothing to say about it.
+/// - every attestation it serves verifies ⇒ **pass**.
+/// - every attestation names a scheme this build cannot check ⇒ **skip**, per
+///   F8: "I cannot check this" is never "this is good", and it is equally never
+///   "this is forged".
+async fn attestation_stdio_probe(program: &str, args: &[String]) -> CheckResult {
+    let mut conn = match RawStdioConnection::spawn(program, args).await {
+        Ok(conn) => conn,
+        Err(error) => {
+            return CheckResult::fail(
+                CHECK_ATTESTATION,
+                format!("could not spawn provider: {error}"),
+            );
+        }
+    };
+    let info = match conn.handshake().await {
+        Ok((info, _)) => info,
+        Err(error) => {
+            return CheckResult::skip(
+                CHECK_ATTESTATION,
+                format!("handshake failed before the §6.5 probe could run: {error}"),
+            );
+        }
+    };
+    let keys: Vec<AttesterKey> = conn.attester_keys().to_vec();
+
+    if let Err(error) = conn
+        .send(&contextgraph_host::Envelope::Query {
+            id: None,
+            query: sample_query(),
+        })
+        .await
+    {
+        return CheckResult::fail(
+            CHECK_ATTESTATION,
+            format!("provider closed its input before the §6.5 probe query: {error}"),
+        );
+    }
+    let (frames, attestations) = match conn.recv().await {
+        Ok(contextgraph_host::Envelope::Frames {
+            result,
+            attestations,
+            ..
+        }) => (result.frames, attestations),
+        Ok(other) => {
+            return CheckResult::fail(
+                CHECK_ATTESTATION,
+                format!(
+                    "provider answered the §6.5 probe with an unexpected `{}` envelope",
+                    contextgraph_host::envelope_kind(&other)
+                ),
+            );
+        }
+        Err(error) => {
+            return CheckResult::fail(
+                CHECK_ATTESTATION,
+                format!("provider mishandled the §6.5 probe: {error}"),
+            );
+        }
+    };
+
+    if keys.is_empty() && attestations.is_empty() {
+        return CheckResult::pass(
+            CHECK_ATTESTATION,
+            "provider publishes no attester key and serves no attestation; §6.5 makes the construction mandatory and the signing optional, so there is nothing here to forge",
+        );
+    }
+    if keys.is_empty() {
+        return CheckResult::fail(
+            CHECK_ATTESTATION,
+            format!(
+                "provider served {} attestation(s) but published no attester key at the handshake — nothing reading this wire can check them, and an unverifiable signature is decoration (§6.5.4)",
+                attestations.len()
+            ),
+        );
+    }
+    if frames.is_empty() {
+        return CheckResult::pass(
+            CHECK_ATTESTATION,
+            "provider returned 0 frames, so there is nothing to attest (permitted — nothing relevant to the probe)",
+        );
+    }
+    if attestations.is_empty() {
+        return CheckResult::fail(
+            CHECK_ATTESTATION,
+            format!(
+                "provider published {} attester key(s) at the handshake but attested none of the {} frame(s) it served — a signing capability nothing can exercise (§6.5)",
+                keys.len(),
+                frames.len()
+            ),
+        );
+    }
+
+    let mut verified: Vec<String> = Vec::new();
+    let mut uncheckable: Vec<String> = Vec::new();
+    let mut problems: Vec<String> = Vec::new();
+    // Frames whose attestation did not verify: F9 says these must still be
+    // served, degraded to unattested rather than dropped.
+    let mut degraded: Vec<String> = Vec::new();
+
+    for entry in &attestations {
+        let Some(frame) = frames.iter().find(|frame| frame.id == entry.frame_id) else {
+            problems.push(format!(
+                "attestation names frame `{}`, which is not in the answer it rides with (§6.5.2 binds a signature to one frame of one answer)",
+                entry.frame_id
+            ));
+            continue;
+        };
+        let Some(key) = keys
+            .iter()
+            .find(|key| key.key_id == entry.attestation.key_id)
+        else {
+            problems.push(format!(
+                "frame `{}` is signed under key_id `{}`, which the handshake never published",
+                entry.frame_id, entry.attestation.key_id
+            ));
+            continue;
+        };
+        let Some(key_bytes) = decode_hex(&key.public_key) else {
+            problems.push(format!(
+                "published key `{}` is not lowercase hex, so no verifier can load it",
+                key.key_id
+            ));
+            continue;
+        };
+
+        match verify_frame_attestation(&info.name, frame, &entry.attestation, &key_bytes) {
+            AttestationVerdict::Valid => verified.push(entry.frame_id.clone()),
+            AttestationVerdict::UnknownAlgorithm(algorithm) => {
+                uncheckable.push(format!("{} (algorithm `{algorithm}`)", entry.frame_id));
+                degraded.push(entry.frame_id.clone());
+            }
+            verdict => {
+                problems.push(describe_attestation_failure(&entry.frame_id, &verdict));
+                degraded.push(entry.frame_id.clone());
+            }
+        }
+    }
+
+    // F9. An unverifiable attestation degrades its frame to *unattested*; it
+    // never removes the frame from the answer, because a host that dropped such
+    // frames would hand any peer a denial-of-service primitive — attach garbage,
+    // watch the evidence disappear. Asked of the reference host rather than of
+    // this probe's own bookkeeping, so it is a claim about a host's behaviour
+    // and not about the suite's.
+    if !degraded.is_empty()
+        && let Some(dropped) = frames_the_host_dropped(program, args, &degraded).await
+    {
+        problems.push(format!(
+            "the host stopped serving {} after their attestation failed to verify — F9 requires an unverifiable attestation to degrade a frame to unattested, never to remove it",
+            dropped.join(", ")
+        ));
+    }
+
+    if !problems.is_empty() {
+        return CheckResult::fail(
+            CHECK_ATTESTATION,
+            format!(
+                "{} of {} attestation(s) did not verify (§6.5.4): {}",
+                problems.len(),
+                attestations.len(),
+                problems.join("; ")
+            ),
+        );
+    }
+    if verified.is_empty() {
+        return CheckResult::skip(
+            CHECK_ATTESTATION,
+            format!(
+                "every attestation names a scheme this build cannot check, so F8 declines rather than guessing: {}",
+                uncheckable.join(", ")
+            ),
+        );
+    }
+
+    let note = if uncheckable.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "; {} left unattested by F8 as uncheckable here: {}",
+            uncheckable.len(),
+            uncheckable.join(", ")
+        )
+    };
+    CheckResult::pass(
+        CHECK_ATTESTATION,
+        format!(
+            "recomputed and verified {} detached attestation(s) over {} served frame(s) against the handshake-published key(s) (§6.5){note}",
+            verified.len(),
+            frames.len()
+        ),
+    )
+}
+
+/// Name an [`AttestationVerdict`] failure in the terms §6.5.4 separates them
+/// into, because the two loudest ones call for opposite responses: a mismatch
+/// says the frame moved after signing (tampering), a bad signature says the key
+/// is wrong or the signature forged (key management).
+fn describe_attestation_failure(frame_id: &str, verdict: &AttestationVerdict) -> String {
+    match verdict {
+        AttestationVerdict::CommitmentMismatch { expected, signed } => format!(
+            "frame `{frame_id}` recomputes to {expected} but its attestation signs {signed} — the frame, its `content_digest`, or its provenance chain changed after signing (CommitmentMismatch)"
+        ),
+        AttestationVerdict::BadSignature => format!(
+            "frame `{frame_id}` commits correctly but its signature does not verify under the published key — forged, or signed by a key the provider did not declare (BadSignature)"
+        ),
+        AttestationVerdict::MalformedKey => {
+            format!("frame `{frame_id}`: the published key is not a well-formed key (MalformedKey)")
+        }
+        AttestationVerdict::MalformedSignature => format!(
+            "frame `{frame_id}`: the signature field is not well-formed for its algorithm (MalformedSignature)"
+        ),
+        AttestationVerdict::MalformedCommitment => format!(
+            "frame `{frame_id}`: `signed_commitment` is not the `sha256:<64 lowercase hex>` §F7 requires (MalformedCommitment)"
+        ),
+        // Handled by the caller, which reports it as uncheckable rather than
+        // as a failure — F8's whole point.
+        other => format!("frame `{frame_id}`: {other:?}"),
+    }
+}
+
+/// Of `expected` frame ids, those the reference [`Host`] does **not** deliver —
+/// F9's question, asked of a host rather than of this probe.
+///
+/// `None` when the question could not be put (the host could not be stood up,
+/// or the query failed): an unanswerable question is not evidence of a
+/// violation, and reporting it as one would fail a provider for the suite's own
+/// trouble.
+async fn frames_the_host_dropped(
+    program: &str,
+    args: &[String],
+    expected: &[String],
+) -> Option<Vec<String>> {
+    let mut host = Host::new();
+    let id = "f9-probe".to_string();
+    host.add_stdio(id.clone(), program, args).await.ok()?;
+    let result = host.query_provider(&id, &sample_query()).await.ok()?;
+    let served: Vec<&str> = result
+        .frames
+        .iter()
+        .map(|frame| frame.id.as_str())
+        .collect();
+    let _ = host.shutdown().await;
+    let missing: Vec<String> = expected
+        .iter()
+        .filter(|id| !served.contains(&id.as_str()))
+        .cloned()
+        .collect();
+    (!missing.is_empty()).then_some(missing)
+}
+
+/// Decode lowercase hex into bytes. `None` on an odd length or a non-hex digit
+/// — a published key that cannot be decoded is a provider defect, not a
+/// verification failure, and the two are reported differently.
+fn decode_hex(hex: &str) -> Option<Vec<u8>> {
+    if !hex.len().is_multiple_of(2) {
+        return None;
+    }
+    // The even-length check above leaves no remainder, so `.0` drops nothing.
+    // `as_chunks` yields `&[u8; 2]`, which indexes without a bounds check.
+    hex.as_bytes()
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| {
+            let hi = (pair[0] as char).to_digit(16)?;
+            let lo = (pair[1] as char).to_digit(16)?;
+            Some((hi * 16 + lo) as u8)
+        })
+        .collect()
 }
 
 /// The instant the `as_of` probe pins retrieval to (`SPEC.md` §6.1). Chosen to

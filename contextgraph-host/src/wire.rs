@@ -53,12 +53,54 @@
 //! matching rather than by envelope id (`SPEC.md` §9).
 
 use contextgraph_types::{
-    Capabilities, ContextQuery, ContextQueryResult, ErrorCode, ProviderInfo, VerifyRequest,
-    VerifyResponse,
+    Capabilities, ContextQuery, ContextQueryResult, ErrorCode, ProvenanceAttestation, ProviderInfo,
+    VerifyRequest, VerifyResponse,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::error::HostError;
+
+/// A public key a provider publishes at the handshake, so a verifier can check
+/// the [attestations](FrameAttestation) it goes on to serve (`SPEC.md` §6.5.4).
+///
+/// **A construction anchor, not a trust anchor.** A key handed over by the party
+/// being audited says nothing about *who* signed; it is enough to decide whether
+/// an attestation is built the way §6.5 requires, which is the half F6–F9 make
+/// mandatory. A deployment that cares who signed resolves
+/// [`key_id`](Self::key_id) in its own trust store and ignores this field.
+///
+/// It rides the **handshake** rather than the answer for a reason: a key
+/// republished with every response could be swapped by the same forgery that
+/// swapped the signature, and a wrong-key signature would then verify. Declared
+/// once, before any frame moves, it cannot be.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttesterKey {
+    /// The key's id, matching [`ProvenanceAttestation::key_id`]. Rotation is a
+    /// new id, never a reused one.
+    pub key_id: String,
+    /// The scheme this key is for, e.g.
+    /// [`ALGORITHM_ED25519`](contextgraph_types::ALGORITHM_ED25519).
+    pub algorithm: String,
+    /// The raw public key, lowercase hex — the encoding
+    /// [`ProvenanceAttestation::signature`] already uses.
+    pub public_key: String,
+}
+
+/// One detached [`ProvenanceAttestation`] bound to one frame of an answer
+/// (`SPEC.md` §6.5.2).
+///
+/// **Detached, per F6.** It names the frame it signs by id and travels beside
+/// the result rather than inside it, so re-signing after a key rotation never
+/// perturbs the frame's content-addressed identity, and no attestation is ever
+/// part of a preimage it covers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FrameAttestation {
+    /// The [`ContextFrame::id`](contextgraph_types::ContextFrame::id) this
+    /// attestation covers, within the same answer.
+    pub frame_id: String,
+    /// The detached signature over that frame's frame commitment (§6.5.2).
+    pub attestation: ProvenanceAttestation,
+}
 
 /// One Context Graph Protocol message. Every variant is a small, versioned, `type`-tagged JSON
 /// object; the host writes exactly one per line (NDJSON) over stdio and one
@@ -76,6 +118,12 @@ pub enum Envelope {
         protocol_version: String,
         provider: ProviderInfo,
         capabilities: Capabilities,
+        /// The public keys this provider signs its attestations with
+        /// (`SPEC.md` §6.5). Empty ⇒ the provider offers no attestation, which
+        /// is conformant: §6.5 makes the *construction* mandatory, never the
+        /// signing.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attester_keys: Vec<AttesterKey>,
     },
     /// Host → provider retrieval request (`context/query`).
     Query {
@@ -90,6 +138,12 @@ pub enum Envelope {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         result: ContextQueryResult,
+        /// Detached provenance attestations over frames in `result`
+        /// (`SPEC.md` §6.5). Beside the frames, never inside one (F6). A frame
+        /// named by no entry here is simply unattested, and a frame whose entry
+        /// does not verify degrades to unattested too (F9) — never dropped.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attestations: Vec<FrameAttestation>,
     },
     /// Host → provider revalidation request: are these held frames still
     /// valid (`docs/context-reuse.md` §4 `context/verify`)? Carries frame
@@ -258,6 +312,7 @@ mod tests {
                 },
                 ..Capabilities::default()
             },
+            attester_keys: vec![],
         }
     }
 
@@ -294,6 +349,7 @@ mod tests {
                     dropped_estimate: None,
                     ..Default::default()
                 },
+                attestations: vec![],
             },
             Envelope::Shutdown,
             Envelope::Error {

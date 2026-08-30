@@ -205,6 +205,7 @@ impl HttpProvider {
                 protocol_version,
                 provider,
                 capabilities,
+                ..
             } => {
                 if !versions_compatible(PROTOCOL_VERSION, &protocol_version) {
                     return Err(HostError::VersionMismatch {
@@ -314,7 +315,9 @@ impl ContextProvider for HttpProvider {
         )
         .await?;
         match reply {
-            Envelope::Frames { id: echoed, result } => {
+            Envelope::Frames {
+                id: echoed, result, ..
+            } => {
                 verify_correlation(&self.id, sent_id.as_deref(), echoed.as_deref())?;
                 Ok(result)
             }
@@ -398,6 +401,7 @@ mod tests {
                 },
                 ..Capabilities::default()
             },
+            attester_keys: vec![],
         })
         .unwrap()
     }
@@ -436,6 +440,7 @@ mod tests {
                 dropped_estimate: None,
                 ..Default::default()
             },
+            attestations: vec![],
         })
         .unwrap()
     }
@@ -544,6 +549,7 @@ mod tests {
                 },
                 ..Capabilities::default()
             },
+            attester_keys: vec![],
         })
         .unwrap();
         Mock::given(method("POST"))

@@ -68,6 +68,11 @@
         },
         "capabilities": {
           "$ref": "#/$defs/Capabilities"
+        },
+        "attester_keys": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/AttesterKey" },
+          "description": "Public keys this provider signs its provenance attestations with (SPEC.md §6.5). Absent or empty means the provider offers no attestation, which is conformant: §6.5 makes the construction mandatory and the signing optional."
         }
       },
       "required": [
@@ -114,12 +119,101 @@
           "type": "string",
           "minLength": 1,
           "description": "Correlation id; a provider MUST echo it on the reply (SPEC.md H4)."
+        },
+        "attestations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/FrameAttestation" },
+          "description": "Detached provenance attestations over frames in `result` (SPEC.md §6.5). Beside the frames, never inside one (F6). A frame named by no entry here is unattested; a frame whose entry does not verify degrades to unattested too (F9), and is never dropped."
         }
       },
       "required": [
         "type",
         "result"
       ],
+      "additionalProperties": false
+    },
+
+    "AttesterKey": {
+      "type": "object",
+      "description": "A public key a provider publishes at the handshake so a verifier can check the attestations it serves (SPEC.md §6.5.4). A construction anchor, not a trust anchor: a key handed over by the party being audited settles whether an attestation is BUILT correctly, never who signed it.",
+      "properties": {
+        "key_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Matches ProvenanceAttestation.key_id. Rotation is a new id, never a reused one."
+        },
+        "algorithm": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The scheme this key is for, e.g. `ed25519`. A string rather than an enum so a post-quantum successor is additive."
+        },
+        "public_key": {
+          "type": "string",
+          "pattern": "^[0-9a-f]+$",
+          "description": "The raw public key, lowercase hex — the encoding ProvenanceAttestation.signature already uses."
+        }
+      },
+      "required": ["key_id", "algorithm", "public_key"],
+      "additionalProperties": false
+    },
+
+    "ProvenanceAttestation": {
+      "type": "object",
+      "description": "A detached Ed25519 signature over a frame commitment (SPEC.md §6.5.2). Detached per F6: it never appears inside the frame it signs, nor inside any hash preimage this spec defines.",
+      "properties": {
+        "signed_commitment": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "The commitment this attestation signs, computed exactly as §6.5.2 or §6.5.3 specifies (F7)."
+        },
+        "key_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "algorithm": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A verifier that does not recognise this value MUST report the attestation as uncheckable and MUST NOT treat the frame as attested (F8)."
+        },
+        "attester_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The attesting authority — who is accountable for the claim, as distinct from which key produced it."
+        },
+        "signature": {
+          "type": "string",
+          "pattern": "^[0-9a-f]+$",
+          "description": "The detached signature, lowercase hex."
+        },
+        "issued_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$",
+          "description": "When the attestation was issued (SPEC.md §F4 protocol timestamp)."
+        }
+      },
+      "required": [
+        "signed_commitment",
+        "key_id",
+        "algorithm",
+        "attester_id",
+        "signature",
+        "issued_at"
+      ],
+      "additionalProperties": false
+    },
+
+    "FrameAttestation": {
+      "type": "object",
+      "description": "One detached attestation bound to one frame of the answer it rides with (SPEC.md §6.5.2). Names its frame by id rather than nesting inside it, which is what keeps re-signing and key rotation from perturbing the frame's content-addressed identity.",
+      "properties": {
+        "frame_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The ContextFrame.id this attestation covers, within the same answer."
+        },
+        "attestation": { "$ref": "#/$defs/ProvenanceAttestation" }
+      },
+      "required": ["frame_id", "attestation"],
       "additionalProperties": false
     },
 
