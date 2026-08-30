@@ -19,9 +19,9 @@ description = "Sweep a repo's `triage`-labeled backlog — vet every issue again
 argument-hint = "<owner/repo> [--dry-run] [--no-fix] [--label-only] [--limit N] [--concurrency N] [--no-close]"
 allowed-tools = ["Bash(gh:*)", "Bash(git:*)", "Bash(rg:*)", "Bash(fd:*)", "Bash(jq:*)", "Bash(mkdir:*)", "Read", "Grep", "Glob", "Edit", "Write", "MultiEdit", "Agent"]
 
-# Bulk, outward-facing mutation (labels, comments, closes, epics, a PR), so
-# this is deliberate-only: the user types it, the model never fires it
-# mid-turn. Set to false to let the model invoke it.
+# Bulk, outward-facing mutation (labels, comments, closes, epics, a PR), so the
+# user types it and the model never fires it mid-turn. Set to false to let the
+# model invoke it.
 disable-model-invocation = true
 
 prompt = '''
@@ -57,9 +57,9 @@ Several repos in this org carry **SCR-005**
 (`docs/scr/SCR-005-triage-separation-of-duties.md`), which says the triage agent
 *"never implements anything and never closes issues — it only sizes and orders."*
 
-**This command is a deliberate, user-authorized extension of that role.** The
-maintainer asked for vet + fix + label in one pass. Resolve the tension this way;
-do not resolve it by refusing:
+**This command extends that role, at the maintainer's explicit request** for vet +
+fix + label in one pass. Resolve the tension this way; do not resolve it by
+refusing:
 
 - The **fixes go in a separate PR** that a human merges. The agent never merges it.
 - Issues therefore close **through PR merge**, not by agent fiat.
@@ -67,7 +67,7 @@ do not resolve it by refusing:
   fixed issue leaves triage via the PR, not via a P-label.
 - If the repo has a triage-guard workflow, read it
   (`.github/workflows/triage-guard.yml`) before writing any label. It names the
-  whitelisted identities and the P-label-vs-`triage` invariant. If your `gh`
+  whitelisted identities and the P-label-vs-`triage` rule. If your `gh`
   identity is not whitelisted, your P-labels will be **stripped and the issue
   re-queued** — detect this up front (`gh api user -q .login`), and if you are
   not whitelisted, **stop and report** rather than fighting the workflow issue
@@ -143,8 +143,10 @@ verbatim, plus its batch:
 
 > You are vetting GitHub issues against the current source tree at `<path>`.
 > For each issue, re-derive its central claim from the code — do not trust the
-> issue text. Use `rg` and `fd`, never the slower tools. Cite `file:line` for
-> everything you assert.
+> issue text. Use `rg` and `fd`, never the slower tools. Cite the **file and the
+> symbol** for everything you assert — `hex-utils.ts`'s `hexPoints` — and never a
+> bare line number, which is wrong after the next edit above it. A triage comment
+> is read weeks later.
 >
 > **HARD RULE — NEVER run a whole-repo or all-package test suite, and never run
 > a full gate or build.** If you must prove something by running a test, run
@@ -153,7 +155,7 @@ verbatim, plus its batch:
 > Do not edit any file in this phase. Read-only.
 >
 > Return one record per issue: `number`, `verdict`, `type`, `confidence`
-> (high/medium/low), `evidence` (file:line list), `areas` (paths touched, for
+> (high/medium/low), `evidence` (file + symbol list), `areas` (paths touched, for
 > area-label mapping), `fix_difficulty` (trivial/small/medium/large/unknown),
 > `fix_sketch` (if trivial or small: the exact change), `pain` (the concrete
 > cost this imposes today, or `none`), `dup_of` (issue number, if visible in
@@ -164,7 +166,7 @@ verbatim, plus its batch:
 | Verdict | Means | Next |
 |---|---|---|
 | `CONFIRMED` | The claim reproduces in the current tree. | Fix or label. |
-| `STALE` | It was real, and is already fixed or gone. | Close with the commit or `file:line` that proves it (unless `--no-close`). |
+| `STALE` | It was real, and is already fixed or gone. | Close with the commit, or the file and symbol, that proves it (unless `--no-close`). |
 | `MISFILED` | Real, but not a bug — a feature, chore, docs, or tech-debt request. | Retype and label. |
 | `DUPLICATE` | Same root cause as another issue. | Fold into the canonical one. |
 | `INVALID` | The premise is false — the code never behaved that way. | Comment the counter-evidence; close. |
@@ -224,7 +226,7 @@ For each issue, build an **ordered** list:
 ```
 
 1. **Priority — exactly one.** Never zero, never two.
-2. **Area — one to three.** Map the `file:line` evidence from Phase 1 onto the
+2. **Area — one to three.** Map the file-and-symbol evidence from Phase 1 onto the
    repo's real `area:*` names. Multi-area is expected for cross-cutting work;
    more than three means the issue is too broad — say so in the comment. Where
    the repo also uses `@package/*` / `@app/*`, add the matching one.
@@ -275,7 +277,7 @@ gh issue edit <n> -R "$REPO" \
 ```
 **Triage:** `P1` · `area:api` · `bug` · `pain:resolve-rate`
 
-Confirmed against `apps/api/src/routes/v1/foo.ts:88` — <one line on what reproduces>.
+Confirmed against `routes/v1/foo.ts`'s `handleFoo` — <one line on what reproduces>.
 Pain: <one concrete sentence, or omit this line entirely>.
 Epic: #<n> — <epic title>.      ← only if it joined one
 ```
@@ -297,7 +299,7 @@ Skip entirely on `--no-fix` / `--label-only` / `--dry-run`.
 - It is provable by **one narrow test**, or by the compiler/typechecker.
 
 Anything else goes to Phase 3 labeling instead. When in doubt, label it — a
-half-fix buried in a cleanup PR is worse than an honest ticket.
+half-fix buried in a cleanup PR is worse than a ticket that says what remains.
 
 **Procedure:**
 
@@ -364,7 +366,7 @@ carrying only the `triage` label, per the repo's own residue rule.
 
 ---
 
-## Invariants
+## Rules
 
 - **Every open issue ends with a priority label or `triage` — never neither, never both.**
 - **Never blind-add a label.** Always diff against what is already on the issue.
