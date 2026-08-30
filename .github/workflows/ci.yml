@@ -49,6 +49,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
+      # `attestation` is off by default and no workspace member enables
+      # it, so the line above compiles neither contextgraph_types::attest
+      # nor the cross-language vectors the SDK suites reconcile against.
+      - run: cargo test -p contextgraph-types --features attestation
 
   msrv:
     name: msrv (rust-version from Cargo.toml)
@@ -143,6 +147,9 @@ jobs:
           npm run build
       - name: TS example provider passes the conformance suite
         run: ./.github/scripts/conformance-external.sh -- node sdk/typescript/dist/examples/example-docs.js
+      - name: TS attestation port reproduces the published vectors
+        working-directory: sdk/typescript
+        run: node --test "dist/test/*.test.js"
 
   sdk-python:
     name: sdk (python) is a conformant implementation
@@ -157,6 +164,9 @@ jobs:
           python-version: "3.12"
       - name: Python example provider passes the conformance suite
         run: ./.github/scripts/conformance-external.sh -- python3 sdk/python/examples/example_docs.py
+      - name: Python attestation port reproduces the published vectors
+        working-directory: sdk/python
+        run: python3 -m unittest discover -s tests -v
 
   sdk-go:
     name: sdk (go) is a conformant implementation
@@ -176,6 +186,9 @@ jobs:
           go build -o "$GITHUB_WORKSPACE/cg-go-example" ./examples/example-docs
       - name: Go example provider passes the conformance suite
         run: ./.github/scripts/conformance-external.sh -- ./cg-go-example
+      - name: Go attestation port reproduces the published vectors
+        working-directory: sdk/go
+        run: go test ./contextgraph/attest/
 
   sdk-typescript-http:
     name: sdk (typescript) HTTP adapter is conformant

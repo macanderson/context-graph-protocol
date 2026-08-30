@@ -16,6 +16,25 @@ Context Graph Protocol providers.
     run_stdio_provider(MyProvider())
 """
 
+from .attest import (
+    ALGORITHM_ED25519,
+    AttestableFrame,
+    AttestationVerdict,
+    InclusionProof,
+    InclusionStep,
+    ProvenanceAttestation,
+    Verdict,
+    digest_string,
+    encode_provenance_link,
+    frame_commitment,
+    inclusion_proof,
+    merkle_root,
+    parse_digest,
+    provenance_chain_head,
+    root_from_proof,
+    verify_commitment,
+    verify_frame_attestation,
+)
 from .budget import BYTES_PER_BUDGET_TOKEN, budget_tokens
 from .http import handle_envelope, make_wsgi_app, respond_to_body
 from .provider import Provider, ProviderError, run_stdio_provider
@@ -31,4 +50,21 @@ __all__ = [
     "handle_envelope",
     "respond_to_body",
     "make_wsgi_app",
+    "ALGORITHM_ED25519",
+    "AttestableFrame",
+    "AttestationVerdict",
+    "InclusionProof",
+    "InclusionStep",
+    "ProvenanceAttestation",
+    "Verdict",
+    "digest_string",
+    "encode_provenance_link",
+    "frame_commitment",
+    "inclusion_proof",
+    "merkle_root",
+    "parse_digest",
+    "provenance_chain_head",
+    "root_from_proof",
+    "verify_commitment",
+    "verify_frame_attestation",
 ]

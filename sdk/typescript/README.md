@@ -88,6 +88,52 @@ want to wire it into a framework yourself. Confirm it green with
 `embedding-fingerprint`, and `correlation` probes report *skipped* over HTTP —
 they inspect raw framing this transport doesn't expose).
 
+## Verify a provenance attestation
+
+`SPEC.md` §6.5 makes a frame's provenance *evidence* rather than merely
+tamper-evident: a detached Ed25519 signature over a commitment to the frame's
+identity and its provenance chain. The `attest` surface implements the whole
+construction — the length-prefixed link encoding, the source-first chain fold,
+the frame commitment, an RFC 6962 Merkle root over a result set with inclusion
+proofs, and verification.
+
+```ts
+import { frameCommitment, verifyFrameAttestation, digestString }
+  from "@contextgraphprotocol/typescript-sdk";
+
+const verdict = verifyFrameAttestation("repo-graph", frame, attestation, publicKey);
+if (verdict.verdict !== "valid") {
+  // Never a boolean: "the frame changed after signing" and "the key is wrong"
+  // call for opposite responses, and F9 says an unverifiable attestation
+  // degrades a frame to unattested rather than disqualifying it.
+  console.warn(verdict);
+}
+```
+
+Signing is not here. The protocol specifies the preimage, never the custody of
+the key: a provider computes `frameCommitment(...)`, signs those 32 bytes with
+whatever backend holds its key, and assembles the attestation itself.
+
+Two things a port of this encoding gets wrong, both of which the test suite
+catches:
+
+- **`String.prototype.length` is not a UTF-8 byte count.** The §6.5.1 length
+  prefix is bytes; `.length` is UTF-16 code units, which differs for every
+  non-Latin-1 string and by an extra one per astral-plane character. This SDK
+  measures what `TextEncoder` produced.
+- **Node's Ed25519 accepts a small-order public key.** §6.5.4 asks for a
+  strict verifier, so `verifyCommitment` declines those keys — and any key
+  whose `y` is not reduced — before OpenSSL ever sees them.
+
+The vectors are shared across every language:
+
+```sh
+npm run build && node --test "dist/test/*.test.js"
+```
+
+They come from `tests/vectors/attestation-vectors.json`, which the Rust
+reference publishes and pins.
+
 ## Prove it conformant
 
 Build, then run the reference suite against your provider:
