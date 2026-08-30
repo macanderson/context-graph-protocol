@@ -16,6 +16,7 @@ use contextgraph_types::{
 };
 
 use crate::error::HostError;
+use crate::trust::AttestedQueryResult;
 
 /// A registered Context Graph Protocol provider, queryable behind one handle regardless of
 /// transport. `info()`/`capabilities()` return values cached at handshake
@@ -41,6 +42,26 @@ pub trait ContextProvider: Send + Sync {
     /// a provider that over-runs its budget is caught by the host, not
     /// trusted (`crate::host`).
     async fn query(&self, query: &ContextQuery) -> Result<ContextQueryResult, HostError>;
+
+    /// Answer a context query **and** hand over any detached provenance
+    /// attestations covering the frames it returns (`SPEC.md` §6.5,
+    /// [ADR 0016](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0016-attestation-trust-roots.md)).
+    ///
+    /// Defaults to [`query`](Self::query) with no attestations — the honest
+    /// answer for a provider that signs nothing, which is every provider in
+    /// this workspace today. A provider that signs overrides this; the host
+    /// then checks each attestation against its [`TrustStore`](crate::TrustStore)
+    /// and records the outcome in the composition audit. Whatever it finds,
+    /// **the frames are served either way** (`SPEC.md` F9).
+    ///
+    /// Attestations travel beside the result rather than inside it because F6
+    /// makes them detached, and because the `frames` envelope has nowhere to
+    /// carry one yet — so a stdio or HTTP provider parses none and this seam is
+    /// how an in-process provider offers them. Issue #90 puts them on the wire;
+    /// when it lands the transports populate this and nothing else changes.
+    async fn query_attested(&self, query: &ContextQuery) -> Result<AttestedQueryResult, HostError> {
+        Ok(AttestedQueryResult::unattested(self.query(query).await?))
+    }
 
     /// Revalidate frames the host already holds, without any frame body
     /// travelling (`docs/context-reuse.md` §4 `context/verify`).

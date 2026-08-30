@@ -25,7 +25,14 @@ publish = true
 # The floor moved to 2.0.0 with the open-`FrameKind` break (ADR 0011): this
 # crate does not compile against `contextgraph-types` 1.x, so a floor of
 # ">=1.0.0" would let cargo resolve a pair that cannot build.
-contextgraph-types = { path = "../contextgraph-types", version = ">=2.0.0" }
+#
+# `attestation` is enabled unconditionally. It is off by default in
+# `contextgraph-types` so that crate's "zero dependencies beyond serde" promise
+# holds for a pure wire consumer; a host is the party that *checks* signatures,
+# so it is the right place to pay for the cryptography (ADR 0016).
+contextgraph-types = { path = "../contextgraph-types", version = ">=2.0.0", features = [
+    "attestation",
+] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
