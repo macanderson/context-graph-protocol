@@ -212,9 +212,9 @@ Read the full ADR before changing anything it covers.
 | [0012](./adr/0012-sdk-version-pins-share-a-major.md) | A version pin names its manifest's major | The scaffolder's default SDK pins had drifted a whole major behind the packages they name, invisibly, because every CI job overrides them with a local path. A guard now compares them. |
 | [0013](./adr/0013-schema-identity-on-a-branded-versioned-url.md) | Schema identity on a branded, versioned URL | The JSON Schemas are now known by a URL on the protocol's own domain, numbered by wire family (`/schema/v1/`) rather than tracking a git branch. The old URLs keep working and implementers need do nothing. |
 | [0014](./adr/0014-attestations-on-the-wire.md) | Attestations on the wire | A signed answer finally has somewhere to put the signature: beside the frames on the `frames` result, never inside a frame. Inclusion proofs are optional to send, and a host that keeps only part of a signed answer has to save them before it drops the rest. |
+| [0016](./adr/0016-attestation-trust-roots.md) | Trust roots for provenance attestation | A host learns a provider's signing key from the person running it, the same way `ssh` learns a host key — no registry, no directory, nothing you have to be part of an organization to reach. A signature it cannot check makes the evidence *unsigned*, never missing. |
 | [0017](./adr/0017-record-hash-and-record-attestation.md) | `record_hash` and `RecordAttestation` | The record layer's identity, implemented: RFC 8785 canonicalization with the record's own hash removed from the preimage, and a domain-separated Ed25519 signature over it. Says why JCS is right here and wrong at the frame layer. |
 
-<a id="adr-0002"></a><a id="adr-0003"></a><a id="adr-0004"></a><a id="adr-0005"></a><a id="adr-0006"></a><a id="adr-0007"></a><a id="adr-0008"></a><a id="adr-0009"></a><a id="adr-0010"></a><a id="adr-0011"></a><a id="adr-0012"></a><a id="adr-0013"></a><a id="adr-0014"></a><a id="adr-0017"></a>
 
 ---
 

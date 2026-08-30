@@ -190,6 +190,11 @@ same evidence is genuine.
   Schema, and key distribution/rotation — which is deliberately out of scope
   here, since the protocol specifies the preimage and not the PKI.
 
-  The wire carriage on that list has since landed:
+  Two of those have since landed, and this ADR's boundary did not move.
   [ADR 0014](./0014-attestations-on-the-wire.md) puts the attestation on the
-  `frames` result, in the JSON Schema, and in `examples/`.
+  `frames` result, in the JSON Schema, and in `examples/`, so a provider that
+  signs a frame finally has somewhere to put the signature.
+  [ADR 0016](./0016-attestation-trust-roots.md) answers the *host's* side of key
+  distribution — operator-supplied keys, held locally — while the protocol still
+  specifies no PKI; host-side verification is wired into the fan-out and the
+  composition audit in the same change. The conformance check remains open.

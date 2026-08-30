@@ -90,6 +90,45 @@ text lands without a human merge.
   signature nobody checks teaches an implementer to produce forgeries. As a side
   effect the §6.5 constructions now compile and run under `cargo test`, which
   nothing in CI did before.
+- **Attestation verification, wired into the host
+  ([ADR 0016](./docs/adr/0016-attestation-trust-roots.md), issues #88 and #91).**
+  `contextgraph_types::attest` shipped complete and unreachable: nothing in
+  `contextgraph-host` consumed it, so a frame arriving with a valid
+  `ProvenanceAttestation` was treated exactly like one arriving with none. The
+  fan-out now checks attestations and the composition audit says what it found.
+  The question that blocked it — *how does a host learn which public key to
+  trust?* — is answered by `contextgraph_host::TrustStore`: keys are held
+  locally, keyed by `(provider_id, key_id)`, and are there because **an
+  operator** put them there, in the same act as the provider's own configuration
+  and its consent grant. No registry, no well-known endpoint, no transparency
+  log and no trust-on-first-use, because a host that needs an organization
+  behind it to verify anything is no longer one an individual can run
+  ([GOVERNANCE.md](./GOVERNANCE.md)'s consent boundary). What that does *not*
+  buy is written down in the ADR: trust is local and non-transitive, there is no
+  revocation beyond removing a key, and `Attested` means "signed by a key this
+  operator chose to trust" and nothing more.
+- **`AuditEntry::attestation`** — an `AttestationState` on every audit entry,
+  included and excluded alike, distinguishing *no check performed* from *no
+  attestation offered* from *attested* from *no key held under that `key_id`*
+  from *unrecognised algorithm* from a named `AttestationVerdict` failure. "I
+  hold no key" is a configuration gap and "this signature is forged" is an
+  incident; a boolean sends an operator hunting the wrong one. `Attested` also
+  carries `covers_content`, because a frame commitment covers `content_digest`
+  and that field is optional — a signed frame declaring none has a valid
+  signature over its identity and provenance and **nothing over its text**.
+- **`SPEC.md` F9 is honoured and tested.** An attestation the host cannot verify
+  degrades its frame to *unattested* and never removes it: a host that dropped
+  such frames would hand any peer a denial-of-service primitive — attach a
+  malformed attestation to a rival's evidence, watch it vanish from the prompt.
+  Verification also never reranks; acting on the state is a policy decision a
+  host takes above the composer. That keeps it orthogonal to the ranking seam:
+  `compose_for_prompt_attested` and `FanOut::compose_for_prompt_with` take a
+  `RankingStrategy` **and** an attestation ledger, and only the strategy can
+  move a frame.
+- **`ContextProvider::query_attested`** — a defaulted trait method by which a
+  signing provider hands the host its detached attestations. Attestations are
+  detached (F6) and the `frames` envelope has nowhere to carry one yet, so this
+  is the host-side seam until it does (issue #90).
 - **Provenance attestation (`SPEC.md` §6.5, F6–F9;
   [ADR 0010](./docs/adr/0010-provenance-attestation.md)).** A digest is
   tamper-evident only to someone who already trusts whoever recorded it; the
@@ -196,6 +235,15 @@ text lands without a human merge.
   dereferences it, asserting the served body reports that same `$id`;
   `schema/validate-examples.py` pins the string offline. See
   [MIGRATION.md](./MIGRATION.md) §6.
+- **`contextgraph-host` enables `contextgraph-types`' `attestation` feature
+  unconditionally** (ADR 0016). The feature stays off by default in
+  `contextgraph-types`, so a pure wire consumer's dependency set is unchanged; a
+  host is the party that *checks* signatures and is the right place to pay for
+  the cryptography.
+- **Rust-semver breaking, wire-compatible (`contextgraph-host`):**
+  `AuditEntry` and `ProviderOutcome` each gain a field, so a struct literal of
+  either needs one more line. No wire type, envelope, schema or conformance
+  requirement changes.
 - **Crate version `1.0.0` → `2.0.0`; protocol version stays `contextgraph/1.0`.**
   The first time the two axes in [docs/stability.md](./docs/stability.md) actually
   disagree, and the reason they are documented as independent. The open-`FrameKind`

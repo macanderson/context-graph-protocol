@@ -195,6 +195,12 @@ pub struct CompositionAudit {
     pub tokens_used: u32,          // summed canonical cost of included frames; <= global_budget
 }
 
+pub struct AuditEntry {
+    pub frame: FrameId,
+    pub disposition: FrameDisposition,
+    pub attestation: AttestationState, // was this evidence signed, and by whom?
+}
+
 pub enum FrameDisposition {
     Included { verification: VerificationState }, // Verifiable | Unverifiable
     Excluded { reason: ExclusionReason },
@@ -213,10 +219,51 @@ So a host can answer, from the record alone:
 - **Why is the prompt within budget?** — `tokens_used <= global_budget`, and
   it is packed from the *canonical* cost of each frame (not the provider-declared
   `token_cost`), so an under-declared frame still cannot sneak past the budget.
+- **Which quoted evidence was signed?** — `entry.attestation`, below.
 
-`audit.included()`, `audit.excluded()`, and `audit.explains_every_drop()` are the
-accessors; the last is what host-conformance's `HCHECK_COMPOSITION_AUDIT` asserts
-against a deliberately over-budget, duplicate-content fixture.
+`audit.included()`, `audit.excluded()`, `audit.attested()` and
+`audit.explains_every_drop()` are the accessors;
+`explains_every_drop` is what host-conformance's `HCHECK_COMPOSITION_AUDIT`
+asserts against a deliberately over-budget, duplicate-content fixture.
+
+### Attested and unattested evidence
+
+`entry.attestation` records what the host found when it checked the frame's
+detached [provenance attestation](../SPEC.md) (§6.5) against its own
+[`TrustStore`][trust] — the keys **an operator** chose to trust for that
+provider ([ADR 0016](adr/0016-attestation-trust-roots.md); there is no registry
+and no trust-on-first-use, because a host that needs an organization behind it
+is not one an individual can run).
+
+| state                          | meaning                                                          |
+| ------------------------------ | ---------------------------------------------------------------- |
+| `NotChecked`                   | the host consulted no trust store — "I did not look"             |
+| `Unattested`                   | the provider offered no attestation for this frame               |
+| `Attested { .., covers_content }` | verified against a trusted key                                |
+| `NoTrustedKey { key_id }`      | an attestation arrived; the host holds no key under that `key_id` |
+| `UnknownAlgorithm { .. }`      | a scheme this build cannot check (F8) — a refusal to guess        |
+| `Invalid { verdict }`          | a trusted key was found and the check failed; the verdict says how |
+
+Two things this deliberately does **not** do. It never removes a frame: an
+attestation the host cannot verify degrades the frame to unattested and nothing
+more (**F9**), because a host that dropped such frames would let any peer
+suppress a rival's evidence by attaching garbage to it. And it never reranks —
+what a host does with the state is a policy decision taken above the composer.
+
+That keeps it orthogonal to the ranking seam above: a
+[`RankingStrategy`](#3-deterministic-value-aware-ordering) decides which frames
+are packed and in what order, and the ledger only describes each one.
+`fanout.compose_for_prompt_with(budget, &strategy)` carries both;
+`fanout.compose_for_prompt(budget)` is the same thing under `ScoreDescending`.
+
+`covers_content` is worth reading before rendering an "attested" badge. A frame
+commitment covers `(provider_id, frame_id, content_digest)` and the provenance
+chain (§6.5.2), and `content_digest` is optional — so a signed frame that
+declares none has a valid signature over its identity and its provenance and
+**nothing over its text**. The flag is `false` there, and a host should not
+present such a frame as though its words were signed.
+
+[trust]: https://docs.rs/contextgraph-host/latest/contextgraph_host/trust/struct.TrustStore.html
 
 ---
 
