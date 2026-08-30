@@ -32,6 +32,7 @@ pub mod ranking;
 use contextgraph_types::{ContextFrame, FrameId, Provenance};
 
 use crate::provider::frame_kind_name;
+use crate::trust::{AttestationLedger, AttestationState};
 use ranking::{RankingStrategy, ScoreDescending, rank_with};
 
 /// Render a set of `(provider id, frame)` pairs into a byte-stable context
@@ -468,13 +469,35 @@ pub enum FrameDisposition {
     Excluded { reason: ExclusionReason },
 }
 
-/// One line of the composition audit: which frame, and what became of it.
+/// One line of the composition audit: which frame, what became of it, and
+/// whether its provenance was signed by a key the host trusts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditEntry {
     /// The frame's stable identity.
     pub frame: FrameId,
     /// Included (and how verifiable) or excluded (and why).
     pub disposition: FrameDisposition,
+    /// What the host found when it checked this frame's provenance attestation
+    /// against its [`TrustStore`](crate::TrustStore) (`SPEC.md` §6.5,
+    /// [ADR 0016](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0016-attestation-trust-roots.md)).
+    ///
+    /// A separate axis from [`FrameDisposition::Included`]'s
+    /// [`VerificationState`], because the two answer different questions:
+    /// *can this be revalidated later* (a `content_digest` the provider can be
+    /// re-asked about) versus *was this signed by someone I trust* (a signature
+    /// checkable offline, by anyone holding the key). A frame can carry a
+    /// digest and a forged signature at once, and an audit that collapsed them
+    /// could not say so.
+    ///
+    /// Recorded on **every** entry, excluded ones included: a frame dropped as
+    /// a cross-provider duplicate has an attestation state too, and it is worth
+    /// seeing — dedup keeps the higher-scored copy, which may be the unsigned
+    /// one.
+    ///
+    /// Never a reason for exclusion. `SPEC.md` F9 makes an unverifiable
+    /// attestation a degradation to *unattested*, and this field is where that
+    /// degradation is recorded rather than acted on.
+    pub attestation: AttestationState,
 }
 
 /// The record of how a composed prompt was assembled (issue #15): one
@@ -510,6 +533,18 @@ impl CompositionAudit {
         self.entries
             .iter()
             .filter(|entry| matches!(entry.disposition, FrameDisposition::Excluded { .. }))
+    }
+
+    /// The entries whose provenance was signed by a key this host trusts —
+    /// the evidence a reader may treat as attested (`SPEC.md` §6.5).
+    ///
+    /// Every other state is excluded, [`NotChecked`](AttestationState::NotChecked)
+    /// included, because "I could not check it" is never "it is good"
+    /// (`SPEC.md` F8).
+    pub fn attested(&self) -> impl Iterator<Item = &AuditEntry> {
+        self.entries
+            .iter()
+            .filter(|entry| entry.attestation.is_attested())
     }
 
     /// Whether every excluded frame carries a concrete reason — true by
@@ -594,6 +629,12 @@ pub const EVIDENCE_PREAMBLE: &str = concat!(
 /// protocol guarantee (`SPEC.md` §6.6, F10) — see [`order_by_value`]. Use
 /// [`compose_for_prompt_with`] to pick a different one.
 ///
+/// This entry point checks no attestations, so every entry's
+/// [`attestation`](AuditEntry::attestation) is
+/// [`AttestationState::NotChecked`]. Use [`compose_for_prompt_attested`] — or
+/// [`FanOut::compose_for_prompt`](crate::FanOut::compose_for_prompt), which
+/// passes the fan-out's own ledger — to record what the host found.
+///
 /// [R3]: https://github.com/macanderson/context-graph-protocol/blob/main/SPEC.md
 pub fn compose_for_prompt<'a, I>(frames: I, global_budget: u32) -> ComposedPrompt
 where
@@ -617,10 +658,44 @@ where
 /// A strategy cannot break the budget bound or the audit: it ranks, and the
 /// packer still includes a frame only while its canonical token cost fits,
 /// excluding the rest with a recorded reason.
+///
+/// Checks no attestations; see [`compose_for_prompt_attested`].
 pub fn compose_for_prompt_with<'a, I, S>(
     frames: I,
     global_budget: u32,
     strategy: &S,
+) -> ComposedPrompt
+where
+    I: IntoIterator<Item = (&'a str, &'a ContextFrame)>,
+    S: RankingStrategy + ?Sized,
+{
+    compose_for_prompt_attested(frames, global_budget, strategy, &AttestationLedger::new())
+}
+
+/// [`compose_for_prompt_with`], plus the attestation state each frame earned
+/// during the fan-out (`SPEC.md` §6.5,
+/// [ADR 0016](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0016-attestation-trust-roots.md)).
+///
+/// This is the one implementation the other two entry points delegate to; they
+/// differ only in defaulting the strategy, the ledger, or both. Both parameters
+/// are explicit here rather than defaulted because a host that cares which
+/// evidence is signed certainly has an opinion about which evidence is packed.
+///
+/// **The ledger changes nothing about which frames are chosen or where they
+/// land** — it only fills in each [`AuditEntry::attestation`]. That separation
+/// is the point: acting on an attestation state is a host's policy call, and
+/// making it here would be an F9 violation, since refusing an unverifiable
+/// attestation is exactly the denial-of-service primitive F9 forbids. The
+/// strategy decides selection; the ledger only describes.
+///
+/// A frame the ledger has nothing to say about is
+/// [`AttestationState::NotChecked`], which is why the ledgerless entry points
+/// report that rather than claiming the frames were unsigned.
+pub fn compose_for_prompt_attested<'a, I, S>(
+    frames: I,
+    global_budget: u32,
+    strategy: &S,
+    attestations: &AttestationLedger,
 ) -> ComposedPrompt
 where
     I: IntoIterator<Item = (&'a str, &'a ContextFrame)>,
@@ -632,6 +707,7 @@ where
     let mut entries: Vec<AuditEntry> = dropped
         .into_iter()
         .map(|drop| AuditEntry {
+            attestation: attestations.state_for(&drop.dropped),
             frame: drop.dropped,
             disposition: FrameDisposition::Excluded {
                 reason: ExclusionReason::Duplicate { kept: drop.kept },
@@ -650,6 +726,7 @@ where
     let mut tokens_used: u32 = 0;
     for (provider_id, frame) in ranked {
         let id = frame.identity(&provider_id);
+        let attestation = attestations.state_for(&id);
         let cost = frame.expected_inline_token_cost();
         let remaining = global_budget.saturating_sub(tokens_used);
         if cost <= remaining {
@@ -662,6 +739,7 @@ where
             entries.push(AuditEntry {
                 frame: id,
                 disposition: FrameDisposition::Included { verification },
+                attestation,
             });
             included.push((provider_id, frame));
         } else {
@@ -670,6 +748,7 @@ where
                 disposition: FrameDisposition::Excluded {
                     reason: ExclusionReason::OverBudget { cost, remaining },
                 },
+                attestation,
             });
         }
     }

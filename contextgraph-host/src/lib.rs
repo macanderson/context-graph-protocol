@@ -36,6 +36,11 @@
 //! - [`Host`] — registers all three provider kinds behind one handle and
 //!   [`Host::query_all`] fans a query out concurrently, enforcing timeouts,
 //!   consent, and budget honesty (SPEC.md §4 and §7).
+//! - [`trust`] — the keys a host trusts for provenance attestation, and the
+//!   verifier that consumes them (SPEC.md §6.5). The operator is the trust
+//!   root: nothing is discovered and nothing is trusted on first use. An
+//!   attestation the host cannot check degrades its frame to *unattested* and
+//!   never removes it (F9).
 //! - [`verify`] — the *bytes* half of F5: re-reads the local source a `file`
 //!   provenance addresses and checks its declared digest against the actual
 //!   bytes (SPEC.md §6.2). A host API, not an automatic re-read of any provider
@@ -69,6 +74,7 @@ pub mod http;
 pub mod ingest;
 pub mod provider;
 pub mod stdio;
+pub mod trust;
 pub mod verify;
 pub mod wire;
 
@@ -79,7 +85,8 @@ pub use compose::ranking::{
 pub use compose::{
     AuditEntry, Citation, ComposedPrompt, CompositionAudit, DedupDrop, Deduped, ExclusionReason,
     FrameDisposition, VerificationState, budget_split, compose_context, compose_for_prompt,
-    compose_for_prompt_with, dedup_cross_provider, fold_to_edges, order_by, order_by_value,
+    compose_for_prompt_attested, compose_for_prompt_with, dedup_cross_provider, fold_to_edges,
+    order_by, order_by_value,
 };
 pub use consent::{ConsentDecision, ConsentRecord, ConsentStore};
 pub use error::HostError;
@@ -93,6 +100,10 @@ pub use ingest::{
 };
 pub use provider::{ContextProvider, capability_matches, frame_kind_name};
 pub use stdio::{RawStdioConnection, StdioProvider};
+pub use trust::{
+    AttestationLedger, AttestationState, AttestedQueryResult, FrameAttestation,
+    FrameAttestationOutcome, TrustStore, TrustedKey,
+};
 pub use verify::{DigestVerification, verify_file_provenance, verify_provenance_digest};
 pub use wire::{
     AttesterKey, Envelope, FrameAttestation, decode_line, encode_line, envelope_kind,

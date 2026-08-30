@@ -25,6 +25,9 @@ use crate::consent::{ConsentDecision, ConsentRecord, ConsentStore};
 use crate::error::HostError;
 use crate::provider::{ContextProvider, capability_matches};
 use crate::stdio::StdioProvider;
+use crate::trust::{
+    AttestationLedger, AttestedQueryResult, FrameAttestationOutcome, TrustStore, TrustedKey,
+};
 
 /// Default per-provider query budget — a slow or hung provider is cut off at
 /// this and reported as [`HostError::Timeout`], never allowed to stall the
@@ -36,6 +39,7 @@ const DEFAULT_PROVIDER_TIMEOUT: Duration = Duration::from_secs(30);
 pub struct Host {
     providers: Vec<Box<dyn ContextProvider>>,
     consent: ConsentStore,
+    trust: TrustStore,
     per_provider_timeout: Duration,
 }
 
@@ -51,6 +55,7 @@ impl Host {
         Self {
             providers: Vec::new(),
             consent: ConsentStore::new(),
+            trust: TrustStore::new(),
             per_provider_timeout: DEFAULT_PROVIDER_TIMEOUT,
         }
     }
@@ -116,6 +121,34 @@ impl Host {
     /// The consent store (read-only), e.g. to persist decisions.
     pub fn consent(&self) -> &ConsentStore {
         &self.consent
+    }
+
+    /// Trust `key` for `provider_id`'s provenance attestations
+    /// ([ADR 0016](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0016-attestation-trust-roots.md)).
+    ///
+    /// The operator is the trust root: there is no discovery and no
+    /// trust-on-first-use, so a key is here because a person put it here, from
+    /// the same material as the provider's own configuration. A host with a UI
+    /// shows [`TrustedKey::fingerprint`] beside the consent prompt, so "I
+    /// consent to this provider" and "I trust this key" are one decision.
+    ///
+    /// A host that calls this for nobody verifies nothing and loses nothing:
+    /// every signed frame reads as
+    /// [`NoTrustedKey`](crate::AttestationState::NoTrustedKey) and is still
+    /// served (`SPEC.md` F9).
+    pub fn trust_key(&mut self, provider_id: impl Into<String>, key: TrustedKey) {
+        self.trust.trust(provider_id, key);
+    }
+
+    /// The trust store (read-only), e.g. to persist it beside the consent
+    /// ledger or to render what an operator has trusted.
+    pub fn trust(&self) -> &TrustStore {
+        &self.trust
+    }
+
+    /// Replace the whole trust store — for a host restoring one it persisted.
+    pub fn set_trust_store(&mut self, trust: TrustStore) {
+        self.trust = trust;
     }
 
     /// The ids of every registered provider, in registration order.
@@ -262,6 +295,24 @@ impl Host {
         id: &str,
         query: &ContextQuery,
     ) -> Result<ContextQueryResult, HostError> {
+        Ok(self.query_provider_attested(id, query).await?.0.result)
+    }
+
+    /// [`query_provider`](Self::query_provider), plus what the host found when
+    /// it checked the provider's attestations against its
+    /// [`TrustStore`](crate::TrustStore) (`SPEC.md` §6.5,
+    /// [ADR 0016](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0016-attestation-trust-roots.md)).
+    ///
+    /// Returns the result exactly as the provider served it and one
+    /// [`FrameAttestationOutcome`] per frame in it — including the frames no
+    /// attestation covered. **No frame is ever withheld for failing the check**
+    /// (`SPEC.md` F9): the outcomes are a fact recorded beside the evidence, not
+    /// a filter over it.
+    pub async fn query_provider_attested(
+        &self,
+        id: &str,
+        query: &ContextQuery,
+    ) -> Result<(AttestedQueryResult, Vec<FrameAttestationOutcome>), HostError> {
         let provider = self
             .providers
             .iter()
@@ -284,13 +335,23 @@ impl Host {
             }
         }
 
-        match tokio::time::timeout(self.per_provider_timeout, provider.query(query)).await {
-            Ok(result) => result,
-            Err(_) => Err(HostError::Timeout {
-                id: id.to_string(),
-                timeout_ms: self.per_provider_timeout.as_millis() as u64,
-            }),
-        }
+        let attested =
+            match tokio::time::timeout(self.per_provider_timeout, provider.query_attested(query))
+                .await
+            {
+                Ok(result) => result?,
+                Err(_) => {
+                    return Err(HostError::Timeout {
+                        id: id.to_string(),
+                        timeout_ms: self.per_provider_timeout.as_millis() as u64,
+                    });
+                }
+            };
+
+        let outcomes = self
+            .trust
+            .check_result(id, &attested.result, &attested.attestations);
+        Ok((attested, outcomes))
     }
 
     /// Fan a query out to every capability-matching provider concurrently,
@@ -385,54 +446,51 @@ impl Host {
         match self.consent.evaluate(provider.id(), provider.info()) {
             ConsentDecision::Permitted => {}
             ConsentDecision::NeedsConsent => {
-                return ProviderOutcome {
-                    provider_id: id,
-                    result: ProviderResult::ConsentRequired(provider.info().data_flow.clone()),
-                };
+                return ProviderOutcome::unattested(
+                    id,
+                    ProviderResult::ConsentRequired(provider.info().data_flow.clone()),
+                );
             }
             ConsentDecision::NeedsReceipts(scopes) => {
-                return ProviderOutcome {
-                    provider_id: id,
-                    result: ProviderResult::ConsentScopeRequired {
+                return ProviderOutcome::unattested(
+                    id,
+                    ProviderResult::ConsentScopeRequired {
                         data_flow: provider.info().data_flow.clone(),
                         missing: scopes,
                     },
-                };
+                );
             }
         }
 
-        let result =
-            match tokio::time::timeout(self.per_provider_timeout, provider.query(query)).await {
-                Ok(Ok(result)) => result,
+        let attested =
+            match tokio::time::timeout(self.per_provider_timeout, provider.query_attested(query))
+                .await
+            {
+                Ok(Ok(attested)) => attested,
                 Ok(Err(error)) => {
-                    return ProviderOutcome {
-                        provider_id: id,
-                        result: ProviderResult::Failed(error),
-                    };
+                    return ProviderOutcome::unattested(id, ProviderResult::Failed(error));
                 }
                 Err(_) => {
                     let error = HostError::Timeout {
                         id: id.clone(),
                         timeout_ms: self.per_provider_timeout.as_millis() as u64,
                     };
-                    return ProviderOutcome {
-                        provider_id: id,
-                        result: ProviderResult::Failed(error),
-                    };
+                    return ProviderOutcome::unattested(id, ProviderResult::Failed(error));
                 }
             };
+        let result = attested.result;
 
         // Budget honesty, axis 1 (§7, B2): frames that sum above the query
         // budget are a lie about `token_cost`. Drop them, report loudly.
         if !result.respects_budget(query.max_tokens) {
-            return ProviderOutcome {
-                provider_id: id,
-                result: ProviderResult::BudgetLie {
+            return ProviderOutcome::unattested(
+                id,
+                ProviderResult::BudgetLie {
                     claimed_tokens: result.total_token_cost(),
                     max_tokens: query.max_tokens,
                     dropped_frames: result.frames.len(),
                 },
-            };
+            );
         }
 
         // Budget honesty, axis 2 (§7, B4): more frames than `max_frames` is an
@@ -440,18 +498,28 @@ impl Host {
         // title, a citation label, and rendering chrome. Symmetric to B2: drop
         // the whole leg, report it loudly, never silently truncate.
         if !result.respects_frame_limit(query.max_frames) {
-            return ProviderOutcome {
-                provider_id: id,
-                result: ProviderResult::FrameFlood {
+            return ProviderOutcome::unattested(
+                id,
+                ProviderResult::FrameFlood {
                     returned_frames: result.frames.len(),
                     max_frames: query.max_frames,
                 },
-            };
+            );
         }
+
+        // Attestation last, and only over frames that already survived every
+        // other gate. Signature verification is attacker-controlled work, so it
+        // runs on a set the `max_frames` audit above has already bounded — and
+        // it can only *annotate* that set. F9: whatever it finds, these frames
+        // are served.
+        let attestations = self
+            .trust
+            .check_result(&id, &result, &attested.attestations);
 
         ProviderOutcome {
             provider_id: id,
             result: ProviderResult::Frames(result),
+            attestations,
         }
     }
 
@@ -521,6 +589,32 @@ impl FanOut {
         crate::compose::compose_context(self.accepted_with_provider())
     }
 
+    /// Every accepted frame's attestation state, keyed by identity
+    /// (`SPEC.md` §6.5,
+    /// [ADR 0016](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0016-attestation-trust-roots.md)).
+    ///
+    /// A **total** account of the accepted frames: a frame the provider signed
+    /// nothing for is [`Unattested`](crate::AttestationState::Unattested), so a
+    /// missing entry never has to be guessed at. Frames from a leg that served
+    /// none — failed, timed out, consent-gated, budget-dropped — are absent
+    /// because there is nothing to say about frames the host does not hold.
+    pub fn attestation_ledger(&self) -> AttestationLedger {
+        self.outcomes
+            .iter()
+            .flat_map(|outcome| outcome.attestations.iter().cloned())
+            .collect()
+    }
+
+    /// Whether any accepted frame is attested by a key this host trusts. A host
+    /// rendering a "this evidence is signed" affordance asks this before
+    /// drawing the chrome.
+    pub fn any_attested(&self) -> bool {
+        self.outcomes
+            .iter()
+            .flat_map(|outcome| outcome.attestations.iter())
+            .any(|outcome| outcome.state.is_attested())
+    }
+
     /// Compose every accepted frame into a prompt-ready block via the reference
     /// composer (issue #15): the R3 evidence preamble, cross-provider-deduped and
     /// value-ordered fenced frames packed under `global_budget`, a citation map,
@@ -529,8 +623,43 @@ impl FanOut {
     /// [`Host::query_all_budgeted`](crate::Host::query_all_budgeted): the fan-out
     /// splits the budget across providers, and this packs the survivors under the
     /// same whole so `audit.tokens_used <= global_budget`.
+    ///
+    /// Each audit entry also carries this fan-out's
+    /// [`attestation_ledger`](Self::attestation_ledger) state, so a reader can
+    /// tell attested evidence from unattested. It changes nothing about which
+    /// frames are chosen or where they land: acting on the state is a host's
+    /// policy decision, and F9 forbids the composer from making it.
+    ///
+    /// Ranks by raw `score`
+    /// ([`ScoreDescending`](crate::compose::ranking::ScoreDescending)); a host
+    /// with its own cross-provider policy calls
+    /// [`compose_for_prompt_with`](Self::compose_for_prompt_with).
     pub fn compose_for_prompt(&self, global_budget: u32) -> crate::compose::ComposedPrompt {
-        crate::compose::compose_for_prompt(self.accepted_with_provider(), global_budget)
+        self.compose_for_prompt_with(global_budget, &crate::compose::ranking::ScoreDescending)
+    }
+
+    /// [`compose_for_prompt`](Self::compose_for_prompt) under an explicit
+    /// cross-provider ranking policy (`SPEC.md` §6.6, F10), still carrying this
+    /// fan-out's attestation ledger into the audit.
+    ///
+    /// The two are orthogonal by construction: the strategy decides which
+    /// frames are packed and in what order, and the ledger only describes what
+    /// was found about each one. Nothing here lets an attestation state move a
+    /// frame, which is what keeps F9 true no matter which policy a host picks.
+    pub fn compose_for_prompt_with<S>(
+        &self,
+        global_budget: u32,
+        strategy: &S,
+    ) -> crate::compose::ComposedPrompt
+    where
+        S: crate::compose::ranking::RankingStrategy + ?Sized,
+    {
+        crate::compose::compose_for_prompt_attested(
+            self.accepted_with_provider(),
+            global_budget,
+            strategy,
+            &self.attestation_ledger(),
+        )
     }
 
     /// Roll this fan-out up into a per-request [`UsageReport`] for metering
@@ -648,6 +777,27 @@ impl FanOut {
 pub struct ProviderOutcome {
     pub provider_id: String,
     pub result: ProviderResult,
+    /// What the host found when it checked this provider's attestations
+    /// against its [`TrustStore`](crate::TrustStore) — one entry per accepted
+    /// frame, including the frames no attestation covered (`SPEC.md` §6.5,
+    /// [ADR 0016](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0016-attestation-trust-roots.md)).
+    ///
+    /// Empty for a leg that served no frames — consent-gated, failed, timed
+    /// out, or dropped for a budget lie. Nothing here ever removes a frame
+    /// from `result` (`SPEC.md` F9).
+    pub attestations: Vec<FrameAttestationOutcome>,
+}
+
+impl ProviderOutcome {
+    /// An outcome from a leg that produced no frames to attest — every failure
+    /// mode, and every gate that ran before the frames arrived.
+    fn unattested(provider_id: String, result: ProviderResult) -> Self {
+        Self {
+            provider_id,
+            result,
+            attestations: Vec::new(),
+        }
+    }
 }
 
 /// What became of one provider's leg of a fan-out — a total function over
