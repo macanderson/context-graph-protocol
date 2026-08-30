@@ -154,5 +154,23 @@
       "signature": "2f8af919196862e7f946a0117d65522da36592344cf46ffe00ab8e6ec0a6b5cdb132800b71b5cd161609378d8ebd789a0adc971cdb8856cd195c9154fe2b2d04",
       "issued_at": "2026-08-27T00:00:00Z"
     }
+  },
+  "verifier_strictness": {
+    "$comment": "Not a wire vector — SPEC.md 6.5.4 says a verifier SHOULD reject small-order public keys and non-canonical encodings, and this is the set that rule names. The Rust reference gets it from ed25519_dalek::verify_strict. The three SDK ports each reject these explicitly, because Node's OpenSSL and Go's crypto/ed25519 both accept a small-order key. Every entry is a point P with 8P = identity; the Python suite recomputes that from its own field arithmetic rather than trusting the list.",
+    "small_order_public_keys_hex": [
+      "0000000000000000000000000000000000000000000000000000000000000000",
+      "0000000000000000000000000000000000000000000000000000000000000080",
+      "0100000000000000000000000000000000000000000000000000000000000000",
+      "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+      "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+      "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+      "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+      "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"
+    ],
+    "non_canonical_public_keys_hex": [
+      "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"
+    ],
+    "non_canonical_note": "y >= 2^255 - 19 once the sign bit is masked off. The first is p itself and the second is p + 1, which a verifier that reduces mod p would read as the small-order points y = 0 and y = 1."
   }
 }
