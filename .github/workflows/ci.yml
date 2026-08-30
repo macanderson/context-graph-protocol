@@ -277,8 +277,15 @@ jobs:
           node-version: "22"
       - name: TypeScript SDK typechecks
         working-directory: sdk/typescript
+        # `npm ci`, not the `npm install` the conformance jobs use: it resolves
+        # `package-lock.json` exactly, which pins the compiler at typescript
+        # 5.9.3 rather than whatever `^5.9.0` means this week. Same reason the
+        # job below pins mypy — a floating strict typechecker turns each of its
+        # releases into a possible red main on code nobody touched. The
+        # conformance jobs can float because they ask whether the SDK still
+        # behaves, not whether a particular compiler still accepts it.
         run: |
-          npm install
+          npm ci
           npx tsc --noEmit
 
   sdk-python-types:
