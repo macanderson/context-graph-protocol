@@ -72,10 +72,14 @@ pub mod stdio;
 pub mod verify;
 pub mod wire;
 
+pub use compose::ranking::{
+    PerProviderQuota, RankingStrategy, RoundRobinByRank, ScoreDescending, is_ranking_permutation,
+    rank_with,
+};
 pub use compose::{
     AuditEntry, Citation, ComposedPrompt, CompositionAudit, DedupDrop, Deduped, ExclusionReason,
     FrameDisposition, VerificationState, budget_split, compose_context, compose_for_prompt,
-    dedup_cross_provider, fold_to_edges, order_by_value,
+    compose_for_prompt_with, dedup_cross_provider, fold_to_edges, order_by, order_by_value,
 };
 pub use consent::{ConsentDecision, ConsentRecord, ConsentStore};
 pub use error::HostError;

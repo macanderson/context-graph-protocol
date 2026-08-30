@@ -27,9 +27,12 @@
 //! *composition module*'s job (issue #15); this function is the narrower
 //! **determinism contract** any composition — reference or not — can satisfy.
 
+pub mod ranking;
+
 use contextgraph_types::{ContextFrame, FrameId, Provenance};
 
 use crate::provider::frame_kind_name;
+use ranking::{RankingStrategy, ScoreDescending, rank_with};
 
 /// Render a set of `(provider id, frame)` pairs into a byte-stable context
 /// block (`docs/context-reuse.md` §1).
@@ -169,7 +172,10 @@ fn escape_attribute(value: &str) -> String {
 //                                highest-scored frames at the top/bottom edges,
 //                                per Lost in the Middle (Liu et al., TACL 2024,
 //                                arXiv:2307.03172; `docs/protocol-advantages.md`
-//                                §12).
+//                                §12). The *ranking* half of it is a host policy
+//                                choice (`SPEC.md` §6.6, F10) and lives behind
+//                                [`ranking::RankingStrategy`]; [`order_by`] is
+//                                the same placement under any of them.
 //   4. [`compose_for_prompt`]  — the entry point: preamble + fenced frames +
 //                                a citation map + a [`CompositionAudit`] that
 //                                explains every included and excluded frame.
@@ -365,21 +371,32 @@ fn merge_provenance(base: &[Provenance], extra: &[Provenance]) -> Vec<Provenance
 /// This function does it anyway, deliberately, as a documented default for a
 /// host that has no better ranking policy — some total order is required to
 /// place frames at all, and an arbitrary one would be worse. A host that *has* a
-/// ranking policy — a reranker it controls, per-provider quotas, an explicit
-/// trust weighting — should apply it and call [`fold_to_edges`] directly, which
-/// is the placement without the ranking.
+/// ranking policy has two ways to say so: pass a
+/// [`ranking::RankingStrategy`] to [`order_by`] or
+/// [`compose_for_prompt_with`] — [`ranking::RoundRobinByRank`] and
+/// [`ranking::PerProviderQuota`] ship here and need no configuration — or rank
+/// the frames itself and call [`fold_to_edges`], which is the placement without
+/// any ranking at all.
 ///
 /// What F10 forbids is not this ordering but *laundering* it: a host must never
 /// apply a cross-provider `score` threshold, nor present a raw `score` to a user
 /// as a cross-provider measure of relevance.
-pub fn order_by_value(mut frames: Vec<(String, ContextFrame)>) -> Vec<(String, ContextFrame)> {
-    // Rank best-first: score desc, then canonical FrameId asc as the tiebreak.
-    frames.sort_by(|(pa, fa), (pb, fb)| {
-        fb.score
-            .total_cmp(&fa.score)
-            .then_with(|| fa.identity(pa).cmp(&fb.identity(pb)))
-    });
-    fold_to_edges(frames)
+pub fn order_by_value(frames: Vec<(String, ContextFrame)>) -> Vec<(String, ContextFrame)> {
+    order_by(&ScoreDescending, frames)
+}
+
+/// Rank frames with a host's [`ranking::RankingStrategy`], then place the
+/// ranking at the attention-favored edges with [`fold_to_edges`] — the general
+/// form of [`order_by_value`], which is this with
+/// [`ranking::ScoreDescending`].
+///
+/// Placement and ranking are separable and stay separated: every strategy
+/// yields a best-first total order, and the fold is the same either way.
+pub fn order_by<S: RankingStrategy + ?Sized>(
+    strategy: &S,
+    frames: Vec<(String, ContextFrame)>,
+) -> Vec<(String, ContextFrame)> {
+    fold_to_edges(rank_with(strategy, frames))
 }
 
 /// Deal an already-ranked (best-first) sequence to alternating ends: best at the
@@ -565,7 +582,7 @@ pub const EVIDENCE_PREAMBLE: &str = concat!(
 ///    whose canonical token cost still fits `global_budget`; the rest are
 ///    excluded with [`ExclusionReason::OverBudget`]. This is what makes
 ///    `tokens_used <= global_budget` a guarantee rather than a hope.
-/// 3. **Place** ([`order_by_value`]) — order the included frames so the
+/// 3. **Place** ([`fold_to_edges`]) — deal the included frames so the
 ///    highest-value ones sit at the top/bottom edges (Lost in the Middle).
 /// 4. **Render** — the preamble, then each frame through [`render_frame`], so a
 ///    content-embedded `</frame>` still cannot break out of its fence.
@@ -573,10 +590,41 @@ pub const EVIDENCE_PREAMBLE: &str = concat!(
 /// The audit is a total partition of the input: every offered frame appears once,
 /// included-with-verification-state or excluded-with-reason.
 ///
+/// Ranking across providers by raw `score` is a **host policy choice**, not a
+/// protocol guarantee (`SPEC.md` §6.6, F10) — see [`order_by_value`]. Use
+/// [`compose_for_prompt_with`] to pick a different one.
+///
 /// [R3]: https://github.com/macanderson/context-graph-protocol/blob/main/SPEC.md
 pub fn compose_for_prompt<'a, I>(frames: I, global_budget: u32) -> ComposedPrompt
 where
     I: IntoIterator<Item = (&'a str, &'a ContextFrame)>,
+{
+    compose_for_prompt_with(frames, global_budget, &ScoreDescending)
+}
+
+/// [`compose_for_prompt`] under an explicit cross-provider ranking policy
+/// (`SPEC.md` §6.6, F10).
+///
+/// The strategy orders the de-duplicated survivors, and that order is what the
+/// budget packer walks — so it decides *which* frames reach the prompt, not
+/// only where they sit in it. That is the half that matters: under a tight
+/// budget, ranking the union by raw `score` can spend the whole budget on the
+/// provider whose retriever reports the largest numbers and cite nothing from
+/// anyone else. [`ranking::RoundRobinByRank`] and
+/// [`ranking::PerProviderQuota`] are two policies that do not, and neither
+/// needs configuring.
+///
+/// A strategy cannot break the budget bound or the audit: it ranks, and the
+/// packer still includes a frame only while its canonical token cost fits,
+/// excluding the rest with a recorded reason.
+pub fn compose_for_prompt_with<'a, I, S>(
+    frames: I,
+    global_budget: u32,
+    strategy: &S,
+) -> ComposedPrompt
+where
+    I: IntoIterator<Item = (&'a str, &'a ContextFrame)>,
+    S: RankingStrategy + ?Sized,
 {
     // 1. Cross-provider dedup. `dropped` are the first excluded-with-reason
     //    entries; `kept` is the survivor set the rest of the pipeline packs.
@@ -591,16 +639,12 @@ where
         })
         .collect();
 
-    // 2. Budget-pack the survivors, highest value first. Packing by the
-    //    *canonical* cost (not the provider-declared `token_cost`) is what makes
-    //    the bound un-gameable: an under-declared frame still cannot sneak past
-    //    the budget.
-    let mut ranked = kept;
-    ranked.sort_by(|(pa, fa), (pb, fb)| {
-        fb.score
-            .total_cmp(&fa.score)
-            .then_with(|| fa.identity(pa).cmp(&fb.identity(pb)))
-    });
+    // 2. Budget-pack the survivors in the host's ranking order — which is what
+    //    makes the ranking policy consequential rather than cosmetic. Packing by
+    //    the *canonical* cost (not the provider-declared `token_cost`) is what
+    //    makes the bound un-gameable: an under-declared frame still cannot sneak
+    //    past the budget.
+    let ranked = rank_with(strategy, kept);
 
     let mut included: Vec<(String, ContextFrame)> = Vec::new();
     let mut tokens_used: u32 = 0;
@@ -630,8 +674,10 @@ where
         }
     }
 
-    // 3. Place the included frames by value (Lost in the Middle).
-    let placed = order_by_value(included);
+    // 3. Place the included frames (Lost in the Middle). They are already in
+    //    the strategy's best-first order, so this is the fold alone — re-ranking
+    //    here would silently override the policy the caller chose.
+    let placed = fold_to_edges(included);
 
     // 4. Render: preamble, then each frame through the escaped fence, and build
     //    the citation map alongside in the same render order.

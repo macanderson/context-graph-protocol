@@ -101,6 +101,35 @@ does **not** promise the stricter score-independence of
 [`compose_context`][compose_context] — placing by value is exactly the choice to
 let score matter — which is why the two are separate functions.
 
+#### Ranking across providers is a policy, and it is swappable
+
+`score` is provider-local and ordinal ([SPEC.md §6.6, F10](../SPEC.md)), so
+ranking a mixed set by raw `score` favours whichever provider scores most
+generously. Under a tight budget that is not a cosmetic preference: the frames
+a generous provider ranks above a conservative one are the frames that fit, and
+the conservative provider is cited nowhere.
+
+[`compose::ranking::RankingStrategy`][ranking] is where a host's answer to that
+lives, and the strategy's order is what the budget packer walks —
+[`compose_for_prompt_with`][compose_for_prompt] takes one. Three ship:
+
+| Strategy | Order | Cross-provider score comparison |
+|---|---|---|
+| `ScoreDescending` (default) | raw `score` descending over the union | yes — the documented default |
+| `RoundRobinByRank` | every provider's best, then every provider's second | none |
+| `PerProviderQuota::new(k)` | each provider's top `k`, then each provider's next `k` | none |
+
+All three break the final tie on the canonical `FrameId`, and the two
+interleaving strategies ordinalize providers through a `BTreeMap`, so a
+ranking is a pure function of the frame set. With a single provider all three
+produce the same order — the cross-provider question does not arise, and none
+of them invents one.
+
+A strategy ranks; it never filters. Dropping a frame is the budget packer's
+decision because only the packer records an [`ExclusionReason`][audit] for the
+audit. [ADR 0015](./adr/0015-cross-provider-ranking-strategies.md) has the full
+argument, including why `ScoreDescending` stays the default.
+
 ### 4. Injection-resistant rendering
 
 Each surviving frame is rendered through the *same* [`render_frame`] the
@@ -213,6 +242,7 @@ catches the misbehaving input and accepts the well-behaved counterpart.
 [compose_for_prompt]: ../contextgraph-host/src/compose.rs
 [dedup_cross_provider]: ../contextgraph-host/src/compose.rs
 [order_by_value]: ../contextgraph-host/src/compose.rs
+[ranking]: ../contextgraph-host/src/compose/ranking.rs
 [budget_split]: ../contextgraph-host/src/compose.rs
 [query_all]: ../contextgraph-host/src/host.rs
 [query_all_budgeted]: ../contextgraph-host/src/host.rs
