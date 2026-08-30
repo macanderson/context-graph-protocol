@@ -1,0 +1,11 @@
+{
+  "algorithm": "ed25519",
+  "key_id": "cep-signing-key-2026-07",
+  "note": "PUBLISHED TEST KEY — it is committed to a public repository, so anything it signs is forgeable by anyone. It exists so record-attestation.json is a vector an implementation in any language can reproduce and refute, not a shape example. Never use it for anything real.",
+  "public_key": "495b4a0a4a16c5444d8626a7ae0bc6eca613676b51fb947238cb8238baa9fde5",
+  "signed_message_hex": "636f6e7465787467726170682f6174746573742f312f7265636f7264b45eebfdfe7e6e5056bf25d84864cf9acd731eef120a1f6de129fb788c3b34dc",
+  "signed_message_note": "RECORD_ATTESTATION_DOMAIN (\"contextgraph/attest/1/record\") followed by the 32 raw bytes of the signed record_hash. Ed25519 signs these bytes; it never signs the bare digest, so a signature from another layer cannot be presented as a record attestation.",
+  "signing_key_seed": "636f6e7465787467726170682d6c6966656379636c652d746573742d6b657921",
+  "signing_key_seed_note": "The 32 bytes of the ASCII string \"contextgraph-lifecycle-test-key!\", so the seed is legible as a test key rather than as entropy.",
+  "signs": "observation.json"
+}

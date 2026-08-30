@@ -19,6 +19,7 @@ pub mod frame;
 pub mod identity;
 pub mod query;
 pub mod record;
+pub mod record_attest;
 pub mod scope;
 pub mod token;
 pub mod usage;
@@ -53,6 +54,17 @@ pub use record::{
     KnowledgeKind, LIFECYCLE_SCHEMA_VERSION, OriginClass, RecordAttestation, RecordBody,
     RecordLink, RecordProvenance, RecordScope, RecordStatus, RequirementResult, SharingScope,
     ValidationOutcome,
+};
+pub use record_attest::{
+    RECORD_ATTESTATION_DOMAIN, RECORD_HASH_MEMBER, RecordHashError, record_attestation_message,
+};
+#[cfg(feature = "record-hash")]
+pub use record_attest::{
+    record_hash, record_hash_is_current, record_hash_of, record_hash_preimage,
+};
+#[cfg(feature = "record-attestation")]
+pub use record_attest::{
+    sign_record, sign_record_attestation, verify_record_attestation, verify_signed_record_hash,
 };
 pub use scope::EgressScope;
 pub use token::{

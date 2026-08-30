@@ -25,6 +25,24 @@ that means for this crate's semver).
   a provider can do, and what it does with your data (`reads` / `writes` /
   `egress`).
 
+## Optional features
+
+All off by default, so the zero-dependency promise above holds for anyone who
+opts into nothing. Every wire *type* compiles regardless — a host must be able
+to parse, relay, and store an attestation it was not built to check — and these
+features add only the hashing and the signature checking.
+
+| Feature | Adds | For |
+|---|---|---|
+| `attestation` | `sha2`, `ed25519-dalek` | Frame provenance attestation: the provenance hash chain, frame commitments, RFC 6962 Merkle roots and inclusion proofs (`SPEC.md` §6.5). |
+| `record-hash` | `sha2`, `serde_json`, `serde_json_canonicalizer` | The lifecycle profile's `record_hash`: RFC 8785 (JCS) content addressing for a `ContextRecord`. |
+| `record-attestation` | `record-hash` + `attestation` | Detached Ed25519 signatures over a `record_hash`. |
+
+The split is not cosmetic. A frame's attestation preimage is a length-prefixed
+encoding of typed fields and needs no JSON canonicalizer; a record is an
+open-ended JSON document and genuinely does. Neither layer's consumer pays for
+the other's dependencies.
+
 ## Example
 
 ```rust

@@ -26,6 +26,7 @@ The four example surfaces are deliberately different in kind:
   * the served `$id` copy is the schema's public identity — checked because a
     stale schema that still resolves is worse than one that 404s.
 """
+import hashlib
 import json
 import re
 import sys
@@ -255,10 +256,20 @@ print("\nValidating lifecycle records against "
 RECORD_SCHEMA_SOURCE = ROOT / "schema" / "contextgraph-lifecycle-record.schema.json"
 RECORD_SCHEMA = json.loads(RECORD_SCHEMA_SOURCE.read_text())
 ATTESTATION_FIXTURE = "record-attestation.json"
+ATTESTATION_KEY_FIXTURE = "record-attestation-key.json"
+HASH_VECTORS_FIXTURE = "record-hash-vectors.json"
+# Everything else in tests/fixtures/ is a record named for its record_kind. An
+# explicit list rather than a naming convention, so a new non-record fixture is
+# a deliberate entry here instead of something a glob quietly swallows.
+NON_RECORD_FIXTURES = {
+    ATTESTATION_FIXTURE,
+    ATTESTATION_KEY_FIXTURE,
+    HASH_VECTORS_FIXTURE,
+}
 
 fixtures_dir = ROOT / "tests" / "fixtures"
 record_fixtures = sorted(
-    p for p in fixtures_dir.glob("*.json") if p.name != ATTESTATION_FIXTURE
+    p for p in fixtures_dir.glob("*.json") if p.name not in NON_RECORD_FIXTURES
 )
 if not record_fixtures:
     check("tests/fixtures holds lifecycle record examples", False)
@@ -291,6 +302,61 @@ except (json.JSONDecodeError, jsonschema.ValidationError) as e:
 
 record_expected_id = f"https://raw.githubusercontent.com/macanderson/context-graph-protocol/main/schema/{RECORD_SCHEMA_SOURCE.name}"
 check(f"$id is {record_expected_id}", RECORD_SCHEMA.get("$id") == record_expected_id)
+
+# 7. The record_hash golden vectors (profile LF1), checked from a second
+#    language.
+#
+#    The Rust suite recomputes these with the same canonicalizer the library
+#    ships, which proves the library and the fixtures agree and nothing more. A
+#    vector exists for the implementer who has *neither*, so the two properties
+#    that make it usable are checked here, in Python, with no JCS library and no
+#    Rust:
+#
+#      * the published canonical text hashes to the published record_hash, so an
+#        implementer who reproduces the bytes knows the digest follows; and
+#      * that text parses back to the fixture with its record_hash member
+#        removed, so the bytes really describe the record beside them and the
+#        omit-self rule is visible in the artifact rather than only in prose.
+#
+#    Neither check claims Python canonicalizes JSON the way RFC 8785 does. It
+#    does not, and a check that pretended otherwise would be the kind of
+#    agreeable coincidence this repository treats as worse than no evidence.
+print("\nValidating the record_hash golden vectors (profile LF1)\n")
+
+vectors_path = fixtures_dir / HASH_VECTORS_FIXTURE
+vectors = json.loads(vectors_path.read_text())["vectors"]
+check(
+    f"tests/fixtures/{HASH_VECTORS_FIXTURE} covers every record fixture",
+    {v["record_file"] for v in vectors} == {p.name for p in record_fixtures},
+)
+
+for vector in vectors:
+    name = vector["record_file"]
+    digest = "sha256:" + hashlib.sha256(vector["jcs_utf8"].encode("utf-8")).hexdigest()
+    check(f"{name}: the canonical bytes hash to the published record_hash",
+          digest == vector["record_hash"])
+
+    record = json.loads((fixtures_dir / name).read_text())
+    check(f"{name}: the published record_hash is the one the fixture stores",
+          record.get("record_hash") == vector["record_hash"])
+
+    hashless = {k: v for k, v in record.items() if k != "record_hash"}
+    check(f"{name}: the canonical bytes denote the record minus its own hash",
+          json.loads(vector["jcs_utf8"]) == hashless)
+
+# The attestation's signed message: the domain tag, then the digest's raw bytes.
+# Pure string arithmetic, so it is checkable without a crypto library.
+key_fixture = json.loads((fixtures_dir / ATTESTATION_KEY_FIXTURE).read_text())
+attestation = json.loads((fixtures_dir / ATTESTATION_FIXTURE).read_text())
+expected_message = (
+    b"contextgraph/attest/1/record".hex()
+    + attestation["signed_record_hash"].removeprefix("sha256:")
+)
+check(f"{ATTESTATION_KEY_FIXTURE}: signed_message_hex is the domain tag then the digest",
+      key_fixture["signed_message_hex"] == expected_message)
+check(f"{ATTESTATION_KEY_FIXTURE}: the key signs the record it names",
+      attestation["signed_record_hash"]
+      == json.loads((fixtures_dir / key_fixture["signs"]).read_text())["record_hash"])
 
 print(f"\n{'OK — all examples validate' if failures == 0 else f'{failures} failure(s)'}")
 sys.exit(1 if failures else 0)

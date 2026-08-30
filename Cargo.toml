@@ -34,6 +34,10 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 futures-util = "0.3"
 sha2 = "0.10"
 ed25519-dalek = "2"
-clap = { version = "4", features = ["derive", "env"] }
+# RFC 8785 (JCS) canonicalization, used by the record layer's `record_hash` and
+# by the conformance suite's golden vectors. One pin here so the library and the
+# suite that checks it can never canonicalize with two different versions.
+serde_json_canonicalizer = "0.3.2"
+clap ={ version = "4", features = ["derive", "env"] }
 colored = "3"
 libc = "0.2"

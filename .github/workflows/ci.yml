@@ -50,6 +50,31 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
 
+  features:
+    name: contextgraph-types feature matrix
+    runs-on: ubuntu-latest
+    # `test` above builds with default features, and every feature this crate
+    # has is off by default — so until this job existed, the attestation and
+    # record-hashing code, and the vectors that pin their wire format, compiled
+    # nowhere in CI. A cryptographic surface no job builds is a surface nothing
+    # defends.
+    #
+    # Each combination is built on its own rather than only `--all-features`:
+    # the point of the split is that a consumer of one layer does not drag in
+    # the other's dependencies, and only a build with exactly one feature on can
+    # catch a `cfg` that silently relies on the other being enabled too.
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy -p contextgraph-types --all-features --all-targets -- -D warnings
+      - run: cargo test -p contextgraph-types --all-features
+      - run: cargo test -p contextgraph-types --features attestation
+      - run: cargo test -p contextgraph-types --features record-hash
+      - run: cargo test -p contextgraph-types --features record-attestation
+
   msrv:
     name: msrv (rust-version from Cargo.toml)
     runs-on: ubuntu-latest

@@ -20,6 +20,49 @@ text lands without a human merge.
 ## [Unreleased]
 
 ### Added
+- **Record content addressing and record attestation, implemented (lifecycle
+  profile `LH1`/`LC3`;
+  [ADR 0012](./docs/adr/0012-record-hash-and-record-attestation.md)).** The
+  profile has always defined `record_hash` as `sha256:<hex>` over the RFC 8785
+  (JCS) canonicalization of a record with its own `record_hash` removed, and
+  `RecordAttestation` as a detached Ed25519 signature over it. Both were prose
+  and a struct: the only hashing code in the workspace was a private helper
+  inside the conformance suite, so the suite proved the fixtures agreed with the
+  suite. `contextgraph_types::record_attest` makes the rule callable —
+  `record_hash`, `record_hash_preimage` (the exact canonical bytes, because a
+  digest cannot say *where* two implementations diverged), `record_hash_of` for
+  a typed record, and signing and verification for the attestation.
+  Verification recomputes the record's hash rather than reading the stored
+  member, so editing a record and then rewriting its `record_hash` to match is
+  caught as a mismatch instead of passing.
+- **`contextgraph-types` gains `record-hash` and `record-attestation`
+  features.** `record-hash` adds `serde_json` and `serde_json_canonicalizer`
+  (RFC 8785, delegated rather than hand-rolled — JCS number serialization is
+  ECMAScript `Number::toString`, and its exponent thresholds are exactly where
+  reimplementations diverge in silence). `record-attestation` adds Ed25519 on
+  top. Both off by default, so a frame-only consumer never pays for a JSON
+  canonicalizer and the crate's zero-dependency promise is untouched.
+- **The record attestation signs a domain-separated message.** A frame
+  commitment is domain-bound by construction; a `record_hash` is a plain
+  SHA-256 over a JSON document that any number of unrelated systems also
+  compute. The signed bytes are therefore `"contextgraph/attest/1/record"`
+  followed by the digest's 32 raw bytes, so a signature from another layer
+  cannot be presented as a record attestation. Additive to `LC3`, which named
+  no preimage because nothing had implemented signing.
+- **Golden vectors that can be reproduced and refuted (`LF1`).**
+  `tests/fixtures/record-hash-vectors.json` publishes the exact JCS preimage
+  text of every record fixture beside its hash;
+  `tests/fixtures/record-attestation.json` carries a real Ed25519 signature in
+  place of the 49 bytes of DER-shaped filler it used to carry; and
+  `tests/fixtures/record-attestation-key.json` publishes the test key that
+  signs it. `contextgraph-types/tests/record_vectors.rs` carries the same
+  values inline so they travel inside the published crate. The record hashes
+  themselves are unchanged — the library reproduces the rule the fixtures
+  already followed.
+- **RFC 8785 conformance is checked against the RFC's own vectors.** §3.2.4's
+  hexadecimal byte listing, §3.2.3's property-sorting data, and Appendix B's
+  table of IEEE 754 bit patterns and their required ECMAScript text, including
+  the `-0` case and the `1e+21` / `0.000001` exponent thresholds.
 - **Provenance attestation (`SPEC.md` §6.5, F6–F9;
   [ADR 0010](./docs/adr/0010-provenance-attestation.md)).** A digest is
   tamper-evident only to someone who already trusts whoever recorded it; the

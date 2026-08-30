@@ -1,0 +1,66 @@
+{
+  "note": "Golden RFC 8785 (JCS) preimages and record_hash values for the lifecycle-profile record fixtures beside this file. Recomputed by contextgraph-conformance's lifecycle_profile_examples suite; regenerate with REGENERATE_LIFECYCLE_HASHES=1.",
+  "rule": "record_hash = \"sha256:\" + hex(sha256(JCS(record with its top-level record_hash member removed)))",
+  "vectors": [
+    {
+      "jcs_utf8": "{\"contract_name\":\"api-handler-acceptance\",\"lineage_id\":\"lin_contract_0001\",\"observed_at\":\"2026-07-29T14:00:00Z\",\"origin\":\"declared\",\"provenance\":{\"origin_provider_id\":\"provider_example\",\"producer_kind\":\"human\",\"producer_ref\":\"user_mac\"},\"record_id\":\"rec_contract_0001\",\"record_kind\":\"artifact_contract\",\"record_status\":\"active\",\"requirements\":[{\"description\":\"src/api/handler.rs is present\",\"requirement_kind\":\"file_exists\"},{\"description\":\"cargo test -p api passes\",\"execution_approval_ref\":\"approval_ci_2026_07\",\"requirement_kind\":\"command\"}],\"schema_version\":\"contextgraph/lifecycle/1.0-draft\",\"scope\":{\"environment_id\":\"env_ci\",\"repository_id\":\"repo_stella\"},\"sharing_scope\":\"repository\"}",
+      "record_file": "artifact_contract.json",
+      "record_hash": "sha256:4d6690fdd5347dfa14b8b5f3875b2487d09e18d70d4aa9401a4a1f5f3b527d40"
+    },
+    {
+      "jcs_utf8": "{\"cited\":false,\"lineage_id\":\"lin_use_0001\",\"observed_at\":\"2026-07-29T14:00:00Z\",\"origin\":\"observed\",\"provenance\":{\"origin_provider_id\":\"provider_example\",\"producer_kind\":\"system\",\"producer_ref\":\"host://composer\"},\"record_id\":\"rec_use_0001\",\"record_kind\":\"context_use\",\"record_status\":\"active\",\"rendered\":true,\"schema_version\":\"contextgraph/lifecycle/1.0-draft\",\"scope\":{\"repository_id\":\"repo_stella\",\"session_id\":\"sess_412\",\"task_id\":\"task_deploy_fix\"},\"selected\":true,\"sharing_scope\":\"repository\",\"task_ref\":\"task_deploy_fix\",\"used_record_ref\":\"rec_know_0001\"}",
+      "record_file": "context_use.json",
+      "record_hash": "sha256:183ea4a10a56ca024166f81403cd5a84a0ba9a356d7c81f21108bc4e735c5784"
+    },
+    {
+      "jcs_utf8": "{\"confidence\":0.4,\"context_use_ref\":\"rec_use_0001\",\"extensions\":{\"acme:review_channel\":\"slack:#context-review\"},\"feedback\":\"the fact was selected and rendered but never cited in the final answer\",\"lineage_id\":\"lin_fb_0001\",\"observed_at\":\"2026-07-29T14:00:00Z\",\"origin\":\"declared\",\"provenance\":{\"origin_provider_id\":\"provider_example\",\"producer_kind\":\"human\",\"producer_ref\":\"user_mac\"},\"rating\":0.2,\"record_id\":\"rec_fb_0001\",\"record_kind\":\"context_use_feedback\",\"record_status\":\"active\",\"schema_version\":\"contextgraph/lifecycle/1.0-draft\",\"scope\":{\"repository_id\":\"repo_stella\",\"task_id\":\"task_deploy_fix\"},\"sharing_scope\":\"repository\"}",
+      "record_file": "context_use_feedback.json",
+      "record_hash": "sha256:96681a4b5b2712ed37c4c72362b008ca6b16535602a72d20fb9045ffde94e915"
+    },
+    {
+      "jcs_utf8": "{\"contract_ref\":\"rec_contract_0001\",\"evidence_links\":[\"rec_evid_0001\"],\"lineage_id\":\"lin_cval_0001\",\"observed_at\":\"2026-07-29T14:00:00Z\",\"origin\":\"observed\",\"outcome\":\"pass\",\"provenance\":{\"origin_provider_id\":\"provider_example\",\"producer_kind\":\"system\",\"producer_ref\":\"ci://runner-7\"},\"record_id\":\"rec_cval_0001\",\"record_kind\":\"contract_validation\",\"record_links\":[{\"rel\":\"validates\",\"target_record_id\":\"rec_contract_0001\"}],\"record_status\":\"active\",\"requirement_results\":[{\"outcome\":\"pass\",\"requirement_kind\":\"file_exists\"},{\"detail\":\"42 tests, 0 failures\",\"outcome\":\"pass\",\"requirement_kind\":\"command\"}],\"schema_version\":\"contextgraph/lifecycle/1.0-draft\",\"scope\":{\"environment_id\":\"env_ci\",\"repository_id\":\"repo_stella\"},\"sharing_scope\":\"repository\"}",
+      "record_file": "contract_validation.json",
+      "record_hash": "sha256:862f66a847ba716c410b11792a98ec483929776cab3c98d071b4a89f8be45312"
+    },
+    {
+      "jcs_utf8": "{\"constraint_effect\":\"forbid\",\"directive_kind\":\"constraint\",\"enforcement\":\"blocking\",\"lineage_id\":\"lin_dir_0001\",\"observed_at\":\"2026-07-29T14:00:00Z\",\"origin\":\"declared\",\"provenance\":{\"origin_provider_id\":\"provider_example\",\"producer_kind\":\"human\",\"producer_ref\":\"user_security_lead\"},\"record_id\":\"rec_dir_0001\",\"record_kind\":\"directive\",\"record_status\":\"active\",\"schema_version\":\"contextgraph/lifecycle/1.0-draft\",\"scope\":{\"organization_id\":\"org_acme\"},\"sensitivity\":\"confidential\",\"sharing_scope\":\"organization\",\"statement\":\"never write credentials or tokens to logs or traces\"}",
+      "record_file": "directive.json",
+      "record_hash": "sha256:0267fa312456074983b526da12682a4b5685f65750081296b42d89399120f4b3"
+    },
+    {
+      "jcs_utf8": "{\"evidence_kind\":\"log\",\"lineage_id\":\"lin_evid_0001\",\"observed_at\":\"2026-07-29T14:00:00Z\",\"origin\":\"observed\",\"provenance\":{\"origin_provider_id\":\"provider_example\",\"producer_kind\":\"tool\",\"producer_ref\":\"tool://log-reader\"},\"record_id\":\"rec_evid_0001\",\"record_kind\":\"evidence\",\"record_status\":\"active\",\"schema_version\":\"contextgraph/lifecycle/1.0-draft\",\"scope\":{\"repository_id\":\"repo_stella\",\"session_id\":\"sess_412\"},\"sharing_scope\":\"repository\",\"statement\":\"log line 2026-07-29T12:04:11Z shows upstream timeout after 3 retries\"}",
+      "record_file": "evidence.json",
+      "record_hash": "sha256:57fcddcd66f85b42a6154d8a3e3e43bdf2e0b12605f3fdb81f7b8b9acd295bdf"
+    },
+    {
+      "jcs_utf8": "{\"confidence\":0.95,\"knowledge_kind\":\"fact\",\"lineage_id\":\"lin_know_0001\",\"observed_at\":\"2026-07-29T14:00:00Z\",\"origin\":\"declared\",\"provenance\":{\"origin_provider_id\":\"provider_example\",\"producer_kind\":\"human\",\"producer_ref\":\"user_mac\"},\"record_id\":\"rec_know_0001\",\"record_kind\":\"knowledge\",\"record_status\":\"active\",\"schema_version\":\"contextgraph/lifecycle/1.0-draft\",\"scope\":{\"organization_id\":\"org_acme\",\"repository_id\":\"repo_stella\"},\"sharing_scope\":\"organization\",\"statement\":\"the retry ceiling for the deploy pipeline is five attempts\"}",
+      "record_file": "knowledge.json",
+      "record_hash": "sha256:2d3a4530de7392338a66f321e798e65398c1b51955f622ceceaac24c709212c2"
+    },
+    {
+      "jcs_utf8": "{\"confidence\":0.7,\"lineage_id\":\"lin_mem_0001\",\"observed_at\":\"2026-07-29T14:00:00Z\",\"origin\":\"observed\",\"provenance\":{\"origin_provider_id\":\"provider_example\",\"producer_kind\":\"agent\",\"producer_ref\":\"agent://coder\"},\"record_id\":\"rec_mem_0001\",\"record_kind\":\"memory\",\"record_status\":\"active\",\"salience\":0.7,\"schema_version\":\"contextgraph/lifecycle/1.0-draft\",\"scope\":{\"user_id\":\"user_mac\",\"workspace_id\":\"ws_main\"},\"sharing_scope\":\"user\",\"statement\":\"the user prefers terse, review-ready diffs over verbose explanations\"}",
+      "record_file": "memory.json",
+      "record_hash": "sha256:5870e397da8c76a8273b76b136a67b6b8ddff5c9aaaa13dc5b85800a98bbd161"
+    },
+    {
+      "jcs_utf8": "{\"confidence\":0.82,\"lineage_id\":\"lin_obs_0001\",\"observed_at\":\"2026-07-29T14:00:00Z\",\"origin\":\"observed\",\"provenance\":{\"origin_authority_id\":\"authority_acme\",\"origin_provider_id\":\"provider_example\",\"producer_kind\":\"agent\",\"producer_ref\":\"agent://trace-miner\"},\"record_id\":\"rec_obs_0001\",\"record_kind\":\"observation\",\"record_status\":\"active\",\"schema_version\":\"contextgraph/lifecycle/1.0-draft\",\"scope\":{\"repository_id\":\"repo_stella\",\"session_id\":\"sess_412\",\"workspace_id\":\"ws_main\"},\"sensitivity\":\"internal\",\"sharing_scope\":\"repository\",\"statement\":\"the api handler retries three times before surfacing a 502\",\"subject_ref\":\"trace_run_991\"}",
+      "record_file": "observation.json",
+      "record_hash": "sha256:b45eebfdfe7e6e5056bf25d84864cf9acd731eef120a1f6de129fb788c3b34dc"
+    },
+    {
+      "jcs_utf8": "{\"assessment\":\"the retry ceiling change resolved the intermittent 502s\",\"confidence\":0.75,\"lineage_id\":\"lin_out_0001\",\"observed_at\":\"2026-07-29T14:00:00Z\",\"origin\":\"derived\",\"provenance\":{\"derivation_kind\":\"inference\",\"origin_provider_id\":\"provider_example\",\"producer_kind\":\"agent\",\"producer_ref\":\"agent://judge\",\"source_refs\":[\"rec_cval_0001\"]},\"rating\":0.8,\"record_id\":\"rec_out_0001\",\"record_kind\":\"outcome_assessment\",\"record_status\":\"active\",\"schema_version\":\"contextgraph/lifecycle/1.0-draft\",\"scope\":{\"repository_id\":\"repo_stella\",\"task_id\":\"task_deploy_fix\"},\"sharing_scope\":\"workspace\",\"subject_ref\":\"task_deploy_fix\"}",
+      "record_file": "outcome_assessment.json",
+      "record_hash": "sha256:4f66d632c3b820e6d4f467650eae08ebe9ec56b7eec67d128c82b2fda51eb02e"
+    },
+    {
+      "jcs_utf8": "{\"from_status\":\"proposed\",\"lineage_id\":\"lin_promo_0001\",\"observed_at\":\"2026-07-29T14:00:00Z\",\"origin\":\"declared\",\"provenance\":{\"origin_provider_id\":\"provider_example\",\"producer_kind\":\"human\",\"producer_ref\":\"user_security_lead\"},\"record_id\":\"rec_promo_0001\",\"record_kind\":\"promotion_event\",\"record_links\":[{\"rel\":\"promotes\",\"target_record_id\":\"rec_dir_0001\"}],\"record_status\":\"active\",\"schema_version\":\"contextgraph/lifecycle/1.0-draft\",\"scope\":{\"organization_id\":\"org_acme\",\"repository_id\":\"repo_stella\"},\"sharing_scope\":\"organization\",\"subject_ref\":\"rec_dir_0001\",\"to_status\":\"active\"}",
+      "record_file": "promotion_event.json",
+      "record_hash": "sha256:81e644153f47d2c7d4b268118bef27f119e47265e2fd0a1cdba849450d84b90c"
+    },
+    {
+      "jcs_utf8": "{\"confidence\":0.6,\"evidence_links\":[\"rec_obs_0001\"],\"lineage_id\":\"lin_prop_0001\",\"observed_at\":\"2026-07-29T14:00:00Z\",\"origin\":\"derived\",\"proposed_kind\":\"directive\",\"provenance\":{\"derivation_kind\":\"inference\",\"origin_provider_id\":\"provider_example\",\"producer_kind\":\"agent\",\"producer_ref\":\"agent://promoter\",\"source_refs\":[\"rec_obs_0001\"]},\"rationale\":\"the same retry-then-502 observation recurred across three sessions\",\"record_id\":\"rec_prop_0001\",\"record_kind\":\"record_proposal\",\"record_links\":[{\"rel\":\"refines\",\"target_record_id\":\"rec_dir_0001\"}],\"record_status\":\"active\",\"schema_version\":\"contextgraph/lifecycle/1.0-draft\",\"scope\":{\"repository_id\":\"repo_stella\",\"workspace_id\":\"ws_main\"},\"sharing_scope\":\"repository\"}",
+      "record_file": "record_proposal.json",
+      "record_hash": "sha256:d14da312af7734f26b51f7e0ea44310c6bca92a0997b9106198ffe597e4351d2"
+    }
+  ]
+}

@@ -176,24 +176,85 @@ pub struct RecordLink {
     pub target_record_id: String,
 }
 
-/// A detached attestation over a record's `record_hash` (reconciliation row C5,
-/// shared with issue #12). It is **never** part of the record or its hash
-/// preimage — it travels as ledger metadata beside the record, so re-signing or
-/// key rotation never perturbs the content-addressed identity.
+/// A detached attestation over a record's `record_hash` (profile LC3,
+/// reconciliation row C5, shared with issue #12). It is **never** part of the
+/// record or its hash preimage — it travels as ledger metadata beside the
+/// record, so re-signing or key rotation never perturbs the content-addressed
+/// identity.
+///
+/// [`record_attest`](crate::record_attest) computes and checks it: the signed
+/// message is
+/// [`RECORD_ATTESTATION_DOMAIN`](crate::record_attest::RECORD_ATTESTATION_DOMAIN)
+/// followed by the 32 raw bytes of `signed_record_hash`.
+///
+/// A **distinct type** from [`ProvenanceAttestation`](crate::ProvenanceAttestation)
+/// even though five of six fields match, for the reason ADR 0010 gives: the two
+/// sign different preimages under different domain tags, and a shared type would
+/// invite presenting one as the other. The cryptography already refuses that;
+/// the type system makes it unsayable.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordAttestation {
     /// The `sha256:<hex>` `record_hash` this attestation signs.
     pub signed_record_hash: String,
     /// The signing key's id; validity windows govern rotation.
     pub key_id: String,
-    /// The signature algorithm, e.g. `ed25519`.
+    /// The signature algorithm, e.g. [`ALGORITHM_ED25519`](crate::ALGORITHM_ED25519).
+    ///
+    /// A string rather than an enum so a post-quantum successor is additive: a
+    /// verifier that does not recognize the value declines with
+    /// [`AttestationVerdict::UnknownAlgorithm`](crate::AttestationVerdict::UnknownAlgorithm)
+    /// instead of failing, which is the safe direction.
     pub algorithm: String,
-    /// The attesting authority.
+    /// The attesting authority — who is accountable for the claim, as distinct
+    /// from which key mechanically produced it.
     pub attester_id: String,
-    /// The detached signature (base64/hex per algorithm).
+    /// The detached signature, lowercase hex for `ed25519` — the encoding every
+    /// other digest and signature on this wire already uses.
     pub signature: String,
     /// When the attestation was issued (protocol timestamp).
     pub issued_at: String,
+}
+
+impl RecordAttestation {
+    /// Build an attestation from its parts.
+    pub fn new(
+        signed_record_hash: impl Into<String>,
+        key_id: impl Into<String>,
+        algorithm: impl Into<String>,
+        attester_id: impl Into<String>,
+        signature: impl Into<String>,
+        issued_at: impl Into<String>,
+    ) -> Self {
+        Self {
+            signed_record_hash: signed_record_hash.into(),
+            key_id: key_id.into(),
+            algorithm: algorithm.into(),
+            attester_id: attester_id.into(),
+            signature: signature.into(),
+            issued_at: issued_at.into(),
+        }
+    }
+
+    /// Whether this attestation names a scheme this revision defines.
+    ///
+    /// Advisory: a verifier reports `UnknownAlgorithm` rather than treating an
+    /// unrecognized scheme as a failure to validate. "I cannot check this" and
+    /// "this is forged" are different findings to an auditor.
+    pub fn uses_known_algorithm(&self) -> bool {
+        self.algorithm == crate::attest::ALGORITHM_ED25519
+    }
+
+    /// Whether `signed_record_hash` satisfies the protocol digest grammar
+    /// (`SPEC.md` §6.2) — the same grammar `ContextRecord::record_hash` is held
+    /// to, checked here because an attestation is validated on its own.
+    pub fn has_well_formed_signed_record_hash(&self) -> bool {
+        is_well_formed_digest(&self.signed_record_hash)
+    }
+
+    /// Whether `issued_at` is a well-formed protocol timestamp (`SPEC.md` §F4).
+    pub fn has_well_formed_issued_at(&self) -> bool {
+        is_protocol_timestamp(&self.issued_at)
+    }
 }
 
 /// A knowledge record's sub-kind (reconciliation rows B2/D1). `memory` and
