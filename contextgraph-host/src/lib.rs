@@ -106,8 +106,7 @@ pub use trust::{
 };
 pub use verify::{DigestVerification, verify_file_provenance, verify_provenance_digest};
 pub use wire::{
-    AttesterKey, Envelope, FrameAttestation, decode_line, encode_line, envelope_kind,
-    versions_compatible,
+    AttesterKey, Envelope, decode_line, encode_line, envelope_kind, versions_compatible,
 };
 
 /// The Context Graph Protocol version this host speaks, re-exported from `contextgraph-types`

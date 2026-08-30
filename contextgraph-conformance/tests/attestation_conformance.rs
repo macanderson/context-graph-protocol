@@ -15,7 +15,8 @@
 //! and would still say `CommitmentMismatch`, while proving nothing about the
 //! binding at all.
 
-use contextgraph_host::{Envelope, FrameAttestation, RawStdioConnection};
+use contextgraph_host::wire::FrameAttestation;
+use contextgraph_host::{Envelope, RawStdioConnection};
 use contextgraph_types::{
     AttestationVerdict, ContextFrame, frame_commitment, provenance_chain_head,
     verify_frame_attestation,
