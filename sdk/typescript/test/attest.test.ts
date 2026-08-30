@@ -247,6 +247,29 @@ test("every failure is named rather than collapsed into a boolean", () => {
   );
 });
 
+test("hex is accepted in exactly one spelling", () => {
+  // The protocol's grammar is lowercase (`is_well_formed_digest`). Accepting
+  // uppercase would mean two implementations disagreeing about whether the
+  // same attestation is well-formed, which is the class of divergence this
+  // whole port exists to close.
+  const commitment = signedCommitment();
+  const upper = attestation();
+  upper.signature = upper.signature.toUpperCase();
+  assert.deepEqual(
+    verifyCommitment(commitment, upper, publicKey()),
+    { verdict: "malformed_signature" },
+  );
+
+  const upperCommitment = attestation();
+  upperCommitment.signed_commitment =
+    "sha256:" + V.signature.attestation.signed_commitment.slice(7).toUpperCase();
+  assert.deepEqual(
+    verifyCommitment(commitment, upperCommitment, publicKey()),
+    { verdict: "malformed_commitment" },
+  );
+  assert.equal(parseDigest(upperCommitment.signed_commitment), null);
+});
+
 test("a strict verifier declines a small-order or non-canonical public key", () => {
   const strictness = V.verifier_strictness;
   const commitment = signedCommitment();

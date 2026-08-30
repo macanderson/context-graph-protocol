@@ -317,6 +317,40 @@ class SignatureVectors(unittest.TestCase):
             Verdict.MALFORMED_KEY,
         )
 
+    def test_hex_is_accepted_in_exactly_one_spelling(self) -> None:
+        # The protocol's grammar is lowercase (is_well_formed_digest).
+        # Accepting uppercase would mean two implementations disagreeing about
+        # whether the same attestation is well-formed, which is the class of
+        # divergence this whole port exists to close. bytes.fromhex would also
+        # skip whitespace between byte pairs, so both are checked.
+        commitment = signed_commitment()
+        wire = V["signature"]["attestation"]
+        for bad in (
+            wire["signature"].upper(),
+            wire["signature"][:2] + " " + wire["signature"][2:],
+        ):
+            with self.subTest(signature=bad[:8]):
+                self.assertEqual(
+                    verify_commitment(
+                        commitment,
+                        ProvenanceAttestation.from_wire({**wire, "signature": bad}),
+                        public_key(),
+                    ).verdict,
+                    Verdict.MALFORMED_SIGNATURE,
+                )
+        upper = "sha256:" + wire["signed_commitment"][7:].upper()
+        self.assertIsNone(parse_digest(upper))
+        self.assertEqual(
+            verify_commitment(
+                commitment,
+                ProvenanceAttestation.from_wire(
+                    {**wire, "signed_commitment": upper}
+                ),
+                public_key(),
+            ).verdict,
+            Verdict.MALFORMED_COMMITMENT,
+        )
+
     def test_a_strict_verifier_declines_weak_keys(self) -> None:
         commitment = signed_commitment()
         strictness = V["verifier_strictness"]

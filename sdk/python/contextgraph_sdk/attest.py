@@ -272,18 +272,32 @@ def digest_string(raw: bytes) -> str:
     return "sha256:" + raw.hex()
 
 
+def _from_strict_hex(text: str) -> Optional[bytes]:
+    """Decode lowercase hex, or ``None``.
+
+    Strict on purpose. ``bytes.fromhex`` accepts uppercase *and* skips ASCII
+    whitespace between byte pairs, so ``"AB CD"`` would parse — and the
+    protocol's grammar is 64 lowercase hex characters
+    (``contextgraph_types::is_well_formed_digest``). One spelling per value is
+    what keeps two implementations from disagreeing about whether a given
+    attestation is well-formed.
+    """
+    if len(text) % 2 != 0:
+        return None
+    if any(c not in "0123456789abcdef" for c in text):
+        return None
+    return bytes.fromhex(text)
+
+
 def parse_digest(digest: str) -> Optional[bytes]:
     """Parse a ``sha256:<hex>`` digest string. ``None`` if malformed."""
     prefix = "sha256:"
     if not digest.startswith(prefix):
         return None
     hex_part = digest[len(prefix) :]
-    if len(hex_part) != 64 or hex_part != hex_part.lower():
+    if len(hex_part) != 64:
         return None
-    try:
-        return bytes.fromhex(hex_part)
-    except ValueError:
-        return None
+    return _from_strict_hex(hex_part)
 
 
 # ---------------------------------------------------------------------------
@@ -461,11 +475,8 @@ def verify_commitment(
 
     if not _ed25519.is_usable_public_key(public_key):
         return AttestationVerdict(Verdict.MALFORMED_KEY)
-    try:
-        signature = bytes.fromhex(attestation.signature)
-    except ValueError:
-        return AttestationVerdict(Verdict.MALFORMED_SIGNATURE)
-    if len(signature) != 64:
+    signature = _from_strict_hex(attestation.signature)
+    if signature is None or len(signature) != 64:
         return AttestationVerdict(Verdict.MALFORMED_SIGNATURE)
 
     ok = _ed25519.verify(public_key, signed, signature)

@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"unicode/utf8"
 
@@ -400,6 +401,32 @@ func TestEveryFailureIsNamed(t *testing.T) {
 
 	if got := VerifyCommitment(commitment, v.Signature.Attestation, make([]byte, 5)); got.Verdict != VerdictMalformedKey {
 		t.Errorf("malformed key: got %s", got.Verdict)
+	}
+}
+
+func TestHexIsAcceptedInExactlyOneSpelling(t *testing.T) {
+	// The protocol's grammar is lowercase (is_well_formed_digest). Accepting
+	// uppercase would mean two implementations disagreeing about whether the
+	// same attestation is well-formed, which is the class of divergence this
+	// whole port exists to close — and encoding/hex accepts it by default.
+	v := loadVectors(t)
+	commitment := mustDigest(t, v.Signature.Attestation.SignedCommitment)
+	key := mustHex(t, v.Signature.PublicKeyHex)
+
+	upperSignature := v.Signature.Attestation
+	upperSignature.Signature = strings.ToUpper(upperSignature.Signature)
+	if got := VerifyCommitment(commitment, upperSignature, key); got.Verdict != VerdictMalformedSignature {
+		t.Errorf("an uppercase signature: got %s", got.Verdict)
+	}
+
+	upperCommitment := v.Signature.Attestation
+	upperCommitment.SignedCommitment = "sha256:" +
+		strings.ToUpper(strings.TrimPrefix(v.Signature.Attestation.SignedCommitment, "sha256:"))
+	if _, ok := ParseDigest(upperCommitment.SignedCommitment); ok {
+		t.Error("an uppercase digest is not a well-formed protocol digest")
+	}
+	if got := VerifyCommitment(commitment, upperCommitment, key); got.Verdict != VerdictMalformedCommitment {
+		t.Errorf("an uppercase commitment: got %s", got.Verdict)
 	}
 }
 

@@ -255,14 +255,31 @@ func DigestString(raw [32]byte) string {
 	return "sha256:" + hex.EncodeToString(raw[:])
 }
 
+// decodeStrictHex decodes lowercase hex, or reports false.
+//
+// Strict on purpose. encoding/hex accepts uppercase, and the protocol's
+// grammar is lowercase (contextgraph_types::is_well_formed_digest). One
+// spelling per value is what keeps two implementations from disagreeing about
+// whether a given attestation is well-formed.
+func decodeStrictHex(text string) ([]byte, bool) {
+	if text != strings.ToLower(text) {
+		return nil, false
+	}
+	raw, err := hex.DecodeString(text)
+	if err != nil {
+		return nil, false
+	}
+	return raw, true
+}
+
 // ParseDigest parses a "sha256:<hex>" digest string. ok is false if malformed.
 func ParseDigest(digest string) (out [32]byte, ok bool) {
 	rest, found := strings.CutPrefix(digest, "sha256:")
-	if !found || len(rest) != 64 || rest != strings.ToLower(rest) {
+	if !found || len(rest) != 64 {
 		return out, false
 	}
-	raw, err := hex.DecodeString(rest)
-	if err != nil {
+	raw, decoded := decodeStrictHex(rest)
+	if !decoded {
 		return out, false
 	}
 	copy(out[:], raw)
@@ -471,8 +488,8 @@ func VerifyCommitment(expected [32]byte, attestation ProvenanceAttestation, publ
 	if !usableVerificationKey(publicKey) {
 		return Result{Verdict: VerdictMalformedKey}
 	}
-	signature, err := hex.DecodeString(attestation.Signature)
-	if err != nil || len(signature) != ed25519.SignatureSize {
+	signature, decoded := decodeStrictHex(attestation.Signature)
+	if !decoded || len(signature) != ed25519.SignatureSize {
 		return Result{Verdict: VerdictMalformedSignature}
 	}
 	if ed25519.Verify(ed25519.PublicKey(publicKey), signed[:], signature) {
