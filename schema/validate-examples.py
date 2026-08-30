@@ -6,9 +6,18 @@ Usage:
     python3 schema/validate-examples.py
 
 Exits 0 if every message in examples/, every reference-serialized vector, and
-every fenced example in SPEC.md is valid under schema/ — and the schema's `$id`
-resolves to a byte-identical served copy. Exits 1 otherwise.
+every fenced example in SPEC.md is valid under schema/ — and each schema's `$id`
+is the exact published identity. Exits 1 otherwise.
 No third-party dependencies beyond `jsonschema` (pip install jsonschema).
+
+This script is **offline**. The `$id` checks below pin a string; they do not
+dereference it. Fetching here would make schema validation — which every PR
+runs, forks included — depend on the network, and on a publish that has not
+happened yet for the commit under test. The live dereference belongs after the
+publish and lives there: `.github/workflows/publish-spec.yml`'s "verify through
+the public hostname" step fetches each `$id` URL and asserts the served body
+carries that same `$id`. Together they close the loop — this pins what the
+identity *is*, that proves the identity *answers*.
 
 The four example surfaces are deliberately different in kind:
 
@@ -23,8 +32,8 @@ The four example surfaces are deliberately different in kind:
     that the reference envelope has no field for, and that the schema's
     `additionalProperties: false` rejects. The spec's own examples are now held
     to the spec's own schema.
-  * the served `$id` copy is the schema's public identity — checked because a
-    stale schema that still resolves is worse than one that 404s.
+  * each schema's `$id` is its public identity — pinned because a schema that
+    resolves to the wrong document is worse than one that 404s.
 """
 import json
 import re
@@ -208,32 +217,43 @@ for start, block in blocks:
             continue
         check(f"{label} ({target})", True)
 
-# 5. The schema's `$id` must dereference to this exact schema.
+# 5. The schema's `$id` must be its published identity.
 #
-#    `$id` is the schema's public identity — the URL third parties resolve and
-#    quote. It first pointed at `context-graph-protocol.org`, a hyphenated host
-#    that was never registered and returned a DNS failure, so every consumer
-#    that tried to fetch it got nothing (issue #58). Swapping in the live
-#    apex, `contextgraphprotocol.org`, does not fix it either: the domain
-#    resolves, but it is served by a different repository
-#    (macanderson/cgp-website) that carries nothing under `/schema/`. Pointing
-#    `$id` at that host would trade one unreachable URL for another.
+#    `$id` is the URL third parties resolve and quote. Three things about this
+#    one URL were decided separately, and each is load-bearing:
 #
-#    This is now permanent, not interim. #57 was settled by retiring this
-#    repo's undeployed `site/` app: the microsite is the protocol's single
-#    published website, and this repository deploys nothing. So `$id` names
-#    this repo's GitHub-raw URL — the one host that serves these bytes by
-#    construction — and there is no second copy to keep in sync any more.
+#    THE HOST is `contextgraphprotocol.org`, the protocol's own name. It was
+#    briefly `context-graph-protocol.org` — hyphenated, never registered, a DNS
+#    failure for every consumer that tried to fetch it (#58) — and then this
+#    repo's GitHub-raw URL, which was correct at the time: the apex is served
+#    by a different repository (macanderson/cgp-website) and carried nothing
+#    under `/schema/`, so naming it would have traded one unreachable URL for
+#    another (ADR 0008). #78 changed that fact: `publish-spec.yml` now syncs
+#    `schema/` to that apex on every merge to `main`, so it is a host this repo
+#    serves, and the identity moved onto it (#79, ADR 0013).
 #
-#    The rule generalises beyond the schema: the same wall was hit by the
-#    conformance badge and the registry report, so it is written down as ADR
-#    0008 (docs/adr/0008-deploy-topology-and-advertised-urls.md) — this repo
-#    may advertise an artifact URL only on a host it serves.
-#    `.github/scripts/check-deploy-hygiene.py` enforces that across the repo,
-#    including that each advertised artifact exists at the path its URL names;
-#    this check is the schema's half, pinning the exact `$id` string.
+#    THE VERSION SEGMENT is `v1`, naming the `contextgraph/1` major family —
+#    the axis the wire contract versions on, NOT the crate version, which is
+#    already 2.x against the same `contextgraph/1` wire (docs/stability.md).
+#    The URL it replaced pinned `main`, a git branch: unbounded change under a
+#    stable name, so a `1.x` minor silently altered what a cached resolver saw.
+#    A family is bounded — additive-only, per GOVERNANCE.md — so an older
+#    cached copy stays valid, merely less complete. Per-minor paths were
+#    rejected: additive-only makes them buy nothing and cost a new published
+#    path every minor. `contextgraph/2` will be `/schema/v2/`, and v1 keeps
+#    answering.
+#
+#    THE OLD RAW URL still resolves and must keep resolving — it is in the
+#    wild. GitHub serves it as long as the file stays at `schema/<name>`, so
+#    the constraint is simply never to move these two files.
+#
+#    `.github/scripts/check-deploy-hygiene.py` enforces the host rule across
+#    the whole repo, including that each advertised artifact exists at the path
+#    its URL names. This check is the schema's half, pinning the exact string.
+PUBLISHED_SCHEMA_BASE = "https://contextgraphprotocol.org/schema/v1/"
+
 SCHEMA_SOURCE = ROOT / "schema" / "contextgraph-envelope.schema.json"
-expected_id = f"https://raw.githubusercontent.com/macanderson/context-graph-protocol/main/schema/{SCHEMA_SOURCE.name}"
+expected_id = f"{PUBLISHED_SCHEMA_BASE}{SCHEMA_SOURCE.name}"
 
 check(f"$id is {expected_id}", SCHEMA.get("$id") == expected_id)
 
@@ -243,8 +263,12 @@ check(f"$id is {expected_id}", SCHEMA.get("$id") == expected_id)
 #    union of `schema/contextgraph-lifecycle-record.schema.json`. It is held to
 #    the same discipline as the envelope schema — every hand-authored example
 #    record under `tests/fixtures/` (the canonical fixture home) validates, and
-#    the `$id` names this repo's GitHub-raw URL — the only host that serves
-#    these bytes, per ADR 0008. The record fixtures' `record_hash`
+#    the `$id` names the same published, family-versioned base (ADR 0013). It
+#    shares the envelope's `v1` segment because the profile is layered on the
+#    `contextgraph/1` base family rather than versioned against it; if the
+#    profile ever leaves draft on a cadence of its own it earns its own
+#    segment, and that is a decision made out loud, not a drift. The record
+#    fixtures' `record_hash`
 #    values are not checked here (that is the JCS-sha256 job of
 #    `contextgraph-conformance`'s `lifecycle_profile_examples` suite); this
 #    checks STRUCTURE against the schema, the class of error the envelope schema
@@ -289,7 +313,7 @@ except (json.JSONDecodeError, jsonschema.ValidationError) as e:
     check(f"tests/fixtures/{ATTESTATION_FIXTURE} (RecordAttestation)", False)
     print(f"        {getattr(e, 'message', e)}")
 
-record_expected_id = f"https://raw.githubusercontent.com/macanderson/context-graph-protocol/main/schema/{RECORD_SCHEMA_SOURCE.name}"
+record_expected_id = f"{PUBLISHED_SCHEMA_BASE}{RECORD_SCHEMA_SOURCE.name}"
 check(f"$id is {record_expected_id}", RECORD_SCHEMA.get("$id") == record_expected_id)
 
 print(f"\n{'OK — all examples validate' if failures == 0 else f'{failures} failure(s)'}")

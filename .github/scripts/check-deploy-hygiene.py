@@ -59,6 +59,12 @@ SERVED_PREFIXES: dict[str, str] = {
     # `/spec/` is published too but carries no artifact URLs, so it needs no
     # row until it does.
     "https://contextgraphprotocol.org/schema/": "schema/",
+    # The schemas' canonical identity: the same bytes, published a second time
+    # under the `contextgraph/1` major family (#79, ADR 0013). One copy in the
+    # repo, two published paths, so this maps back to the same `schema/` files
+    # the unversioned row does — there is no `schema/v1/` directory to keep in
+    # sync, by design.
+    "https://contextgraphprotocol.org/schema/v1/": "schema/",
 }
 RAW_PREFIX = "https://raw.githubusercontent.com/macanderson/context-graph-protocol/main/"
 
@@ -71,9 +77,22 @@ APEX_PROJECT_ID = "prj_s3lfCDvK9H9PwgvkpXiho1juiR63"
 # rewrote the URL it is reporting on would be lying about the past.
 EXEMPT = ("docs/adr/", "CHANGELOG.md")
 
+# An artifact URL: any host, any leading path, one of the three artifact
+# directories, then optional further segments, then a real filename.
+#
+# The trailing `(?:/…)*` before the filename is what lets a *versioned* path
+# match — `…/schema/v1/contextgraph-envelope.schema.json` (#79). Without it the
+# pattern required the filename to sit directly under `schema/`, so the moment
+# the schemas' `$id` gained a version segment this guard stopped seeing the one
+# URL in the repository it exists to police: no offender, no missing-artifact
+# check, and a silent PASS. A guard that quietly narrows its own subject is
+# worse than one that fails.
 ARTIFACT_URL = re.compile(
-    r"https?://([A-Za-z0-9.\-]+)(/[^\s)\"'`>]*?/(?:schema|registry|badges)/[A-Za-z0-9._\-]+\.(?:json|svg|png)"
-    r"|/(?:schema|registry|badges)/[A-Za-z0-9._\-]+\.(?:json|svg|png))"
+    r"https?://[A-Za-z0-9.\-]+"
+    r"(?:/[A-Za-z0-9._\-]+)*?"
+    r"/(?:schema|registry|badges)"
+    r"(?:/[A-Za-z0-9._\-]+)*"
+    r"/[A-Za-z0-9._\-]+\.(?:json|svg|png)"
 )
 
 failures = 0
@@ -110,6 +129,13 @@ def tracked_text_files() -> list[Path]:
 
 print("advertised artifact URLs point at a host this repo serves")
 
+# Longest prefix wins. `/schema/` and `/schema/v1/` both prefix a versioned
+# URL, and they map to different repo paths, so first-match-in-insertion-order
+# would resolve `/schema/v1/x.json` against the `/schema/` row and look for a
+# `schema/v1/x.json` that deliberately does not exist. Sorting by length is
+# what makes adding a nested row safe rather than a trap for whoever adds one.
+PREFIXES_LONGEST_FIRST = sorted(SERVED_PREFIXES, key=len, reverse=True)
+
 offenders: list[str] = []
 missing: list[str] = []
 for path in tracked_text_files():
@@ -117,7 +143,7 @@ for path in tracked_text_files():
     for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         for match in ARTIFACT_URL.finditer(line):
             url = match.group(0)
-            served = next((p for p in SERVED_PREFIXES if url.startswith(p)), None)
+            served = next((p for p in PREFIXES_LONGEST_FIRST if url.startswith(p)), None)
             if served is None:
                 offenders.append(f"{rel}:{lineno}  {url}")
                 continue

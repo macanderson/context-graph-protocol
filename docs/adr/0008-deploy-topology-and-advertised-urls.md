@@ -12,7 +12,21 @@ was true when this was ratified and is no longer: `publish-spec.yml` syncs
 `schema/` to `contextgraphprotocol.org/schema/` and `SPEC.md`/`docs/**` to
 `/spec/` on every merge to `main`. Those two prefixes are now hosts-this-repo-
 serves for the purpose of rule (1), and nothing else on that apex is — the
-badge and registry URLs stay on `raw.githubusercontent.com`. The guard is
+badge and registry URLs stay on `raw.githubusercontent.com`.
+
+**Amended again 2026-08-29 by
+[ADR 0013](./0013-schema-identity-on-a-branded-versioned-url.md)
+([#79](https://github.com/macanderson/context-graph-protocol/issues/79)).**
+Rule (1) still stands, and is what *permits* the change rather than resisting
+it. What no longer holds is this ADR's conclusion for the schemas — that
+GitHub-raw is the only host it can honestly advertise, called permanent in the
+Consequences below. That was sound while this repository published nothing;
+after the amendment above it is not. Each schema's `$id` now names
+`contextgraphprotocol.org/schema/v1/…`, a prefix this repository serves, and
+the raw URL keeps resolving as the former identity. The badge and the registry
+report are unaffected and stay on raw.
+
+The guard is
 keyed on the prefix, not the host, so it still rejects
 `contextgraphprotocol.org/badges/conformant.svg`, which is the 404 this ADR
 was written about.
@@ -159,12 +173,17 @@ when the microsite already serves the audience.
   artifact URL is introduced, or if an advertised artifact does not exist at
   the path its URL names, and fails locally if the checkout is linked to the
   apex Vercel project.
-- Rule (1) is **permanent**, not interim: this repository has decided not to
-  deploy a website, so GitHub-raw is the only host it can honestly advertise.
-  The `$id` note in `schema/validate-examples.py` (#58) says so rather than
-  promising a future move.
+- Rule (1) is **permanent**, not interim. Which host it *resolves to* for a
+  given artifact is not: the rule turns on the set of hosts this repo serves,
+  and that set grew in #78. So the clause that used to close this bullet —
+  GitHub-raw is the only host it can honestly advertise — is superseded for the
+  schemas by [ADR 0013](./0013-schema-identity-on-a-branded-versioned-url.md).
+  It still holds for the badge and the registry report, which this repository
+  publishes nowhere else.
 - CI loses the `docs site builds` job and `tests/docs_site_witness_test.py`.
   The protocol's prose is now single-sourced in `docs/*.md`, read on GitHub.
-- `cgp-website` is the protocol's only website. If it should ever serve the
-  schema, report, or badge from the apex, that is a change *there* — plus one
-  line here, `SERVED_HOSTS` in the hygiene check.
+- `cgp-website` is the protocol's only website. Serving one of these artifacts
+  from the apex takes a publishing path plus one row in `SERVED_PREFIXES` in
+  the hygiene check. (This bullet said `SERVED_HOSTS`; #78 replaced it with a
+  prefix map, because a bare host entry would re-bless the `/badges/` URL this
+  guard exists to catch.)

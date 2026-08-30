@@ -950,6 +950,27 @@ lint, not the interop contract; `record_kind` is closed within `lifecycle/1.0`
 (a new kind is a `lifecycle/1.x` addition, the U2 discipline); and record
 `extensions` and `record_links.rel` follow the U3 namespacing rule.
 
+### 13.1 Where the schemas are published
+
+The schemas are versioned on the same axis as everything else in this section —
+the **major family** — and their `$id` says so:
+
+| Schema | `$id` |
+| --- | --- |
+| envelope | `https://contextgraphprotocol.org/schema/v1/contextgraph-envelope.schema.json` |
+| lifecycle record | `https://contextgraphprotocol.org/schema/v1/contextgraph-lifecycle-record.schema.json` |
+
+`v1` is `contextgraph/1`, not the crate version. Because U1–U4 make `1.x`
+evolution additive-only, a consumer holding a copy fetched earlier in the
+family's life is never *wrong* about what it does know — which is what lets one
+URL serve the whole family. A `contextgraph/2` schema would be published at
+`/schema/v2/`, and `/schema/v1/` would keep answering.
+
+Every `$ref` in both schemas is a same-document pointer (`#/$defs/…`); neither
+references the other, so both validate fully offline from a local copy. The
+former `$id`, on `raw.githubusercontent.com`, still resolves to the same bytes.
+See [ADR 0013](docs/adr/0013-schema-identity-on-a-branded-versioned-url.md).
+
 ---
 
 ## 14. Attribution

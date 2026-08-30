@@ -79,6 +79,24 @@ text lands without a human merge.
   could never have seen it (#98).
 
 ### Changed
+- **Both JSON Schemas' `$id` moves to a branded, family-versioned URL**
+  (`https://contextgraphprotocol.org/schema/v1/<name>`, was
+  `raw.githubusercontent.com/…/main/schema/<name>`;
+  [ADR 0013](./docs/adr/0013-schema-identity-on-a-branded-versioned-url.md),
+  issues #79 and #58). `$id` is the identity third parties resolve and quote,
+  so this is protocol-visible rather than a deployment detail — but **no action
+  is required of implementers**: the bytes are identical, the old URL keeps
+  returning 200, and every `$ref` in both schemas is a same-document pointer
+  (`#/$defs/…`) with no cross-schema reference, so resolution is unaffected
+  offline and online alike. `v1` names the `contextgraph/1` **wire family**,
+  not the crate version — which is already `2.x` against that same wire. The
+  URL it replaces pinned `main`, a git branch, so a `1.x` additive minor
+  silently changed what a cached resolver saw; a family is bounded by the
+  additive-only guarantee, so an older cached copy stays valid rather than
+  wrong. `publish-spec.yml` now publishes the identity path and then
+  dereferences it, asserting the served body reports that same `$id`;
+  `schema/validate-examples.py` pins the string offline. See
+  [MIGRATION.md](./MIGRATION.md) §6.
 - **Crate version `1.0.0` → `2.0.0`; protocol version stays `contextgraph/1.0`.**
   The first time the two axes in [docs/stability.md](./docs/stability.md) actually
   disagree, and the reason they are documented as independent. The open-`FrameKind`
