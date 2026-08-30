@@ -73,16 +73,25 @@ identity, of idempotency replay, and of attestation.
 
 | # | Requirement |
 |---|---|
-| **LH1** | `record_hash` **MUST** be `sha256:<64 lowercase hex>` (SPEC.md §6.2 grammar) over the **RFC 8785 (JCS)** canonicalization of the record **with its own `record_hash` member removed from the preimage**. A record never hashes over its own hash. |
-| **LH2** | Canonicalization is **RFC 8785** exactly: object members sorted by code point, minimal separators, no insignificant whitespace, and the RFC 8785 **number policy** (the ECMAScript `Number.prototype.toString` shortest round-trip form — e.g. `0.9`, not `0.90`; integers with no decimal point). Two implementations that agree on the bytes agree on the hash. |
+| **LH1** | `record_hash` **MUST** be `sha256:<64 lowercase hex>` (SPEC.md §6.2 grammar) over the **RFC 8785 (JCS)** canonicalization of the record **with its own top-level `record_hash` member removed from the preimage**. A record never hashes over its own hash. **Removed, not blanked**: a record therefore hashes identically whether it carries no `record_hash`, the right one, or a wrong one, so a producer computes the hash without first inventing a placeholder and a verifier never has to know which placeholder was chosen. A `record_hash` nested inside `extensions` or a body member is ordinary content and **MUST** stay in the preimage. |
+| **LH2** | Canonicalization is **RFC 8785** exactly: object members sorted **by UTF-16 code unit** (RFC 8785 §3.2.3 — *not* by code point; the two orders differ for a supplementary character, whose lead surrogate sorts below U+E000), minimal separators, no insignificant whitespace, and the RFC 8785 **number policy** (the ECMAScript `Number.prototype.toString` shortest round-trip form — e.g. `0.9`, not `0.90`; integers with no decimal point; `-0` serialized as `0`). Two implementations that agree on the bytes agree on the hash. |
 | **LH3** | The **detached** attestation (`RecordAttestation`, §7) is **never** part of the record or its `record_hash` preimage. Re-signing or key rotation therefore never perturbs a record's content-addressed identity. |
 | **LH4** | The reference implementation **MAY** additionally compute a `command_hash` over `(record_hash + requested_retention + behavior-changing options)` for idempotency keying (§5); that hash is a provider-ledger concern, not part of the record wire shape. |
+| **LH5** | The reference implementation is [`contextgraph_types::record_attest`](../../contextgraph-types/src/record_attest.rs), behind the off-by-default `record-hash` feature ([ADR 0017](../adr/0017-record-hash-and-record-attestation.md)). `record_hash_preimage` returns the exact canonical bytes, because a digest alone cannot tell an implementer *where* their canonicalization diverged. Its RFC 8785 conformance is checked against the RFC's own published vectors — §3.2.4's byte listing, §3.2.3's sorting data, and Appendix B's IEEE 754 number table. |
 
 The canonical JCS/`record_hash` **golden vectors** are the interop spine and live
-in this repo (§9). The reference Rust `serde_json_canonicalizer` and a
-`json.dumps(sort_keys=True, separators=(",",":"))` Python canonicalizer both
-reproduce the vectors' hashes byte-for-byte; a fully worked example is in
-[`tests/fixtures/README.md`](../../tests/fixtures/README.md).
+in this repo (§9): `tests/fixtures/record-hash-vectors.json` publishes the
+canonical **text** of every fixture's preimage beside its hash. A fully worked
+example is in [`tests/fixtures/README.md`](../../tests/fixtures/README.md).
+
+Reproducing those bytes without a JCS library is possible for *these* fixtures,
+and is not the same thing as implementing RFC 8785. A Python
+`json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False)` matches
+here because every fixture's member names are ASCII and every number round-trips
+identically under CPython's `repr` and ECMAScript's `Number::toString`. The
+profile guarantees neither property, and a record that broke either would still
+be valid — so a provider computes `record_hash` with a conforming canonicalizer
+and uses the shortcut only to sanity-check a vector.
 
 ## 4. The `ContextRecord` (resolves D1)
 
@@ -198,6 +207,8 @@ envelope, keeping the freeze boundary intact.
 | **LC1** | Every record carries structured `provenance`: `origin_provider_id`, `origin_authority_id?`, `producer_kind`, `producer_ref?`, `derivation_kind?`, `source_refs?`. `producer_kind` and `derivation_kind` are open vocabularies (recommended `human`/`agent`/`tool`/`system` and `summarization`/`inference`/`transformation`/`import`). |
 | **LC2** | The envelope `origin` is a coarse class — `observed` \| `derived` \| `declared` \| `imported` — governed by the **origin→derivation validity matrix**: `observed`/`declared` **MUST NOT** carry a `provenance.derivation_kind`; `derived` **MUST** carry one; `imported` **MAY**. |
 | **LC3** | A `RecordAttestation` is a **detached** signature over a record's `record_hash`: `{signed_record_hash, key_id, algorithm, attester_id, signature, issued_at}`. It travels as **ledger metadata beside** the record, **never inside** the record or its hash preimage (LH3), so key rotation never perturbs identity. Key rotation is by **key-id validity windows**. The attestation type is shared with issue #12. |
+| **LC4** | The **signed message** is the domain tag `contextgraph/attest/1/record` (its ASCII bytes, no terminator) followed by the **32 raw bytes** of `signed_record_hash`. Both halves are fixed length, so the encoding is injective without a length prefix and any language can build it from the digest string alone. The tag is what stops a signature produced at another layer — or by an unrelated system that hashed the same JSON — from being presented as a record attestation: a frame commitment is domain-bound by construction, while a `record_hash` is a plain SHA-256 that anyone can also compute. `algorithm` is an open vocabulary; this revision defines `ed25519`, with the signature as **lowercase hex**. |
+| **LC5** | A verifier **MUST** recompute the record's `record_hash` from the record in hand rather than trusting its stored member, then compare that against `signed_record_hash` **before** checking the signature. Trusting the stored member would let an attacker edit a record and rewrite its hash to match a stolen signature; checking the hash first means an operator is told the content moved, rather than being told the signature is bad. A verifier **MUST NOT** treat any outcome other than a successful verification as provisionally acceptable — "I cannot check this" and "this is good" are never the same answer. |
 
 ## 8. Typed error vocabulary (resolves D5)
 
@@ -234,10 +245,9 @@ secret leakage (SPEC.md §11 C8).
 
 | # | Requirement |
 |---|---|
-| **LF1** | **`tests/fixtures/` is the canonical home** for lifecycle-profile example records and golden JCS/`record_hash` vectors — one fixture per `record_kind`, plus a detached `RecordAttestation` example. Downstream implementations reconcile to these byte vectors (coordinating with the fixture-regeneration work, issue #52). |
+| **LF1** | **`tests/fixtures/` is the canonical home** for lifecycle-profile example records and golden JCS/`record_hash` vectors — one fixture per `record_kind`; `record-hash-vectors.json`, holding the canonical JCS **text** and hash of every one of them; a detached `RecordAttestation` example carrying a real Ed25519 signature; and `record-attestation-key.json`, the published test key that signs it. The key is committed to a public repository and forgeable by anyone, which is the point: a vector nobody can reproduce is a shape example. Downstream implementations reconcile to these byte vectors (coordinating with the fixture-regeneration work, issue #52). |
 | **LF2** | The record schema's `$id` **MUST** be `https://contextgraphprotocol.org/schema/v1/contextgraph-lifecycle-record.schema.json` — the protocol's own domain, versioned by the `contextgraph/1` major family this profile is layered on ([ADR 0013](../adr/0013-schema-identity-on-a-branded-versioned-url.md)). It named this repository's GitHub-raw URL until #79, and that URL keeps resolving, so a consumer holding it is not broken. `schema/validate-examples.py` validates every fixture against the schema and pins the exact `$id` string offline; `publish-spec.yml` dereferences it after every publish and asserts the served body reports that same `$id`; `.github/scripts/check-deploy-hygiene.py` enforces the host rule repo-wide (the same discipline as the envelope schema). |
-| **LF3** | `contextgraph-conformance`'s [`lifecycle_profile_examples`](../../contextgraph-conformance/tests/lifecycle_profile_examples.rs) suite round-trips every fixture through the reference Rust types, checks the profile envelope invariants (LR/LD/LC), and **recomputes `record_hash` as the JCS-sha256 of the hashless record** — so a fixture cannot merely assert a hash it does not satisfy. |
-| **LF4** | **Core conformance** is unchanged: a CEP is green on `contextgraph-conformance` for its declared read capabilities (SPEC.md §12). The **live HTTP-endpoint** profile suite (driving append/get/resolve over a real transport) is future work that rides the operation transport bindings (#5/#50/#13); until then this repo ships the record **schema**, the **JCS golden vectors**, and the round-trip/hash conformance above — the checkable, transport-independent core of the profile. |
+| **LF3** | `contextgraph-conformance`'s [`lifecycle_profile_examples`](../../contextgraph-conformance/tests/lifecycle_profile_examples.rs) suite round-trips every fixture through the reference Rust types, checks the profile envelope invariants (LR/LD/LC), **recomputes `record_hash` as the JCS-sha256 of the hashless record**, pins each fixture's canonical preimage text, and **verifies the attestation example under its published key** — so a fixture cannot merely assert a hash it does not satisfy, or carry a signature nothing can check. Every recomputation calls the library (LH5), not a copy of the rule kept in the suite: a second implementation living in the test is how a fixture set ends up agreeing with nothing that ships. || **LF4** | **Core conformance** is unchanged: a CEP is green on `contextgraph-conformance` for its declared read capabilities (SPEC.md §12). The **live HTTP-endpoint** profile suite (driving append/get/resolve over a real transport) is future work that rides the operation transport bindings (#5/#50/#13); until then this repo ships the record **schema**, the **JCS golden vectors**, and the round-trip/hash conformance above — the checkable, transport-independent core of the profile. |
 
 ## 10. Transport and security
 

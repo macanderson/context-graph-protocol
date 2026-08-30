@@ -48,4 +48,11 @@ name = "contextgraph-example-docs"
 path = "src/bin/contextgraph-example-docs.rs"
 
 [dev-dependencies]
-serde_json_canonicalizer = "0.3.2"
+serde_json_canonicalizer.workspace = true
+# The lifecycle-profile suite checks the *library's* record hashing and record
+# attestation rather than a private copy of the rule, so a fixture and
+# `contextgraph_types::record_attest` can never describe two different hashes
+# (profile LF3). Repeating the dependency here adds only the feature.
+contextgraph-types = { path = "../contextgraph-types", version = ">=2.0.0", features = [
+  "record-attestation",
+] }

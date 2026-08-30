@@ -322,6 +322,7 @@ dependencies = [
  "ed25519-dalek",
  "serde",
  "serde_json",
+ "serde_json_canonicalizer",
  "sha2",
 ]
 
