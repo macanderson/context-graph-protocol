@@ -48,6 +48,20 @@ text lands without a human merge.
 - **`contextgraph_host::fold_to_edges` is now public** — the Lost-in-the-Middle
   *placement* separated from the *ranking*, for hosts that rank frames with their
   own reranker or per-provider quotas instead of raw `score`.
+- **Cross-provider ranking is a seam
+  ([ADR 0015](./docs/adr/0015-cross-provider-ranking-strategies.md); `SPEC.md`
+  §6.6, F10).** `score` is provider-local and ordinal, so ranking a mixed set by
+  raw `score` favours whichever provider scores most generously — and under a
+  tight budget that decides which providers are cited at all, not just where
+  their frames sit. `contextgraph_host::RankingStrategy` is where a host's
+  answer lives, and the strategy's order is what the budget packer walks.
+  `ScoreDescending` (the previous behaviour) stays the default, so
+  `compose_for_prompt`, `order_by_value` and `fold_to_edges` keep their
+  signatures and their bytes. `RoundRobinByRank` interleaves providers by
+  within-provider rank and `PerProviderQuota` deals each provider's top `k`;
+  neither compares scores across providers, and both degenerate to
+  `ScoreDescending` when there is one provider. Also new:
+  `compose_for_prompt_with`, `order_by`, `rank_with`, `is_ranking_permutation`.
 - **TypeScript SDK:** `KnownFrameKind`, `KNOWN_FRAME_KINDS`, `isKnownFrameKind`.
   **Python SDK:** `KnownFrameKind`, `KNOWN_FRAME_KINDS`.
 - **CI typechecks both typed SDKs.** `sdk (typescript) typechecks` runs
