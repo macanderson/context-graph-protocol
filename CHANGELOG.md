@@ -88,13 +88,87 @@ text lands without a human merge.
   normative encoding, and a normative encoding with no published vectors is a
   rule two implementations can both believe they follow while computing different
   hashes. A diff in that file is a wire-breaking change.
+- **Provenance attestation in the TypeScript, Python and Go SDKs**
+  (`sdk/typescript/src/attest.ts`, `contextgraph_sdk.attest`,
+  `sdk/go/contextgraph/attest`). Rust was the only implementation, so the
+  cross-language claim §6.5.1 makes was untested — an encoding rule with
+  exactly one implementation is indistinguishable from an implementation
+  detail. Each port covers the whole construction (link encoding, chain fold,
+  frame commitment, RFC 6962 root and inclusion proofs, strict Ed25519
+  verification with the named verdicts) and each reproduces the published
+  vectors in its own suite, wired into CI. Python's verifier is a
+  self-contained RFC 8032 implementation because the standard library has no
+  Ed25519 and the SDK promises no dependencies; it verifies and never signs.
+- **`tests/vectors/attestation-vectors.json`** — the vectors as data, read by
+  all four language suites, with the Rust reference asserting the file agrees
+  with the values it publishes inline. A digest transcribed into four
+  languages is four things that can drift.
+- **Vectors that can fail a wrong port.** The published set was ASCII-only, so
+  a length prefix counting UTF-16 code units or code points computed the same
+  bytes; its only multi-leaf Merkle vector had four leaves, where RFC 6962's
+  split and the duplicate-the-last-leaf shortcut agree; and it published no
+  signature and no inclusion proof, so §6.5.4 had no oracle at all. Added: a
+  link whose fields are multi-byte UTF-8 ending in an astral-plane character,
+  one-, three- and seven-leaf roots, a seven-leaf inclusion proof, a fixed
+  Ed25519 key with the signature it produces, the seven verdicts, and the
+  small-order key set §6.5.4's strictness rule names but does not enumerate.
+  No existing value changed.
+- **CI runs `cargo test -p contextgraph-types --features attestation`.** The
+  feature is off by default and no workspace member enables it, so the
+  attestation module and its vectors had never been compiled in CI, let alone
+  run — the oracle three ports now reconcile against was itself unchecked.
 - **`contextgraph_host::fold_to_edges` is now public** — the Lost-in-the-Middle
   *placement* separated from the *ranking*, for hosts that rank frames with their
   own reranker or per-provider quotas instead of raw `score`.
+- **Cross-provider ranking is a seam
+  ([ADR 0015](./docs/adr/0015-cross-provider-ranking-strategies.md); `SPEC.md`
+  §6.6, F10).** `score` is provider-local and ordinal, so ranking a mixed set by
+  raw `score` favours whichever provider scores most generously — and under a
+  tight budget that decides which providers are cited at all, not just where
+  their frames sit. `contextgraph_host::RankingStrategy` is where a host's
+  answer lives, and the strategy's order is what the budget packer walks.
+  `ScoreDescending` (the previous behaviour) stays the default, so
+  `compose_for_prompt`, `order_by_value` and `fold_to_edges` keep their
+  signatures and their bytes. `RoundRobinByRank` interleaves providers by
+  within-provider rank and `PerProviderQuota` deals each provider's top `k`;
+  neither compares scores across providers, and both degenerate to
+  `ScoreDescending` when there is one provider. Also new:
+  `compose_for_prompt_with`, `order_by`, `rank_with`, `is_ranking_permutation`.
 - **TypeScript SDK:** `KnownFrameKind`, `KNOWN_FRAME_KINDS`, `isKnownFrameKind`.
   **Python SDK:** `KnownFrameKind`, `KNOWN_FRAME_KINDS`.
+- **CI typechecks both typed SDKs.** `sdk (typescript) typechecks` runs
+  `tsc --noEmit`, and `sdk (python) typechecks` runs `mypy --strict` — the
+  Python SDK ships `py.typed`, so its annotations are a promise downstream
+  typecheckers act on, and nothing checked them. The `FrameKind` types above
+  shipped on a claim rather than a run (#94).
+- **CI catches a version pin that has drifted from the manifest it names**
+  ([ADR 0012](./docs/adr/0012-sdk-version-pins-share-a-major.md)).
+  `.github/scripts/check-sdk-version-pins.py` holds the scaffolder's
+  `DEFAULT_SDK` pins to the major each SDK manifest ships, and holds the two
+  SDK manifests and the crates to one major between them. The TypeScript pin
+  had sat at `^0.1.0` against a shipped `1.0.0` for an unknown length of time,
+  and the scaffold job overrides both published pins with local paths so it
+  could never have seen it (#98).
 
 ### Changed
+- **Both JSON Schemas' `$id` moves to a branded, family-versioned URL**
+  (`https://contextgraphprotocol.org/schema/v1/<name>`, was
+  `raw.githubusercontent.com/…/main/schema/<name>`;
+  [ADR 0013](./docs/adr/0013-schema-identity-on-a-branded-versioned-url.md),
+  issues #79 and #58). `$id` is the identity third parties resolve and quote,
+  so this is protocol-visible rather than a deployment detail — but **no action
+  is required of implementers**: the bytes are identical, the old URL keeps
+  returning 200, and every `$ref` in both schemas is a same-document pointer
+  (`#/$defs/…`) with no cross-schema reference, so resolution is unaffected
+  offline and online alike. `v1` names the `contextgraph/1` **wire family**,
+  not the crate version — which is already `2.x` against that same wire. The
+  URL it replaces pinned `main`, a git branch, so a `1.x` additive minor
+  silently changed what a cached resolver saw; a family is bounded by the
+  additive-only guarantee, so an older cached copy stays valid rather than
+  wrong. `publish-spec.yml` now publishes the identity path and then
+  dereferences it, asserting the served body reports that same `$id`;
+  `schema/validate-examples.py` pins the string offline. See
+  [MIGRATION.md](./MIGRATION.md) §6.
 - **Crate version `1.0.0` → `2.0.0`; protocol version stays `contextgraph/1.0`.**
   The first time the two axes in [docs/stability.md](./docs/stability.md) actually
   disagree, and the reason they are documented as independent. The open-`FrameKind`

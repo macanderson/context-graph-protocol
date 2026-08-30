@@ -567,11 +567,26 @@ unaccountable behavior this protocol exists to eliminate.
 **The reference host, stated plainly.** `dedup_cross_provider` compares scores
 across providers, but only to pick a survivor among frames already proven to be
 *the same evidence* by content digest or overlapping file provenance — it breaks
-a tie between duplicates and never decides what is relevant. `order_by_value`
-*does* rank across providers by raw `score` to place frames at the
-attention-favored edges of the prompt. That is a deliberate, documented default
-for hosts that have no better ranking policy, not a claim that the scores are
-commensurable; a host with a reranker should order frames itself and use
+a tie between duplicates and never decides what is relevant.
+
+Everything else routes through one seam, `RankingStrategy`
+([ADR 0015](./docs/adr/0015-cross-provider-ranking-strategies.md)), and the
+strategy's order is what the budget packer walks — so the policy decides which
+frames reach the prompt, not only where they sit in it. Three ship:
+
+- `ScoreDescending` ranks the union by raw `score`. It is the default that
+  `order_by_value` and `compose_for_prompt` apply, a deliberate documented
+  choice for a host that has no better policy, and not a claim that the scores
+  are commensurable. It is also simply correct for a single-provider host,
+  where the cross-provider question does not arise.
+- `RoundRobinByRank` interleaves providers by **within-provider** rank — every
+  provider's best frame, then every provider's second — so the only score
+  comparisons it makes are the ones this section says are meaningful.
+- `PerProviderQuota` does the same in blocks of `k`, so a provider's evidence
+  stays contiguous.
+
+A host with its own reranker or trust weighting implements the trait and passes
+it to `compose_for_prompt_with`, or ranks the frames itself and calls
 `fold_to_edges` for placement alone.
 
 ---
@@ -934,6 +949,27 @@ is a second authoring-strict schema (`unevaluatedProperties: false`) that is a
 lint, not the interop contract; `record_kind` is closed within `lifecycle/1.0`
 (a new kind is a `lifecycle/1.x` addition, the U2 discipline); and record
 `extensions` and `record_links.rel` follow the U3 namespacing rule.
+
+### 13.1 Where the schemas are published
+
+The schemas are versioned on the same axis as everything else in this section —
+the **major family** — and their `$id` says so:
+
+| Schema | `$id` |
+| --- | --- |
+| envelope | `https://contextgraphprotocol.org/schema/v1/contextgraph-envelope.schema.json` |
+| lifecycle record | `https://contextgraphprotocol.org/schema/v1/contextgraph-lifecycle-record.schema.json` |
+
+`v1` is `contextgraph/1`, not the crate version. Because U1–U4 make `1.x`
+evolution additive-only, a consumer holding a copy fetched earlier in the
+family's life is never *wrong* about what it does know — which is what lets one
+URL serve the whole family. A `contextgraph/2` schema would be published at
+`/schema/v2/`, and `/schema/v1/` would keep answering.
+
+Every `$ref` in both schemas is a same-document pointer (`#/$defs/…`); neither
+references the other, so both validate fully offline from a local copy. The
+former `$id`, on `raw.githubusercontent.com`, still resolves to the same bytes.
+See [ADR 0013](docs/adr/0013-schema-identity-on-a-branded-versioned-url.md).
 
 ---
 

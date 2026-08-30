@@ -10,11 +10,24 @@ name: Publish spec
 # additionally denied write on them in IAM, so the two repositories cannot
 # overwrite each other.
 #
-# What this does NOT change is the schemas' canonical identity. Their `$id`
-# still resolves to raw.githubusercontent.com, and `validate-examples.py`
-# checks the served copy at that URL byte-for-byte. The copies published here
-# are a mirror on a branded host; promoting `$id` to it is a protocol-visible
-# change and is tracked separately.
+# This job now carries the schemas' canonical identity. Their `$id` names
+# `https://contextgraphprotocol.org/schema/v1/…` (#79, ADR 0013), so what is
+# published here is what every validator resolves — not a mirror. Three paths
+# answer for the same two files, on purpose:
+#
+#   /schema/v1/<name>  the identity `$id` names, versioned by the
+#                      `contextgraph/1` major family. `contextgraph/2` gets
+#                      /schema/v2/ and this keeps answering.
+#   /schema/<name>     the unversioned path published since #78. In the wild,
+#                      so it keeps being published; it is a convenience alias,
+#                      not an identity.
+#   raw.githubusercontent.com/…/main/schema/<name>
+#                      the former identity, still quoted in the wild. GitHub
+#                      serves it for as long as the file stays where it is,
+#                      which is why `schema/*.schema.json` must never move.
+#
+# One copy of each schema lives in the repository; the extra paths are made
+# here, so there is nothing to keep in sync.
 on:
   pull_request:
     paths:
@@ -106,6 +119,17 @@ jobs:
             --cache-control 'public, max-age=300, must-revalidate' \
             --only-show-errors
 
+          # The identity path. Same bytes, published under the
+          # `contextgraph/1` major family — this is the URL each schema's
+          # `$id` names and every validator resolves (ADR 0013). It is a
+          # second published path, not a second source file: `schema/` holds
+          # one copy and there is no `schema/v1/` directory in the repository.
+          aws s3 sync schema "s3://$BUCKET/schema/v1" \
+            --exclude '*' --include '*.json' \
+            --content-type 'application/json' \
+            --cache-control 'public, max-age=300, must-revalidate' \
+            --only-show-errors
+
           aws s3 cp schema/reference-vectors.ndjson "s3://$BUCKET/schema/reference-vectors.ndjson" \
             --content-type 'application/x-ndjson' \
             --cache-control 'public, max-age=300, must-revalidate' \
@@ -153,25 +177,48 @@ jobs:
       - name: verify through the public hostname
         run: |
           set -euo pipefail
-          url=https://contextgraphprotocol.org/schema/contextgraph-envelope.schema.json
-          for attempt in $(seq 1 10); do
-            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "$url" || echo 000)
-            if [ "$code" = "200" ]; then
-              # A 200 proves the edge answers. That the answer is the schema
-              # and not the site's 404 page — which is also served with a 200
-              # by a static site — is what this second check is for.
-              if curl -sS --max-time 15 "$url" | jq -e '.title' >/dev/null; then
-                echo "schema is live and parses as JSON"
-                exit 0
-              fi
-              echo "::error::$url returned 200 but the body is not the schema"
+
+          # Every published path must answer, and must answer with the schema
+          # whose `$id` is the identity.
+          #
+          # A 200 alone proves nothing here: a static site serves its own 404
+          # page with a 200, which is why the old version of this step also
+          # parsed the body. Asserting the served `$id` is the stronger form,
+          # and it is the check that matters now that `$id` names this host —
+          # it catches a stale object left at one of the alias paths, which a
+          # `.title` probe would happily accept. This is the live half of the
+          # loop `schema/validate-examples.py` pins offline.
+          base=https://contextgraphprotocol.org/schema
+
+          assert_serves() {
+            local url=$1 expected_id=$2 code=000 served attempt
+            for attempt in $(seq 1 10); do
+              code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "$url" || echo 000)
+              [ "$code" = "200" ] && break
+              echo "attempt $attempt: $url -> $code"
+              sleep 6
+            done
+            if [ "$code" != "200" ]; then
+              echo "::error::$url did not return 200 after the publish (last status $code)"
               exit 1
             fi
-            echo "attempt $attempt: $code"
-            sleep 6
+            served=$(curl -sS --max-time 15 "$url" | jq -r '.["$id"] // empty' || true)
+            if [ "$served" != "$expected_id" ]; then
+              echo "::error::$url returned 200 but its \$id is '${served:-<absent, or the body is not the schema>}' — expected '$expected_id'"
+              exit 1
+            fi
+            echo "ok: $url serves \$id $served"
+          }
+
+          for name in contextgraph-envelope contextgraph-lifecycle-record; do
+            file="$name.schema.json"
+            identity="$base/v1/$file"
+            # The identity each schema's `$id` names, then the unversioned
+            # alias kept alive from #78. Both serve the same bytes, so both
+            # must report the identity as their `$id`.
+            assert_serves "$identity" "$identity"
+            assert_serves "$base/$file" "$identity"
           done
-          echo "::error::$url did not return 200 after the publish (last status $code)"
-          exit 1
 
       # The microsite renders documentation that quotes this specification, so
       # a protocol merge has to rebuild it or the two drift with nothing to say

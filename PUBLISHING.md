@@ -184,7 +184,8 @@ puts them on the microsite's CDN.
 
 | Source | URL |
 | --- | --- |
-| `schema/*.json` | `https://contextgraphprotocol.org/schema/…` |
+| `schema/*.json` | `https://contextgraphprotocol.org/schema/v1/…` — **the identity** |
+| `schema/*.json` | `https://contextgraphprotocol.org/schema/…` — unversioned alias |
 | `schema/reference-vectors.ndjson` | `https://contextgraphprotocol.org/schema/reference-vectors.ndjson` |
 | `SPEC.md` | `https://contextgraphprotocol.org/spec/SPEC.md` |
 | `docs/**` | `https://contextgraphprotocol.org/spec/docs/…` |
@@ -195,13 +196,49 @@ whose failure mode is publishing anyway when the dependency is skipped — and t
 distinction that matters is between "the schema validated somewhere" and "the
 bytes about to be published validated".
 
-## This does not move the schemas' identity
+## This job carries the schemas' identity
 
-Each schema's `$id` still resolves to `raw.githubusercontent.com`, and
-`validate-examples.py` checks the copy served *there* byte-for-byte. What is
-published to the site is a **mirror on a branded host**, not a new canonical
-location. Promoting `$id` to `contextgraphprotocol.org` would change what every
-validator resolves and is a protocol-visible decision, not a deployment one.
+It did not until #79. Each schema's `$id` names
+`https://contextgraphprotocol.org/schema/v1/<name>`
+([ADR 0013](./docs/adr/0013-schema-identity-on-a-branded-versioned-url.md)), so
+what this job publishes is what every validator resolves — not a mirror. A
+merge that fails to serve it fails the job.
+
+`v1` is the `contextgraph/1` **major protocol family**, not the crate version
+(already `2.x` against that same wire — see
+[docs/stability.md](./docs/stability.md)). `contextgraph/2` would be published
+at `/schema/v2/`, and `/schema/v1/` would keep answering.
+
+Three paths serve the same two files, and all three must keep working:
+
+- `/schema/v1/<name>` — the identity.
+- `/schema/<name>` — the unversioned path published since #78. In the wild, so
+  it keeps being published. It is a convenience alias, never an identity.
+- `raw.githubusercontent.com/…/main/schema/<name>` — the former identity, still
+  quoted. Nothing publishes it: GitHub serves it as long as the file stays put.
+  **So `schema/*.schema.json` must never be moved or renamed.**
+
+Only one copy of each schema exists in the repository. There is no `schema/v1/`
+directory; the publisher writes the same bytes to both prefixes, so there is
+nothing to keep in sync.
+
+## How identity is checked, in two halves
+
+`schema/validate-examples.py` runs first, in this workflow rather than only in
+`ci.yml`. Reading another workflow's result would need a `workflow_run` trigger,
+whose failure mode is publishing anyway when the dependency is skipped — and the
+distinction that matters is between "the schema validated somewhere" and "the
+bytes about to be published validated".
+
+That script is **offline**: it pins the `$id` string and does not fetch it. It
+runs on every PR, forks included, against commits whose publish has not
+happened, so a fetch there would be flaky rather than informative.
+
+The dereference is this workflow's last check instead, after the sync and the
+CDN invalidation: it fetches every published path and asserts the served body
+reports the identity as its own `$id`. A 200 is not enough on its own — a static
+site answers its 404 page with one — and neither is "the body parses as the
+schema", which would accept a stale object left at an alias path.
 
 ## Two things the site's own repository depends on
 

@@ -217,9 +217,45 @@ now tied to the kind, because an unknown kind owns its string.
 
 ### 5.4 SDKs move in lockstep
 
-`contextgraph-sdk` (Python) and `@contextgraph/sdk` (TypeScript) also go to
-`2.0.0`, for the same reason in their own type systems: `FrameKind` widens to
-accept any string, so an exhaustive `switch` that relied on `never`-narrowing
-stops type-checking. Narrow with the exported `isKnownFrameKind` /
-`KNOWN_FRAME_KINDS` when you need to branch only on kinds you understand. The
-Go SDK is unchanged in this release — porting it is tracked in issue #93.
+`contextgraph-sdk` (Python) and `@contextgraphprotocol/typescript-sdk`
+(TypeScript) also go to `2.0.0`, for the same reason in their own type systems:
+`FrameKind` widens to accept any string, so an exhaustive `switch` that relied
+on `never`-narrowing stops type-checking. Narrow with the exported
+`isKnownFrameKind` / `KNOWN_FRAME_KINDS` when you need to branch only on kinds
+you understand. The Go SDK is unchanged in this release — porting it is tracked
+in issue #93.
+
+## 6. The JSON Schemas moved to a branded `$id` — no action required
+
+**Nothing you have to do.** No bytes changed, no URL stopped working, and no
+`$ref` resolves differently. Read this only so the new URL is not a surprise.
+
+Both schemas' `$id` now names the protocol's own domain, versioned by major
+family:
+
+| | `$id` |
+| --- | --- |
+| was | `https://raw.githubusercontent.com/macanderson/context-graph-protocol/main/schema/<name>` |
+| now | `https://contextgraphprotocol.org/schema/v1/<name>` |
+
+`v1` is the `contextgraph/1` wire family, not the crate version — the crates are
+already on `2.x` against that same wire ([docs/stability.md](./docs/stability.md)).
+The old URL pinned `main`, a git branch, so an additive `1.x` minor silently
+changed what a resolver holding it saw. A family is bounded: within
+`contextgraph/1` changes are additive-only, so an older cached copy stays valid,
+merely less complete. [ADR 0013](./docs/adr/0013-schema-identity-on-a-branded-versioned-url.md)
+carries the reasoning.
+
+**If you fetch the schema by URL,** the `raw.githubusercontent.com` URL still
+returns 200 and the same bytes, and will keep doing so — it is in the wild, and
+a schema URL that 404s is worse than a stale one. Move to the branded URL when
+convenient, not urgently.
+
+**If you pin a local copy,** it stays valid. Every `$ref` in both schemas is a
+same-document pointer (`#/$defs/…`) and neither schema references the other, so
+`$id` has no bearing on resolution — the schemas validate fully offline, exactly
+as before.
+
+**If you compare `$id` as a string,** that is the one thing that changed. A test
+asserting the old literal needs the new one. `contextgraph-conformance` does not
+do this, and neither does any SDK in this repository.

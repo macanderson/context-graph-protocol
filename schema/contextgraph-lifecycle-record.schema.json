@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/macanderson/context-graph-protocol/main/schema/contextgraph-lifecycle-record.schema.json",
+  "$id": "https://contextgraphprotocol.org/schema/v1/contextgraph-lifecycle-record.schema.json",
   "title": "Context Graph Protocol lifecycle record",
   "description": "One immutable, content-addressed ContextRecord of the Context Exchange Provider profile (contextgraph/lifecycle/1.0-draft, issue #28). A common envelope plus a flat, record_kind-discriminated body \u2014 the append/get/resolve exchange unit, layered on the contextgraph/1 base family, NOT part of the frozen 1.0 core (ADR 0007 \u00a74). See docs/profiles/context-exchange-provider.md.",
   "$comment": "AUTHORING-STRICT profile: unevaluatedProperties:false closes the discriminated union so a fixture typo or a field on the wrong record_kind is caught. This strictness is a lint on what you author, NOT the interop contract \u2014 per SPEC.md \u00a713 U1 a receiver on the wire MUST ignore unrecognised members. Detached RecordAttestation ($defs/RecordAttestation) is validated separately; it is never part of a record or its record_hash preimage.",

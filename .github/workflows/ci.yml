@@ -49,6 +49,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
+      # `attestation` is off by default and no workspace member enables
+      # it, so the line above compiles neither contextgraph_types::attest
+      # nor the cross-language vectors the SDK suites reconcile against.
+      - run: cargo test -p contextgraph-types --features attestation
 
   features:
     name: contextgraph-types feature matrix
@@ -168,6 +172,9 @@ jobs:
           npm run build
       - name: TS example provider passes the conformance suite
         run: ./.github/scripts/conformance-external.sh -- node sdk/typescript/dist/examples/example-docs.js
+      - name: TS attestation port reproduces the published vectors
+        working-directory: sdk/typescript
+        run: node --test "dist/test/*.test.js"
 
   sdk-python:
     name: sdk (python) is a conformant implementation
@@ -182,6 +189,9 @@ jobs:
           python-version: "3.12"
       - name: Python example provider passes the conformance suite
         run: ./.github/scripts/conformance-external.sh -- python3 sdk/python/examples/example_docs.py
+      - name: Python attestation port reproduces the published vectors
+        working-directory: sdk/python
+        run: python3 -m unittest discover -s tests -v
 
   sdk-go:
     name: sdk (go) is a conformant implementation
@@ -201,6 +211,9 @@ jobs:
           go build -o "$GITHUB_WORKSPACE/cg-go-example" ./examples/example-docs
       - name: Go example provider passes the conformance suite
         run: ./.github/scripts/conformance-external.sh -- ./cg-go-example
+      - name: Go attestation port reproduces the published vectors
+        working-directory: sdk/go
+        run: go test ./contextgraph/attest/
 
   sdk-typescript-http:
     name: sdk (typescript) HTTP adapter is conformant
@@ -284,6 +297,74 @@ jobs:
           code=$?
           kill $SERVER 2>/dev/null || true
           exit $code
+
+  sdk-typescript-types:
+    name: sdk (typescript) typechecks
+    runs-on: ubuntu-latest
+    # `sdk (typescript) is a conformant implementation` runs `npm run build`,
+    # which is `tsc`, so a type error does redden something today — but only
+    # after that job has spent a full `cargo build --workspace --bins` it does
+    # not need, and only for as long as the build script stays `tsc`. The
+    # `FrameKind` type changes PR #87 shipped went in on a claim rather than a
+    # run: no local toolchain, and `npx tsc` failed in that environment (#94).
+    # This is the run — no Rust, no emit, one question.
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: TypeScript SDK typechecks
+        working-directory: sdk/typescript
+        # `npm ci`, not the `npm install` the conformance jobs use: it resolves
+        # `package-lock.json` exactly, which pins the compiler at typescript
+        # 5.9.3 rather than whatever `^5.9.0` means this week. Same reason the
+        # job below pins mypy — a floating strict typechecker turns each of its
+        # releases into a possible red main on code nobody touched. The
+        # conformance jobs can float because they ask whether the SDK still
+        # behaves, not whether a particular compiler still accepts it.
+        run: |
+          npm ci
+          npx tsc --noEmit
+
+  sdk-python-types:
+    name: sdk (python) typechecks
+    runs-on: ubuntu-latest
+    # The Python SDK ships `py.typed`, which promises every downstream
+    # typechecker that its annotations are meant to be believed. Nothing
+    # checked them, so the promise was untested. `--strict`, because a
+    # `py.typed` package that leaks `Any` across its own boundary keeps that
+    # promise to its callers and not to itself.
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Pinned: an unpinned strict typechecker turns each of its releases into
+      # a possible red main on code nobody touched. Bumping it is a PR that
+      # reads the new diagnostics.
+      - run: pip install "mypy==2.3.1"
+      - name: Python SDK typechecks
+        working-directory: sdk/python
+        # `--python-version 3.10`, not the 3.9 floor `pyproject.toml` declares:
+        # mypy 2.x refuses to target 3.9 at all, and 3.10 is the nearest target
+        # it accepts.
+        run: mypy --strict --python-version 3.10 contextgraph_sdk examples
+
+  sdk-version-pins:
+    name: sdk version pins name a version their manifest ships
+    runs-on: ubuntu-latest
+    # The scaffolder's DEFAULT_SDK table states versions of two packages it
+    # does not own, and it sat a full major behind sdk/typescript/package.json
+    # for an unknown length of time (#98). The scaffold job below cannot catch
+    # that: it overrides both published pins with local paths so CI never
+    # depends on a publish — the right call for that job, and the reason this
+    # guard is a separate one. Offline, stdlib only, reads no registry.
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 .github/scripts/check-sdk-version-pins.py
 
   sdk-scaffold:
     name: create-contextgraph-provider scaffolds a conformant project
