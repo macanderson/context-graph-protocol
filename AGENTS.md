@@ -32,10 +32,13 @@ macanderson org repos.
   finishing it links it with `Refs #N` rather than `Closes #N`: `Refs`
   does not close, so the merge gate does not hold that PR against the
   issue's DoD. A PR may carry both, and is gated only on what it closes.
-- **[SCR-004](docs/scr/SCR-004-residue-becomes-issues.md) — Residue:**
-  Before declaring any task complete, file a GitHub issue for every
-  follow-up, tech-debt item, or logical next step you noticed. Apply ONLY
-  the `triage` label.
+- **[SCR-004](docs/scr/SCR-004-residue-becomes-issues.md) — Fix over
+  file:** Fix what you notice in the PR you are making; two unrelated fixes
+  in one PR is fine. File an issue only when a fix cannot responsibly ride
+  the PR (a maintainer decision, a rig or spend, or work larger than the
+  session), and only when fixing it moves stability, reliability,
+  maintainability, innovation, efficiency, or performance. Apply ONLY the
+  `triage` label.
 - **[SCR-005](docs/scr/SCR-005-triage-separation-of-duties.md) — Triage
   separation of duties:** Never apply priority (`P0`–`P3`) or size labels —
   a dedicated triage agent owns sizing and priority; a guard workflow
