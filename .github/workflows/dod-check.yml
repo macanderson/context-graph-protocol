@@ -13,6 +13,8 @@
 # change what runs here without a commit in this one. Re-pin when the
 # implementation changes, which is a reviewable one-line diff naming the
 # version it moved to.
+# The decision and what it costs are recorded in macanderson/oxagen's
+# docs/adr/ADR-045-pin-cross-repo-reusable-workflows.md.
 name: dod-check
 
 on:
