@@ -1,7 +1,7 @@
 /**
- * The HTTP twin of `example-docs.ts`: the same honest two-frame documentation
- * provider, served over the "streamable HTTP" transport (`SPEC.md` §3) instead
- * of stdio. It answers the whole CGP protocol on one POST endpoint, so the
+ * The HTTP twin of `example-docs.ts`: the same honest two-frame provider — one
+ * `doc` and one `snippet`, with disjoint validity windows — served over the
+ * "streamable HTTP" transport (`SPEC.md` §3) instead of stdio. It answers the whole CGP protocol on one POST endpoint, so the
  * conformance suite can drive it remotely:
  *
  * ```sh
@@ -21,6 +21,7 @@ import { ProviderError, type Provider } from "../src/provider.js";
 import type {
   Capabilities,
   ContextFrame,
+  FrameKind,
   ProviderInfo,
   VerifyRequest,
   VerifyResponse,
@@ -51,18 +52,29 @@ function isAnchored(frame: ContextFrame, anchors: string[]): boolean {
   return (frame.relations ?? []).some((rel) => anchors.includes(rel.target_uri));
 }
 
+/**
+ * One canned frame.
+ *
+ * `kind` and `validFrom` are parameters rather than constants because the two
+ * frames deliberately differ in both, mirroring the Rust reference fixture: a
+ * provider that declares `["doc", "snippet"]` and serves only `doc` frames
+ * makes §Q1 unobservable, and two frames sharing one validity window makes an
+ * `as_of` pin unobservable the same way.
+ */
 function docFrame(
   id: string,
+  kind: FrameKind,
   title: string,
   content: string,
   file: string,
   range: string,
   score: number,
   digest: string,
+  validFrom: string,
 ): ContextFrame {
   return {
     id,
-    kind: "doc",
+    kind,
     title,
     content,
     content_digest: digest,
@@ -70,7 +82,7 @@ function docFrame(
     score,
     // Honest cost: ceil(utf8_len(content)/4) (B3).
     token_cost: budgetTokens(content),
-    valid_from: "2026-01-01T00:00:00Z",
+    valid_from: validFrom,
     recorded_at: "2026-07-20T18:00:00Z",
     provenance: [
       {
@@ -128,32 +140,59 @@ const provider: Provider = {
         "bad_request",
       );
     }
-    const frames = [
+    let frames = [
+      // Valid since the start of the year — before the conformance suite's
+      // `as_of` pin, so a pinned query still reaches it.
       docFrame(
         "frm_getting_started",
+        "doc",
         "Getting Started",
         "Install the reference binding, then implement the required provider methods.",
         "getting-started.md",
         "L1-40",
         0.82,
         GETTING_STARTED_DIGEST,
+        "2026-01-01T00:00:00Z",
       ),
+      // A `snippet`, and one that only became true in the autumn: the second
+      // frame is what gives §Q1 and §F4 something to observe. It is the frame a
+      // `kinds: ["doc"]` query must drop and a `kinds: ["snippet"]` query must
+      // keep, and the one a mid-year `as_of` pin must exclude.
       docFrame(
         "frm_configuration",
-        "Configuration",
-        "Providers declare their data-flow direction at the handshake so hosts can gate consent before sending any query.",
+        "snippet",
+        "Configuration example",
+        "const host = createHost().withProvider(\"docs\", provider);",
         "configuration.md",
         "L1-25",
         0.61,
         CONFIGURATION_DIGEST,
+        "2026-09-01T00:00:00Z",
       ),
     ];
+    // §Q1: a non-empty `kinds` is a filter, not a hint. Returning a frame
+    // outside it spends the host's budget on content it explicitly excluded.
+    const kinds = query.kinds ?? [];
+    if (kinds.length > 0) {
+      frames = frames.filter((frame) => kinds.includes(frame.kind));
+    }
     const anchors = query.anchors ?? [];
     if (anchors.length > 0) {
       frames.sort(
         (a, b) => Number(isAnchored(b, anchors)) - Number(isAnchored(a, anchors)),
       );
     }
+    // §F4/§6.1: honour an `as_of` pin — content that was not yet true at the
+    // pinned instant is not returned. One spelling per instant means a
+    // lexicographic compare on the UTC strings is a chronological one.
+    const asOf = query.as_of;
+    if (asOf !== undefined) {
+      frames = frames.filter(
+        (frame) => frame.valid_from === undefined || frame.valid_from <= asOf,
+      );
+    }
+    // `truncated` stays false: these filters honour the host's own narrowing,
+    // they are not this provider running out of budget (§B2).
     return { frames, truncated: false };
   },
 

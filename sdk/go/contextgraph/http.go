@@ -15,7 +15,6 @@ package contextgraph
 
 import (
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 )
@@ -71,14 +70,16 @@ func handleEnvelope(provider Provider, envelope incomingEnvelope) any {
 			// A deliberate, coded refusal of a request the provider can't
 			// honestly serve (§E1): an error envelope, not frames.
 			reply := errorReply{Type: "error", Message: err.Error(), ID: envelope.ID}
-			var pe ProviderError
-			if errors.As(err, &pe) {
-				reply.Code = pe.Code
+			if code, ok := providerErrorCode(err); ok {
+				reply.Code = code
 			}
 			return reply
 		}
 		// Echo the correlation id so the host can match reply to request (H4).
-		return framesReply{Type: "frames", Result: result, ID: envelope.ID}
+		// withFrames keeps an empty answer serializable: Go marshals a nil
+		// slice to `null`, and `"frames": null` is a deserialization error at a
+		// conforming host, not an empty result.
+		return framesReply{Type: "frames", Result: withFrames(result), ID: envelope.ID}
 	case "verify":
 		if envelope.Request == nil {
 			return nil
@@ -94,7 +95,7 @@ func handleEnvelope(provider Provider, envelope incomingEnvelope) any {
 			}
 			response = VerifyResponse{Verdicts: verdicts}
 		}
-		return verifiedReply{Type: "verified", Response: response}
+		return verifiedReply{Type: "verified", Response: withVerdicts(response)}
 	default:
 		// shutdown ends the exchange but keeps the server alive; handshake_ack /
 		// frames / verified / error are host->provider-invalid. Neither replies.

@@ -47,7 +47,7 @@ func currentDigest(frameID string) (string, bool) {
 	}
 }
 
-func docFrame(id, title, content, file, rng string, score float64, digest string) cg.ContextFrame {
+func docFrame(id, title, content, file, rng, validFrom string, score float64, digest string) cg.ContextFrame {
 	return cg.ContextFrame{
 		ID:            id,
 		Kind:          "doc",
@@ -58,7 +58,7 @@ func docFrame(id, title, content, file, rng string, score float64, digest string
 		Score:         score,
 		// Honest cost: ceil(utf8_len(content)/4) (B3).
 		TokenCost:  cg.BudgetTokens(content),
-		ValidFrom:  "2026-01-01T00:00:00Z",
+		ValidFrom:  validFrom,
 		RecordedAt: "2026-07-20T18:00:00Z",
 		Provenance: []cg.Provenance{{
 			Type:   "file",
@@ -74,6 +74,29 @@ func docFrame(id, title, content, file, rng string, score float64, digest string
 			DisplayName: title + " overview",
 		}},
 	}
+}
+
+// retain keeps only the frames satisfying keep, preserving order — the Go
+// spelling of the reference provider's Vec::retain. It filters in place, so the
+// result is never nil even when nothing survives.
+func retain(frames []cg.ContextFrame, keep func(cg.ContextFrame) bool) []cg.ContextFrame {
+	kept := frames[:0]
+	for _, frame := range frames {
+		if keep(frame) {
+			kept = append(kept, frame)
+		}
+	}
+	return kept
+}
+
+// containsKind reports whether kinds names frame's kind.
+func containsKind(kinds []string, kind string) bool {
+	for _, candidate := range kinds {
+		if candidate == kind {
+			return true
+		}
+	}
+	return false
 }
 
 func isAnchored(frame cg.ContextFrame, anchors []string) bool {
@@ -120,12 +143,15 @@ func (exampleDocsProvider) Capabilities() cg.Capabilities {
 }
 
 func (exampleDocsProvider) Query(query cg.ContextQuery) (cg.ContextQueryResult, error) {
-	if n := len(query.Embedding); n > 0 && n != embeddingDimensions {
-		return cg.ContextQueryResult{}, cg.ProviderError{
+	// §E1: the test is presence, not length — an empty vector is length 0,
+	// which contradicts 384 exactly as 385 does, and the other three
+	// implementations reject it on that basis.
+	if query.HasEmbedding() && len(query.Embedding) != embeddingDimensions {
+		return cg.ContextQueryResult{}, &cg.ProviderError{
 			Code: "bad_request",
 			Message: fmt.Sprintf(
 				"query embedding has %d dimensions; this provider indexes %d (%s) (§E1)",
-				n, embeddingDimensions, embeddingFingerprint,
+				len(query.Embedding), embeddingDimensions, embeddingFingerprint,
 			),
 		}
 	}
@@ -136,6 +162,8 @@ func (exampleDocsProvider) Query(query cg.ContextQuery) (cg.ContextQueryResult, 
 			"Install the reference binding, then implement the required provider methods.",
 			"getting-started.md",
 			"L1-40",
+			// Valid since the start of the year — before the as_of probe's pin.
+			"2026-01-01T00:00:00Z",
 			0.82,
 			gettingStartedDigest,
 		),
@@ -145,15 +173,37 @@ func (exampleDocsProvider) Query(query cg.ContextQuery) (cg.ContextQueryResult, 
 			"Providers declare their data-flow direction at the handshake so hosts can gate consent before sending any query.",
 			"configuration.md",
 			"L1-25",
+			// Became true only after the as_of probe's pin, so a mid-year pinned
+			// query must not see it — the same disjoint window the reference
+			// fixture gives its second frame.
+			"2026-09-01T00:00:00Z",
 			0.61,
 			configurationDigest,
 		),
+	}
+	// §Q1: a non-empty Kinds is a filter, not a hint. Both canned frames are
+	// `doc`, so a query narrowed to `snippet` answers honestly with zero frames
+	// rather than with documents the host excluded.
+	if len(query.Kinds) > 0 {
+		frames = retain(frames, func(frame cg.ContextFrame) bool {
+			return containsKind(query.Kinds, frame.Kind)
+		})
 	}
 	if len(query.Anchors) > 0 {
 		sort.SliceStable(frames, func(i, j int) bool {
 			return isAnchored(frames[i], query.Anchors) && !isAnchored(frames[j], query.Anchors)
 		})
 	}
+	// §F4/§6.1: honour an as_of pin. One spelling per instant, so a
+	// lexicographic compare on the UTC strings is a chronological one.
+	if query.AsOf != "" {
+		frames = retain(frames, func(frame cg.ContextFrame) bool {
+			return frame.ValidFrom == "" || frame.ValidFrom <= query.AsOf
+		})
+	}
+	// Truncated stays false however many frames the filters dropped: truncation
+	// means the budget did not fit the candidates, not that the host's own
+	// filter excluded some.
 	return cg.ContextQueryResult{Frames: frames, Truncated: false}, nil
 }
 

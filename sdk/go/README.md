@@ -60,6 +60,48 @@ To answer `context/verify`, also implement `cg.Verifier`. The runtime handles th
 whole lifecycle — handshake, query (echoing the correlation `id`), verify,
 shutdown — and stays alive with a typed error on a malformed line.
 
+### Four things the runtime does so you do not have to
+
+- **An empty answer is a real answer.** "I have nothing relevant" is explicitly
+  permitted, so `return cg.ContextQueryResult{}, nil` is valid — the runtime
+  normalizes a nil `Frames` (and a nil `Verdicts` from your `Verifier`) to `[]`
+  before writing. Go marshals a nil slice to `null`, and `"frames": null` is a
+  *deserialization error* at a conforming host, not an empty result.
+- **A refusal keeps its code in either spelling.** `cg.ProviderError{…}` and
+  `&cg.ProviderError{…}` both reach the host as
+  `{"type":"error","code":"bad_request",…}`, and so does either one wrapped with
+  `%w`. Use it to refuse a request you cannot honestly serve — SPEC.md §E1's
+  rejection of a query embedding whose length contradicts your declared
+  `EmbeddingsFingerprint` is the canonical case.
+- **`kinds` is a filter, not a hint (§Q1).** When `query.Kinds` is non-empty,
+  return only frames whose `Kind` is in it — returning others spends the host's
+  budget on content it explicitly excluded. Zero frames is the right answer for
+  a kind you declare but cannot currently serve.
+- **`as_of` pins retrieval to an instant (§F4).** Drop any frame whose
+  `ValidFrom` is strictly after `query.AsOf`. The timestamp profile admits one
+  spelling per instant, so a string compare is a chronological one.
+
+Neither filter is truncation: leave `Truncated` false and `DroppedEstimate` nil,
+because the host excluded that content itself.
+
+### Attaching a vector to a frame
+
+`ContextFrame.Embedding` is a `*cg.FrameEmbedding` — the fingerprint naming the
+space, and an elidable vector:
+
+```go
+frame.Embedding = &cg.FrameEmbedding{
+	Fingerprint: "bge-small-en-v1.5/384/l2",
+	Vector:      vector, // optional: name the space without shipping the numbers
+}
+```
+
+On the query side, `query.HasEmbedding()` asks whether the host sent an
+`embedding` **field**, which is not the same question as whether it sent any
+numbers: `"embedding": []` is present and empty, and its length of 0 contradicts
+a declared 384 exactly as 385 does. Guard a §E1 dimension check with
+`HasEmbedding()`, never with `len(query.Embedding) > 0`.
+
 ## Host it over HTTP
 
 The same provider runs behind a single POST endpoint (the streamable-HTTP
