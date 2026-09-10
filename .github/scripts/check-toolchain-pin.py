@@ -50,7 +50,20 @@ CARGO_TOML = ROOT / "Cargo.toml"
 # two-component version resolves to the latest patch in that series, so it
 # floats exactly like `stable` does, only more slowly and less visibly.
 CONCRETE_VERSION = re.compile(r"^\d+\.\d+\.\d+$")
-FLOATING_ACTION = re.compile(r"dtolnay/rust-toolchain@(stable|beta|nightly)\b")
+# Anchored to a `uses:` directive rather than matched anywhere on the line.
+#
+# The looser form was wrong in a way worth keeping a note about: it fired on the
+# comment *above this job* explaining the rule, because that comment names
+# `dtolnay/rust-toolchain@stable` in order to say not to write it. A guard that
+# forbids a string cannot be written with a grep for that string, or it forbids
+# its own documentation — and the reflex fix, deleting the sentence, would take
+# out the one place a reader learns why the rule exists.
+#
+# `uses:` may be a step key or a list item, and the value may be quoted, so all
+# three shapes are accepted. Anything not in a `uses:` value is prose.
+FLOATING_ACTION = re.compile(
+    r"""^\s*(?:-\s*)?uses:\s*['"]?dtolnay/rust-toolchain@(stable|beta|nightly)\b"""
+)
 
 
 def fail(message: str) -> None:
