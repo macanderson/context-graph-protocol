@@ -92,23 +92,30 @@ fn read_fixture(path: &PathBuf) -> Value {
 /// the digest without changing the record.
 fn extend(wire: &Value) -> Value {
     let mut extended = wire.clone();
-    extended.as_object_mut().expect("a record is an object").insert(
-        "acme:relay".to_string(),
-        json!({
-            "hops": 2,
-            "latency_ms": 12.5,
-            "verified": true,
-            "route": ["provider_a", "provider_b"],
-            "note": null
-        }),
-    );
+    extended
+        .as_object_mut()
+        .expect("a record is an object")
+        .insert(
+            "acme:relay".to_string(),
+            json!({
+                "hops": 2,
+                "latency_ms": 12.5,
+                "verified": true,
+                "route": ["provider_a", "provider_b"],
+                "note": null
+            }),
+        );
     extended
 }
 
 #[test]
 fn every_fixture_hashes_the_same_as_a_value_and_as_a_type() {
     for path in record_fixture_paths() {
-        let name = path.file_name().expect("named").to_string_lossy().to_string();
+        let name = path
+            .file_name()
+            .expect("named")
+            .to_string_lossy()
+            .to_string();
         let wire = read_fixture(&path);
 
         let record: ContextRecord = serde_json::from_value(wire.clone())
@@ -137,7 +144,11 @@ fn every_fixture_hashes_the_same_as_a_value_and_as_a_type() {
 #[test]
 fn every_fixture_still_agrees_carrying_a_member_no_reference_type_models() {
     for path in record_fixture_paths() {
-        let name = path.file_name().expect("named").to_string_lossy().to_string();
+        let name = path
+            .file_name()
+            .expect("named")
+            .to_string_lossy()
+            .to_string();
         let extended = extend(&read_fixture(&path));
 
         let record: ContextRecord = serde_json::from_value(extended.clone())
@@ -164,7 +175,11 @@ fn every_fixture_still_agrees_carrying_a_member_no_reference_type_models() {
 #[test]
 fn an_extension_member_is_content_and_moves_the_content_address() {
     for path in record_fixture_paths() {
-        let name = path.file_name().expect("named").to_string_lossy().to_string();
+        let name = path
+            .file_name()
+            .expect("named")
+            .to_string_lossy()
+            .to_string();
         let wire = read_fixture(&path);
         assert_ne!(
             record_hash(&extend(&wire)).unwrap_or_else(|e| panic!("{name}: {e}")),

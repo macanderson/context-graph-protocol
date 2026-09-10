@@ -50,7 +50,11 @@ fn reserved_members_are_sorted_unique_and_unnamespaced() {
         "RESERVED_RECORD_MEMBERS must stay sorted — membership is a binary search"
     );
     let unique: BTreeSet<&&str> = RESERVED_RECORD_MEMBERS.iter().collect();
-    assert_eq!(unique.len(), RESERVED_RECORD_MEMBERS.len(), "duplicate entry");
+    assert_eq!(
+        unique.len(),
+        RESERVED_RECORD_MEMBERS.len(),
+        "duplicate entry"
+    );
     for name in RESERVED_RECORD_MEMBERS {
         assert!(
             !name.contains(':'),
@@ -195,7 +199,11 @@ fn extra_never_emits_a_member_the_types_already_carry() {
     let encoded = serde_json::to_string(&smuggled).expect("serializes");
     let keys = top_level_keys(&encoded);
     let unique: BTreeSet<&String> = keys.iter().collect();
-    assert_eq!(keys.len(), unique.len(), "duplicate member on the wire: {encoded}");
+    assert_eq!(
+        keys.len(),
+        unique.len(),
+        "duplicate member on the wire: {encoded}"
+    );
     assert_eq!(
         record_hash_of(&smuggled).expect("hash"),
         record_hash_of(&clean).expect("hash"),
