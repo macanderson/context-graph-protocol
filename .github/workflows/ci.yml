@@ -429,6 +429,26 @@ jobs:
           python-version: "3.12"
       - run: python3 .github/scripts/check-deploy-hygiene.py
 
+  conformance-counts:
+    name: docs state the real number of conformance checks
+    runs-on: ubuntu-latest
+    # The count drifts every time somebody adds a check, and nothing noticed.
+    # #152 was filed when six documents said "five checks" and one said "seven"
+    # while the suite ran thirteen — and by the time it was fixed the suite ran
+    # fourteen, because `attestation` had landed in between. The same issue
+    # found a document citing a `usage-report` check that has never existed in
+    # any constant family; a "verified by" cell naming a check nobody wrote
+    # reads as evidence and is not.
+    #
+    # Reading the constants is the only way this stays true without somebody
+    # remembering to make it true.
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 .github/scripts/check-conformance-counts.py
+
   publish-dry-run:
     name: contextgraph-types packages cleanly (crates.io dry run)
     runs-on: ubuntu-latest
