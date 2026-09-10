@@ -83,6 +83,15 @@ jobs:
       - run: cargo test -p contextgraph-types --features record-hash
       - run: cargo test -p contextgraph-types --features record-attestation
 
+      # The job above defends the features that exist today. This defends the
+      # next one: a feature added to the crate without a line here would leave
+      # its gated vector file compiling to zero tests, and cargo reports that as
+      # success (#117). The guard reads the crate's [features] table and this
+      # job's own commands and fails when they disagree, so the job's coverage
+      # is checkable rather than something somebody has to remember.
+      - name: every declared feature is built by this job
+        run: python3 .github/scripts/check-feature-matrix.py
+
   msrv:
     name: msrv (rust-version from Cargo.toml)
     runs-on: ubuntu-latest
