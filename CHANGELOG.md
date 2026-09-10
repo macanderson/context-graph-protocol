@@ -245,6 +245,38 @@ text lands without a human merge.
   could never have seen it (#98).
 
 ### Changed
+- **CI pins the Rust toolchain (repository milestone; issue #160).** A new
+  root [`rust-toolchain.toml`](./rust-toolchain.toml) names one concrete
+  release (`1.98.1`), and every workflow job installs exactly that release
+  through the new `./.github/actions/rust` composite action instead of
+  `dtolnay/rust-toolchain@stable`. Previously the compiler moved on Rust's
+  release schedule rather than ours, and because clippy runs at `-D warnings`,
+  each new warn-by-default lint became an unannounced red `main` that landed on
+  whichever pull request happened to be open — Rust 1.98's
+  `clippy::chunks_exact_to_as_chunks` did that to `contextgraph-types`'
+  `from_hex`, green and untouched since #87, and #114 absorbed the fix only
+  because its own CI could not pass otherwise. A new stable rustfmt has the
+  same shape and is harder to attribute. Bumping is now one deliberate pull
+  request that takes the new lints and any `cargo fmt` churn together;
+  [docs/toolchain.md](./docs/toolchain.md) has the procedure.
+
+  **This is not an MSRV change.** `[workspace.package] rust-version` stays
+  `1.90`, and the published crates are unaffected — the pin is what CI lints
+  with, the MSRV is what consumers need, and the two move independently. The
+  `msrv` job now sets `RUSTUP_TOOLCHAIN` explicitly, because rustup ranks a
+  `rust-toolchain.toml` above the rustup default that job installs: without the
+  override it would have built on the pinned compiler while reporting that the
+  crates build on their oldest supported one, staying green while proving
+  nothing. `.github/scripts/check-toolchain-pin.py` gates all of it — the pin
+  is one concrete release and not older than the MSRV, no workflow installs a
+  floating channel, and the `msrv` override survives.
+- **The downstream canary's stella patch script runs on macOS.**
+  `.github/scripts/downstream-canary-stella.sh` used the GNU spelling of
+  `sed -i`, which BSD sed reads as a backup suffix, so the script aborted on
+  every Mac — despite its own header promising it runs "on a contributor's
+  machine with no extra tools installed". It now writes through a temp file,
+  the one spelling both seds accept, so the canary's failures can be reproduced
+  locally instead of only in CI.
 - **Both JSON Schemas' `$id` moves to a branded, family-versioned URL**
   (`https://contextgraphprotocol.org/schema/v1/<name>`, was
   `raw.githubusercontent.com/…/main/schema/<name>`;
