@@ -52,14 +52,53 @@ try {
 }
 
 const checks = report.checks ?? [];
-const failed = checks.filter((c) => c.status === "fail");
+
 for (const c of checks) {
   const mark = c.status === "pass" ? "OK" : c.status === "skipped" ? "--" : "XX";
   console.log(`  ${mark} ${c.name}: ${c.evidence}`);
 }
 
-if (failed.length > 0) {
-  console.error(`\nNOT conformant: ${failed.map((c) => c.name).join(", ")}`);
+// A report with no checks is not a passing report. Before this, an empty list
+// printed "All 0 checks passed — provider is conformant" and exited 0, so an
+// inspect run that probed nothing was indistinguishable from a clean one. This
+// is the first quality signal a provider author ever sees; it has to be able to
+// tell "everything passed" from "nothing ran".
+if (checks.length === 0) {
+  console.error(
+    "\nNOT conformant: the report contains no checks at all, so nothing was " +
+      "verified. This usually means inspect could not reach the provider, or " +
+      "the provider exited before the handshake. Run `contextgraph-inspect " +
+      "stdio -- node dist/stdio.js` by hand and read the probe output above " +
+      "the JSON.",
+  );
   process.exit(1);
 }
-console.log(`\nAll ${checks.length} checks passed — provider is conformant.`);
+
+// Anything that is not `pass` and not `skipped` counts against the provider,
+// rather than only the exact string "fail". A status this script does not know
+// — an `error`, or one a future inspect adds — must not be read as success by
+// a check whose whole job is to be strict.
+const passed = checks.filter((c) => c.status === "pass");
+const skipped = checks.filter((c) => c.status === "skipped");
+const failed = checks.filter(
+  (c) => c.status !== "pass" && c.status !== "skipped",
+);
+
+if (failed.length > 0) {
+  console.error(
+    `\nNOT conformant: ${failed
+      .map((c) => `${c.name} (${c.status})`)
+      .join(", ")}`,
+  );
+  process.exit(1);
+}
+
+// Skipped checks are reported separately rather than folded into the total.
+// A transport legitimately skips some checks — an HTTP provider cannot answer
+// the three stdio-only ones — but "13 checks passed" when 8 were skipped
+// overstates what was verified, and the number is what an author quotes.
+const summary =
+  skipped.length > 0
+    ? `${passed.length} passed, ${skipped.length} skipped`
+    : `all ${passed.length} checks passed`;
+console.log(`\nConformant — ${summary}.`);
