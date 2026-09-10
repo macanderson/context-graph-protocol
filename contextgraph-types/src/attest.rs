@@ -408,7 +408,25 @@ pub fn digest_string(bytes: &[u8; 32]) -> String {
     s
 }
 
-/// Parse lowercase hex into bytes. `None` on any non-hex byte or odd length.
+/// Parse **lowercase** hex into bytes. `None` on any byte outside `0-9a-f`, or
+/// on an odd length.
+///
+/// Lowercase-only is the protocol's grammar, not a preference. `SPEC.md` spells
+/// a digest as 64 lowercase hex characters and
+/// [`is_well_formed_digest`](crate::is_well_formed_digest) enforces exactly
+/// that — its own doctest asserts the uppercase form is rejected.
+///
+/// This function did not, and the divergence it created is the kind §6.5 exists
+/// to eliminate (#145). `to_digit(16)` accepts `A`-`F`, and both `parse_digest`
+/// and the signature branch of [`verify_commitment`] decode through here — so an
+/// attestation carrying an uppercase `signed_commitment` or signature verified
+/// against the Rust reference while every SDK port rejected it as malformed.
+/// The same bytes, read by two conforming implementations, produced opposite
+/// verdicts. An auditor's answer must not depend on which language opened the
+/// file.
+///
+/// Nothing emits uppercase — `digest_string` and `sign_commitment` both write
+/// lowercase — so this narrows what is *accepted*, never what is produced.
 #[cfg(feature = "attestation")]
 fn from_hex(s: &str) -> Option<Vec<u8>> {
     if !s.len().is_multiple_of(2) {
@@ -420,11 +438,26 @@ fn from_hex(s: &str) -> Option<Vec<u8>> {
     // indexes are in bounds.
     let (pairs, _) = s.as_bytes().as_chunks::<2>();
     for pair in pairs {
-        let hi = (pair[0] as char).to_digit(16)?;
-        let lo = (pair[1] as char).to_digit(16)?;
-        out.push((hi * 16 + lo) as u8);
+        let hi = lowercase_hex_digit(pair[0])?;
+        let lo = lowercase_hex_digit(pair[1])?;
+        out.push(hi * 16 + lo);
     }
     Some(out)
+}
+
+/// One lowercase hex digit's value, or `None` for anything else — uppercase
+/// `A`-`F` included.
+///
+/// Spelled out rather than reached through `char::to_digit(16)`, which accepts
+/// both cases and is what let the uppercase form through. Matching on the byte
+/// makes the accepted set visible at the point it is decided.
+#[cfg(feature = "attestation")]
+fn lowercase_hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        _ => None,
+    }
 }
 
 /// Parse a `sha256:<hex>` digest string into its 32 raw bytes.
@@ -1161,5 +1194,99 @@ mod tests {
             crate::validate::is_well_formed_digest(&rendered),
             "{rendered} must satisfy the protocol digest grammar"
         );
+    }
+}
+
+#[cfg(all(test, feature = "attestation"))]
+mod lowercase_hex_tests {
+    use super::*;
+
+    const SEED: [u8; 32] = [9u8; 32];
+    const PROVIDER: &str = "acme.docs";
+
+    fn frame() -> crate::frame::ContextFrame {
+        let mut f = crate::frame::ContextFrame::full(
+            "f1",
+            crate::frame::FrameKind::Doc,
+            "Retry policy",
+            "body",
+            0.9,
+            1,
+        );
+        f.content_digest = Some("sha256:aaaa".into());
+        f
+    }
+
+    /// The divergence #145 reported: the same attestation, read by the Rust
+    /// reference and by any SDK port, must reach the same verdict. Uppercase is
+    /// outside `SPEC.md`'s grammar, every SDK rejects it, and the reference
+    /// accepted it.
+    #[test]
+    fn an_uppercase_commitment_is_malformed_not_valid() {
+        let f = frame();
+        let mut att =
+            sign_frame_attestation(PROVIDER, &f, &SEED, "k1", "acme", "2026-09-10T00:00:00Z");
+        let key = public_key_for(&SEED);
+
+        // Baseline: as emitted, it verifies.
+        assert_eq!(
+            verify_frame_attestation(PROVIDER, &f, &att, &key),
+            AttestationVerdict::Valid
+        );
+
+        // Upper-casing only the hex body leaves the same bytes, spelled the way
+        // the grammar forbids.
+        let (scheme, hex) = att.signed_commitment.split_once(':').expect("scheme");
+        att.signed_commitment = format!("{scheme}:{}", hex.to_uppercase());
+
+        assert_eq!(
+            verify_frame_attestation(PROVIDER, &f, &att, &key),
+            AttestationVerdict::MalformedCommitment,
+            "uppercase hex is outside SPEC.md's digest grammar and every SDK rejects it"
+        );
+    }
+
+    #[test]
+    fn an_uppercase_signature_is_malformed_not_valid() {
+        let f = frame();
+        let mut att =
+            sign_frame_attestation(PROVIDER, &f, &SEED, "k1", "acme", "2026-09-10T00:00:00Z");
+        let key = public_key_for(&SEED);
+
+        att.signature = att.signature.to_uppercase();
+
+        assert_eq!(
+            verify_frame_attestation(PROVIDER, &f, &att, &key),
+            AttestationVerdict::MalformedSignature
+        );
+    }
+
+    /// The narrowing must not touch what the reference *emits*, only what it
+    /// accepts — otherwise it would break every attestation already written.
+    #[test]
+    fn everything_this_module_emits_is_still_lowercase() {
+        let f = frame();
+        let att = sign_frame_attestation(PROVIDER, &f, &SEED, "k1", "acme", "2026-09-10T00:00:00Z");
+        assert_eq!(att.signed_commitment, att.signed_commitment.to_lowercase());
+        assert_eq!(att.signature, att.signature.to_lowercase());
+        assert_eq!(
+            digest_string(&frame_commitment(PROVIDER, &f)),
+            digest_string(&frame_commitment(PROVIDER, &f)).to_lowercase()
+        );
+    }
+
+    #[test]
+    fn lowercase_digits_decode_and_uppercase_ones_do_not() {
+        assert_eq!(lowercase_hex_digit(b'0'), Some(0));
+        assert_eq!(lowercase_hex_digit(b'9'), Some(9));
+        assert_eq!(lowercase_hex_digit(b'a'), Some(10));
+        assert_eq!(lowercase_hex_digit(b'f'), Some(15));
+        for byte in [b'A', b'F', b'g', b'G', b' ', b':'] {
+            assert_eq!(
+                lowercase_hex_digit(byte),
+                None,
+                "byte {byte:?} must not decode"
+            );
+        }
     }
 }
