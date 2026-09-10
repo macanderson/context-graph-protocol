@@ -285,6 +285,9 @@ loud.
 | **F11** | An attestation **MUST** travel beside the frames it covers, in the result's `frame_attestations` / `result_attestation` members, and **MUST NOT** appear as a member of a `ContextFrame` (F6 on the wire). A `frame_attestations` entry **MUST** name the full *(provider id, frame id, `content_digest`)* identity it attests rather than implying it by array position, and **MUST** name a frame the same result carries. | `attestation_wire` suite; envelope schema |
 | **F12** | A `result_attestation`'s `signed_commitment` **MUST** be the §6.5.3 Merkle root over the commitments of **exactly** the frames carried in `result.frames`, in canonical order — never over a larger candidate set the provider truncated away. | `attestation_wire` suite; `contextgraph_types::attest::result_set_root` |
 | **F13** | An `inclusion_proof` is **OPTIONAL**, and when present **MUST** recompute the `result_attestation` root. A host that retains a strict subset of a signed result set **MUST** derive and retain the proofs for the frames it keeps *before* dropping the rest; once the siblings are gone the root can never be recomputed. | `attestation_wire` suite; host composition |
+| **F14** | A provider that signs a frame **MUST** populate that frame's `content_digest`. A frame carrying none remains conformant; *signing* one is not — the commitment would bind the frame's identity and provenance and nothing about its bytes (§6.5.2). | `attestation` suite |
+| **F15** | A verifier **MUST** distinguish an attestation that binds content from one that does not, and **MUST NOT** report the second as though it were the first. | `attestation` suite; `contextgraph_types::attest::AttestationVerdict::ValidIdentityOnly` |
+| **F16** | A host **SHOULD** surface that distinction to whoever reads the frame. A reader deciding whether to rely on a citation is asking about the bytes in front of them. | host composition |
 
 ### 6.1 Temporal profile (F4)
 
@@ -477,9 +480,37 @@ a chain head, so a signature over the head alone can be lifted from one frame an
 stapled to another: it verifies, and the evidence is invented. Including the
 *(provider id, frame id, `content_digest`)* triple of §6.3 means a signature binds
 to one frame from one provider carrying one set of bytes, or it binds to nothing.
-`content_digest` is included as an *option* because a frame is permitted to carry
-none (D3); the encoding records that absence honestly rather than substituting a
-placeholder.
+
+**What a signature binds when `content_digest` is absent.** `content_digest` is
+encoded as an *option* because a frame is permitted to carry none (D3), and
+`enc_opt` records that absence honestly rather than substituting a placeholder.
+The consequence has to be stated plainly, because it is not what the presence of
+a signature suggests: an attestation over a frame that declares no
+`content_digest` binds **the provider's identity, the frame id, and the
+provenance chain, and nothing whatsoever about the frame's content**. The same
+provider may serve one set of bytes under that frame id today and entirely
+different bytes tomorrow, and the original signature still verifies, because the
+content was never in the preimage.
+
+Three rules follow:
+
+* **F14.** A provider that signs a frame **MUST** populate that frame's
+  `content_digest`. A frame carrying no digest remains conformant; *signing* one
+  is not. This is a requirement on the attester, not on the wire — a frame with
+  no digest and no attestation is unaffected.
+* **F15.** A verifier **MUST** distinguish an attestation that binds content
+  from one that does not, and **MUST NOT** report the second as though it were
+  the first. Reporting them alike is what lets a host render "signed" over bytes
+  the signature never covered.
+* **F16.** A host **SHOULD** surface the distinction to whoever reads the frame.
+  A reader deciding whether to rely on a citation is asking about the bytes in
+  front of them, and "the provider signed something with this id" is a different
+  answer to that question.
+
+The reference implementation returns a distinct `ValidIdentityOnly` verdict for
+this case rather than `Valid`, and its host records it as attested with
+`covers_content: false`. An implementation is free to spell the distinction
+differently; it is not free to omit it.
 
 `provider_id` is the provider's handshake-declared `provider.name` (§3). A host
 also keeps a local id for each provider it has configured, and that one is not a
