@@ -5,25 +5,41 @@ capability set* — a checkable claim, which is what makes third-party
 adoption safe. This page covers both ways to run it: the `contextgraph-inspect` CLI
 binary, and calling the suite as a library from your own test harness.
 
-## The five checks
+## The checks
 
-| check | what it proves | fails when |
+Fourteen provider checks. The authoritative list is the `CHECK_*` constants in
+`contextgraph-conformance/src/lib.rs`; this table is kept honest against them by
+`.github/scripts/check-conformance-counts.py`, which fails CI when a count or a
+check name here stops matching the code.
+
+| check | what it proves | skipped when |
 |---|---|---|
-| `handshake` | the provider completes the handshake and reports a non-empty identity + capabilities | the handshake errors, times out, or `name`/`version` is empty |
-| `frame-validity` | every returned frame is citable and scored honestly | any frame's `score` is outside `[0, 1]`, or its `title`/`citation_label` is empty |
-| `budget-honesty` | the provider never lies about `token_cost` | returned frames' summed `token_cost` exceeds the query's `max_tokens` |
-| `shutdown-clean` | the provider tears down without error | `shutdown` errors or the provider vanishes before it can respond |
-| `malformed-input-tolerance` | a garbage line on the wire doesn't crash the provider | the provider dies (stdio only — skipped for HTTP/in-process targets) |
+| `handshake` | the provider completes the handshake and reports a non-empty identity and capabilities | never — a failed handshake skips the checks that depend on it |
+| `consent-scope` | declared egress scopes are well-formed and consistent with the `egress` flag | never |
+| `frame-validity` | every returned frame is citable and scored honestly: `score` in `[0, 1]`, non-empty `title` and `citation_label` | never |
+| `verify-honesty` | a provider advertising `verify` answers about digests it actually served | the provider does not advertise `verify`, or served no frame carrying a `content_digest` |
+| `budget-honesty` | returned frames' summed `token_cost` never exceeds the query's `max_tokens` | never |
+| `as-of-temporal` | no returned frame is dated after the `as_of` pin — content that was not yet true | never |
+| `kinds-filter` | a kind-filtered query narrows to that kind (§Q1) | the provider declares no query kinds, or declares one outside the base `FrameKind` vocabulary |
+| `anchor-relevance` | a graph provider's frames anchor on a `uri` or a relation target (§G3/§G4) | the provider does not declare `capabilities.graph`, or served no anchorable frame |
+| `provenance-fixture-consistency` | `file` provenance digests match the bytes they name — catching a stale or forged digest that passes §F5's grammar | never |
+| `shutdown-clean` | the provider acknowledges shutdown and tears down without error | never |
+| `malformed-input-tolerance` | a garbage line on the wire does not crash the provider | **stdio only** — the probe is wire-level |
+| `embedding-fingerprint` | a declared `embeddings_fingerprint` is not contradicted by a `bad_request` (§E1) | **stdio only**, and when the provider declares no fingerprint |
+| `correlation` | request ids are echoed back (§H4) | **stdio only**, and when the provider does not declare `capabilities.correlation` |
+| `attestation` | a provider offering attestations produces ones that verify (§6.5) | **stdio only**, and when the provider returned no frames to attest |
 
-A run's overall verdict, `ConformanceReport::passed()`, is true iff **no
-check failed** — a skipped check never fails a run (e.g.
-`malformed-input-tolerance` is `Skipped`, not `Fail`, for an HTTP or
-in-process provider, since that probe is wire-level and stdio-specific).
+A run's overall verdict, `ConformanceReport::passed()`, is true iff **no check
+failed**. A skipped check never fails a run — which is why the "skipped when"
+column matters: an HTTP or in-process provider legitimately skips the four
+wire-level probes, and a provider that declares no graph capability legitimately
+skips `anchor-relevance`. Skipping is not passing, and the report distinguishes
+them.
 
 The suite is deliberately adversarial. Pointed at a provider that lies about
-costs, emits an out-of-range score, omits a citation label, or dies
-mid-query, the matching check fails loudly with an evidence string that
-names the exact violation — never a bare "not conformant."
+costs, emits an out-of-range score, omits a citation label, serves a digest that
+does not match its bytes, or dies mid-query, the matching check fails loudly with
+an evidence string naming the exact violation — never a bare "not conformant".
 
 ## Option A: the `contextgraph-inspect` CLI
 
@@ -63,16 +79,34 @@ Sample colored output for a fully conformant provider:
 ```
 ── conformance: stdio: ./my-provider ──
   ✓ handshake
-      provider 'my-provider' v0.1.0 — data-flow reads=true writes=false egress=false; query kinds=["doc"], upsert=false, graph=false
+      provider 'my-provider' v0.1.0 — data-flow reads=true writes=false egress=false; query kinds=["doc"], graph=false
+  ✓ consent-scope
+      declared egress scopes [] are well-formed and consistent with egress=false
   ✓ frame-validity
       2 frame(s) — all scores in [0,1], titles + citation labels present
   ✓ budget-honesty
       2 frame(s) sum to 128 token(s), within the 4096-token budget
+  ✓ as-of-temporal
+      as_of pin respected — none of the 2 returned frame(s) is dated after it
+  ✓ provenance-fixture-consistency
+      every file-provenance digest matches the bytes it names
   ✓ shutdown-clean
       provider acknowledged shutdown and tore down cleanly
   ✓ malformed-input-tolerance
       provider ignored a malformed line and still answered a valid query
-  CONFORMANT — 5 passed, 0 skipped
+  – verify-honesty
+      provider does not advertise `verify`; a host falls back to re-querying its frames (§4)
+  – kinds-filter
+      provider declares no query kinds, so §Q1 has no kind to narrow to
+  – anchor-relevance
+      provider does not declare capabilities.graph, so §G3/§G4 do not bind it
+  – embedding-fingerprint
+      provider declares no embeddings_fingerprint, so §E1 has no dimension to contradict
+  – correlation
+      provider does not declare capabilities.correlation, so §H4 does not bind it
+  – attestation
+      provider offered no attestations, so there is nothing to verify
+  CONFORMANT — 8 passed, 6 skipped
 ```
 
 ## Option B: as a library, from your own test suite
@@ -101,10 +135,11 @@ async fn my_provider_is_contextgraph_conformant() {
 
 `ProviderTarget` has three variants:
 
-- `ProviderTarget::Stdio { program, args }` — spawn a child process (all five
-  checks run).
-- `ProviderTarget::Http { url }` — POST to a remote endpoint
-  (`malformed-input-tolerance` is skipped — it's a stdio wire-level probe).
+- `ProviderTarget::Stdio { program, args }` — spawn a child process. Every check
+  can run; which ones actually do still depends on what the provider declares.
+- `ProviderTarget::Http { url }` — POST to a remote endpoint. The four
+  wire-level probes are skipped: `malformed-input-tolerance`,
+  `embedding-fingerprint`, `correlation` and `attestation`.
 - `ProviderTarget::InProcess(Box<dyn ContextProvider>)` — an
   already-constructed in-process provider, e.g. a built-in you want to
   regression-test in your own workspace without spawning anything

@@ -12,9 +12,9 @@ is one more independent implementation proving the wire is real.
 
 | SDK | Location | Status |
 | --- | --- | --- |
-| TypeScript | [`sdk/typescript`](./typescript) | ✅ conformant — passes all 7 checks in CI |
-| Python | [`sdk/python`](./python) | ✅ conformant — passes all 7 checks in CI |
-| Go | [`sdk/go`](./go) | ✅ conformant — passes all 7 checks in CI |
+| TypeScript | [`sdk/typescript`](./typescript) | ✅ conformant — passes all 14 provider checks in CI |
+| Python | [`sdk/python`](./python) | ✅ conformant — passes all 14 provider checks in CI |
+| Go | [`sdk/go`](./go) | ✅ conformant — passes all 14 provider checks in CI |
 
 Every SDK is validated the same way:
 
@@ -23,7 +23,7 @@ cargo build --workspace --bins
 .github/scripts/conformance-external.sh -- <the SDK's example provider command>
 ```
 
-`conformance-external.sh` asserts the provider is **green** (all seven checks).
+`conformance-external.sh` asserts the provider is **green** (all 14 provider checks).
 The companion `conformance-red.sh` proves the *suite* catches cheaters using the
 Rust fixture, so an SDK provider only has to be honest, not reimplement the
 misbehaviour modes.

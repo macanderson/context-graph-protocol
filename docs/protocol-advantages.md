@@ -91,7 +91,7 @@ runtime and verified by a public conformance suite.
 | **Provenance** | Every frame carries its full origin chain (URI, range, digest, method, agent) | `ContextFrame.provenance` (`contextgraph-types::frame`) |
 | **Budget honesty** | A provider's frames never sum above the query's `max_tokens`; a lie is detected and the frames are dropped | `Host::query_one_isolated` budget audit (`contextgraph-host::host`); `frame-validity` conformance check |
 | **Consent enforcement** | An egress provider is never queried until recorded, named consent exists; the query payload is not transmitted before that | `ConsentStore::permits` (`contextgraph-host::consent`); `Host::query_provider` gate |
-| **Conformance verification** | "CGP conformant" is a machine-checked claim, not a self-attestation; the conformance suite is adversarial | `contextgraph-conformance` — 5 checks that deliberately trip each failure mode |
+| **Conformance verification** | "CGP conformant" is a machine-checked claim, not a self-attestation; the conformance suite is adversarial | `contextgraph-conformance` — 14 provider checks that deliberately trip each failure mode |
 | **Citation guarantees** | Every frame has a non-empty `title` and `citation_label`; raw ids are never the primary identifier | `frame-validity` conformance check; platform-wide convention |
 | **Version stability** | The protocol evolves within a major family without breaking interop; the draft-to-freeze transition requires no flag day | `versions_compatible` (`contextgraph-host::wire`); major-family matching |
 | **Temporal validity** | Facts carry `valid_from` / `valid_to` windows; queries can pin retrieval to a point in time via `as_of` | `ContextFrame` temporal fields; `ContextQuery.as_of` (`contextgraph-types`) |
