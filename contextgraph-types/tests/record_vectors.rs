@@ -18,190 +18,169 @@
 //! `contextgraph-conformance`'s `lifecycle_profile_examples` recomputes the
 //! twelve profile fixtures.
 
-// Deliberately NOT `#![cfg(feature = "record-attestation")]`.
+// Gated at file scope, and the reason that is safe is a guard rather than a
+// habit: `.github/scripts/check-feature-matrix.py` fails CI if any feature this
+// crate declares is not built by the `features` job. So a gated file always has
+// a run that builds it, and the `ok. 0 passed` a default-features run prints is
+// a suite that was not expected to run rather than one that silently did not
+// (#117).
 //
-// A file-scope gate compiles to zero tests when the feature is off, and cargo
-// reports that as `test result: ok. 0 passed` — a green line for a suite that
-// ran nothing (#117). These vectors pin the wire format for record-layer content addressing (lifecycle profile LH1); they are
-// the loudest thing that should fail when a preimage rule changes, so reporting
-// success when they were not built is the exact inversion of their job.
-//
-// The always-on test below fails instead, naming the feature and the command.
-// Everything that needs the feature is gated at item scope beneath it.
+// An earlier revision also carried an always-on test asserting
+// `cfg!(feature = "record-attestation")`. It was removed: the workspace-wide CI job runs
+// with default features, where these vectors are *correctly* skipped, and the
+// assertion turned that legitimate run red. Making the skip loud there would
+// have meant making a true thing fail.
+#![cfg(feature = "record-attestation")]
+
+use contextgraph_types::record_attest::{
+    RECORD_ATTESTATION_DOMAIN, record_attestation_message, record_hash, record_hash_preimage,
+    sign_record, verify_record_attestation, verify_signed_record_hash,
+};
+use contextgraph_types::{AttestationVerdict, RecordAttestation, attest::public_key_for};
+use serde_json::{Value, json};
+
+/// The published test seed — the ASCII bytes of
+/// `contextgraph-lifecycle-test-key!`, the same one `tests/fixtures/`
+/// publishes. It signs nothing real and is forgeable by anyone reading this.
+const SEED: [u8; 32] = *b"contextgraph-lifecycle-test-key!";
+
+/// The reference record: the profile's `observation.json` fixture, inline so
+/// this vector travels inside the published crate rather than depending on a
+/// file at the repository root.
+fn reference_record() -> Value {
+    json!({
+        "schema_version": "contextgraph/lifecycle/1.0-draft",
+        "record_id": "rec_obs_0001",
+        "lineage_id": "lin_obs_0001",
+        "record_status": "active",
+        "scope": {
+            "repository_id": "repo_stella",
+            "workspace_id": "ws_main",
+            "session_id": "sess_412"
+        },
+        "sharing_scope": "repository",
+        "observed_at": "2026-07-29T14:00:00Z",
+        "origin": "observed",
+        "record_hash": "sha256:b45eebfdfe7e6e5056bf25d84864cf9acd731eef120a1f6de129fb788c3b34dc",
+        "provenance": {
+            "origin_provider_id": "provider_example",
+            "producer_kind": "agent",
+            "origin_authority_id": "authority_acme",
+            "producer_ref": "agent://trace-miner"
+        },
+        "sensitivity": "internal",
+        "confidence": 0.82,
+        "record_kind": "observation",
+        "statement": "the api handler retries three times before surfacing a 502",
+        "subject_ref": "trace_run_991"
+    })
+}
+
+/// The RFC 8785 canonicalization of the reference record with its own
+/// `record_hash` member removed — the exact bytes the digest is taken over.
+const REFERENCE_PREIMAGE: &str = concat!(
+    r#"{"confidence":0.82,"lineage_id":"lin_obs_0001","observed_at":"2026-07-29T14:00:00Z","#,
+    r#""origin":"observed","provenance":{"origin_authority_id":"authority_acme","#,
+    r#""origin_provider_id":"provider_example","producer_kind":"agent","#,
+    r#""producer_ref":"agent://trace-miner"},"record_id":"rec_obs_0001","#,
+    r#""record_kind":"observation","record_status":"active","#,
+    r#""schema_version":"contextgraph/lifecycle/1.0-draft","#,
+    r#""scope":{"repository_id":"repo_stella","session_id":"sess_412","workspace_id":"ws_main"},"#,
+    r#""sensitivity":"internal","sharing_scope":"repository","#,
+    r#""statement":"the api handler retries three times before surfacing a 502","#,
+    r#""subject_ref":"trace_run_991"}"#,
+);
+
+/// The reference record's content-addressed identity.
+const REFERENCE_RECORD_HASH: &str =
+    "sha256:b45eebfdfe7e6e5056bf25d84864cf9acd731eef120a1f6de129fb788c3b34dc";
+
+/// The Ed25519 public key [`SEED`] produces, lowercase hex.
+const REFERENCE_PUBLIC_KEY: &str =
+    "495b4a0a4a16c5444d8626a7ae0bc6eca613676b51fb947238cb8238baa9fde5";
+
+/// The detached signature over [`REFERENCE_RECORD_HASH`] under [`SEED`].
+/// Ed25519 is deterministic (RFC 8032), so this is reproducible everywhere.
+const REFERENCE_SIGNATURE: &str = concat!(
+    "8cce3f453510c50d88821eb57dd1767827ba7ab5e29d072b1fadf29583313a04",
+    "635521228a62b3015399ca8676394087a2bb861a4f893ff4912dea43fdccb905",
+);
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
 
 #[test]
-// The assertion IS constant, which is the point, so clippy's
-// `assertions_on_constants` is right in general and wrong here. `cfg!` folds to
-// `true` when the feature is on and `false` when it is off, and the false case
-// is the one that must fail the build loudly rather than let the file compile
-// to zero tests and report `ok. 0 passed` (#117). A non-constant spelling would
-// only be obfuscation.
-#[allow(clippy::assertions_on_constants)]
-fn these_vectors_are_only_meaningful_with_the_feature_on() {
-    assert!(
-        cfg!(feature = "record-attestation"),
-        "this suite pins wire-format bytes and was compiled WITHOUT the \
-         `record-attestation` feature, so none of its vectors ran. Build it with \
-         `cargo test -p contextgraph-types --features record-attestation`. Failing \
-         rather than reporting `ok. 0 passed`, which is what a file-scope \
-         cfg gate does and why it is not used here (#117)."
+fn the_canonical_preimage_is_these_exact_bytes() {
+    let preimage = record_hash_preimage(&reference_record()).expect("canonicalizes");
+    assert_eq!(
+        String::from_utf8(preimage).expect("JCS output is UTF-8"),
+        REFERENCE_PREIMAGE
     );
 }
 
-#[cfg(feature = "record-attestation")]
-mod vectors {
-
-    use contextgraph_types::record_attest::{
-        RECORD_ATTESTATION_DOMAIN, record_attestation_message, record_hash, record_hash_preimage,
-        sign_record, verify_record_attestation, verify_signed_record_hash,
-    };
-    use contextgraph_types::{AttestationVerdict, RecordAttestation, attest::public_key_for};
-    use serde_json::{Value, json};
-
-    /// The published test seed — the ASCII bytes of
-    /// `contextgraph-lifecycle-test-key!`, the same one `tests/fixtures/`
-    /// publishes. It signs nothing real and is forgeable by anyone reading this.
-    const SEED: [u8; 32] = *b"contextgraph-lifecycle-test-key!";
-
-    /// The reference record: the profile's `observation.json` fixture, inline so
-    /// this vector travels inside the published crate rather than depending on a
-    /// file at the repository root.
-    fn reference_record() -> Value {
-        json!({
-            "schema_version": "contextgraph/lifecycle/1.0-draft",
-            "record_id": "rec_obs_0001",
-            "lineage_id": "lin_obs_0001",
-            "record_status": "active",
-            "scope": {
-                "repository_id": "repo_stella",
-                "workspace_id": "ws_main",
-                "session_id": "sess_412"
-            },
-            "sharing_scope": "repository",
-            "observed_at": "2026-07-29T14:00:00Z",
-            "origin": "observed",
-            "record_hash": "sha256:b45eebfdfe7e6e5056bf25d84864cf9acd731eef120a1f6de129fb788c3b34dc",
-            "provenance": {
-                "origin_provider_id": "provider_example",
-                "producer_kind": "agent",
-                "origin_authority_id": "authority_acme",
-                "producer_ref": "agent://trace-miner"
-            },
-            "sensitivity": "internal",
-            "confidence": 0.82,
-            "record_kind": "observation",
-            "statement": "the api handler retries three times before surfacing a 502",
-            "subject_ref": "trace_run_991"
-        })
-    }
-
-    /// The RFC 8785 canonicalization of the reference record with its own
-    /// `record_hash` member removed — the exact bytes the digest is taken over.
-    const REFERENCE_PREIMAGE: &str = concat!(
-        r#"{"confidence":0.82,"lineage_id":"lin_obs_0001","observed_at":"2026-07-29T14:00:00Z","#,
-        r#""origin":"observed","provenance":{"origin_authority_id":"authority_acme","#,
-        r#""origin_provider_id":"provider_example","producer_kind":"agent","#,
-        r#""producer_ref":"agent://trace-miner"},"record_id":"rec_obs_0001","#,
-        r#""record_kind":"observation","record_status":"active","#,
-        r#""schema_version":"contextgraph/lifecycle/1.0-draft","#,
-        r#""scope":{"repository_id":"repo_stella","session_id":"sess_412","workspace_id":"ws_main"},"#,
-        r#""sensitivity":"internal","sharing_scope":"repository","#,
-        r#""statement":"the api handler retries three times before surfacing a 502","#,
-        r#""subject_ref":"trace_run_991"}"#,
+#[test]
+fn the_record_hash_is_this_exact_digest() {
+    assert_eq!(
+        record_hash(&reference_record()).expect("canonicalizes"),
+        REFERENCE_RECORD_HASH
     );
+}
 
-    /// The reference record's content-addressed identity.
-    const REFERENCE_RECORD_HASH: &str =
-        "sha256:b45eebfdfe7e6e5056bf25d84864cf9acd731eef120a1f6de129fb788c3b34dc";
-
-    /// The Ed25519 public key [`SEED`] produces, lowercase hex.
-    const REFERENCE_PUBLIC_KEY: &str =
-        "495b4a0a4a16c5444d8626a7ae0bc6eca613676b51fb947238cb8238baa9fde5";
-
-    /// The detached signature over [`REFERENCE_RECORD_HASH`] under [`SEED`].
-    /// Ed25519 is deterministic (RFC 8032), so this is reproducible everywhere.
-    const REFERENCE_SIGNATURE: &str = concat!(
-        "8cce3f453510c50d88821eb57dd1767827ba7ab5e29d072b1fadf29583313a04",
-        "635521228a62b3015399ca8676394087a2bb861a4f893ff4912dea43fdccb905",
-    );
-
-    fn hex(bytes: &[u8]) -> String {
-        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-    }
-
-    #[test]
-    fn the_canonical_preimage_is_these_exact_bytes() {
-        let preimage = record_hash_preimage(&reference_record()).expect("canonicalizes");
-        assert_eq!(
-            String::from_utf8(preimage).expect("JCS output is UTF-8"),
-            REFERENCE_PREIMAGE
-        );
-    }
-
-    #[test]
-    fn the_record_hash_is_this_exact_digest() {
-        assert_eq!(
-            record_hash(&reference_record()).expect("canonicalizes"),
+#[test]
+fn the_signed_message_is_the_domain_tag_then_the_digest() {
+    let message = record_attestation_message(REFERENCE_RECORD_HASH).expect("well-formed digest");
+    assert_eq!(
+        hex(&message),
+        format!(
+            "{}{}",
+            hex(RECORD_ATTESTATION_DOMAIN),
             REFERENCE_RECORD_HASH
-        );
-    }
-
-    #[test]
-    fn the_signed_message_is_the_domain_tag_then_the_digest() {
-        let message =
-            record_attestation_message(REFERENCE_RECORD_HASH).expect("well-formed digest");
-        assert_eq!(
-            hex(&message),
-            format!(
-                "{}{}",
-                hex(RECORD_ATTESTATION_DOMAIN),
-                REFERENCE_RECORD_HASH
-                    .strip_prefix("sha256:")
-                    .expect("the digest names its algorithm")
-            )
-        );
-    }
-
-    #[test]
-    fn the_published_key_and_signature_are_these_exact_values() {
-        assert_eq!(hex(&public_key_for(&SEED)), REFERENCE_PUBLIC_KEY);
-        let attestation = sign_record(
-            &reference_record(),
-            &SEED,
-            "cep-signing-key-2026-07",
-            "provider_example",
-            "2026-07-29T14:00:05Z",
+                .strip_prefix("sha256:")
+                .expect("the digest names its algorithm")
         )
-        .expect("the reference record hashes");
-        assert_eq!(attestation.signature, REFERENCE_SIGNATURE);
-        assert_eq!(attestation.signed_record_hash, REFERENCE_RECORD_HASH);
-    }
+    );
+}
 
-    #[test]
-    fn the_published_signature_verifies_and_only_over_this_record() {
-        let attestation = RecordAttestation::new(
-            REFERENCE_RECORD_HASH,
-            "cep-signing-key-2026-07",
-            "ed25519",
-            "provider_example",
-            REFERENCE_SIGNATURE,
-            "2026-07-29T14:00:05Z",
-        );
-        let key = public_key_for(&SEED);
-        assert_eq!(
-            verify_record_attestation(&reference_record(), &attestation, &key).expect("hashes"),
-            AttestationVerdict::Valid
-        );
-        assert_eq!(
-            verify_signed_record_hash(REFERENCE_RECORD_HASH, &attestation, &key),
-            AttestationVerdict::Valid
-        );
+#[test]
+fn the_published_key_and_signature_are_these_exact_values() {
+    assert_eq!(hex(&public_key_for(&SEED)), REFERENCE_PUBLIC_KEY);
+    let attestation = sign_record(
+        &reference_record(),
+        &SEED,
+        "cep-signing-key-2026-07",
+        "provider_example",
+        "2026-07-29T14:00:05Z",
+    )
+    .expect("the reference record hashes");
+    assert_eq!(attestation.signature, REFERENCE_SIGNATURE);
+    assert_eq!(attestation.signed_record_hash, REFERENCE_RECORD_HASH);
+}
 
-        let mut edited = reference_record();
-        edited["statement"] = json!("the api handler never retries");
-        assert!(matches!(
-            verify_record_attestation(&edited, &attestation, &key).expect("hashes"),
-            AttestationVerdict::CommitmentMismatch { .. }
-        ));
-    }
+#[test]
+fn the_published_signature_verifies_and_only_over_this_record() {
+    let attestation = RecordAttestation::new(
+        REFERENCE_RECORD_HASH,
+        "cep-signing-key-2026-07",
+        "ed25519",
+        "provider_example",
+        REFERENCE_SIGNATURE,
+        "2026-07-29T14:00:05Z",
+    );
+    let key = public_key_for(&SEED);
+    assert_eq!(
+        verify_record_attestation(&reference_record(), &attestation, &key).expect("hashes"),
+        AttestationVerdict::Valid
+    );
+    assert_eq!(
+        verify_signed_record_hash(REFERENCE_RECORD_HASH, &attestation, &key),
+        AttestationVerdict::Valid
+    );
+
+    let mut edited = reference_record();
+    edited["statement"] = json!("the api handler never retries");
+    assert!(matches!(
+        verify_record_attestation(&edited, &attestation, &key).expect("hashes"),
+        AttestationVerdict::CommitmentMismatch { .. }
+    ));
 }
