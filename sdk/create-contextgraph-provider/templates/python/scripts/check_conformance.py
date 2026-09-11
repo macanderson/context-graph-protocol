@@ -58,15 +58,52 @@ def main() -> int:
         return 1
 
     checks = report.get("checks", [])
-    failed = [c for c in checks if c["status"] == "fail"]
+
     for c in checks:
         mark = {"pass": "OK", "skipped": "--"}.get(c["status"], "XX")
         print(f"  {mark} {c['name']}: {c['evidence']}")
 
-    if failed:
-        print("\nNOT conformant: " + ", ".join(c["name"] for c in failed), file=sys.stderr)
+    # A report with no checks is not a passing report. Before this, an empty
+    # list printed "All 0 checks passed -- provider is conformant" and exited 0,
+    # so an inspect run that probed nothing was indistinguishable from a clean
+    # one. This is the first quality signal a provider author ever sees; it has
+    # to tell "everything passed" from "nothing ran".
+    if not checks:
+        print(
+            "\nNOT conformant: the report contains no checks at all, so nothing "
+            "was verified. This usually means inspect could not reach the "
+            "provider, or the provider exited before the handshake. Run "
+            "`contextgraph-inspect stdio -- python -m provider.stdio` by hand "
+            "and read the probe output above the JSON.",
+            file=sys.stderr,
+        )
         return 1
-    print(f"\nAll {len(checks)} checks passed -- provider is conformant.")
+
+    # Anything that is not `pass` and not `skipped` counts against the provider,
+    # rather than only the exact string "fail". A status this script does not
+    # know -- an `error`, or one a future inspect adds -- must not be read as
+    # success by a check whose whole job is to be strict.
+    passed = [c for c in checks if c["status"] == "pass"]
+    skipped = [c for c in checks if c["status"] == "skipped"]
+    failed = [c for c in checks if c["status"] not in ("pass", "skipped")]
+
+    if failed:
+        print(
+            "\nNOT conformant: "
+            + ", ".join(f"{c['name']} ({c['status']})" for c in failed),
+            file=sys.stderr,
+        )
+        return 1
+
+    # Skipped checks are reported separately rather than folded into the total.
+    # A transport legitimately skips some -- an HTTP provider cannot answer the
+    # three stdio-only ones -- but "13 checks passed" when 8 were skipped
+    # overstates what was verified, and the number is what an author quotes.
+    if skipped:
+        summary = f"{len(passed)} passed, {len(skipped)} skipped"
+    else:
+        summary = f"all {len(passed)} checks passed"
+    print(f"\nConformant -- {summary}.")
     return 0
 
 
