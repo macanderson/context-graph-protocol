@@ -16,7 +16,6 @@ use contextgraph_types::{
 };
 
 use crate::error::HostError;
-use crate::trust::AttestedQueryResult;
 
 /// A registered Context Graph Protocol provider, queryable behind one handle regardless of
 /// transport. `info()`/`capabilities()` return values cached at handshake
@@ -32,36 +31,44 @@ pub trait ContextProvider: Send + Sync {
     /// (SPEC.md §3, ).
     fn info(&self) -> &ProviderInfo;
 
-    /// Capabilities negotiated at the handshake (SPEC.md §3) — which frame kinds
-    /// and filters this provider serves, whether it upserts, does graph, is
-    /// an embedder, or supports subscriptions.
+    /// Capabilities negotiated at the handshake (`SPEC.md` §3): which frame
+    /// kinds this provider serves, whether it echoes a correlation `id`, does
+    /// graph, names an embedding space, answers `context/verify`, which frame
+    /// representations it can return, and whether it answers `context/resolve`.
+    ///
+    /// That is the whole of [`Capabilities`] — seven fields. This comment used
+    /// to describe `upsert`, `subscriptions` and `filters`, which
+    /// [ADR 0004](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0004-dead-capability-surface.md)
+    /// removed because nothing implemented them. The sentence outlived them and
+    /// was copied into `docs/implementing-a-provider.md`, so a provider author
+    /// read it as the contract (#151).
     fn capabilities(&self) -> &Capabilities;
 
     /// Answer a context query with budgeted, provenance-carrying frames
     /// (SPEC.md §5). The host — not the provider — enforces the budget and consent;
     /// a provider that over-runs its budget is caught by the host, not
     /// trusted (`crate::host`).
+    ///
+    /// # Signing
+    ///
+    /// A provider that signs what it serves populates
+    /// [`frame_attestations`](ContextQueryResult::frame_attestations) and
+    /// [`result_attestation`](ContextQueryResult::result_attestation) on the
+    /// result it returns (`SPEC.md` §6.5.5). There is no second method and no
+    /// second channel: the evidence is part of the answer, so an in-process
+    /// provider and a transport-backed one carry it identically, and a host
+    /// can never be handed signatures that disagree with the frames they cover
+    /// (ADR 0014).
+    ///
+    /// This trait previously offered a defaulted `query_attested` returning an
+    /// `AttestedQueryResult`, from the months when the `frames` envelope had
+    /// nowhere to put an attestation. It does now, so both are gone.
+    ///
+    /// The host checks whatever arrives against its
+    /// [`TrustStore`](crate::TrustStore) and records the outcome in the
+    /// composition audit. Whatever it finds, **the frames are served either
+    /// way** (`SPEC.md` F9).
     async fn query(&self, query: &ContextQuery) -> Result<ContextQueryResult, HostError>;
-
-    /// Answer a context query **and** hand over any detached provenance
-    /// attestations covering the frames it returns (`SPEC.md` §6.5,
-    /// [ADR 0016](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0016-attestation-trust-roots.md)).
-    ///
-    /// Defaults to [`query`](Self::query) with no attestations — the honest
-    /// answer for a provider that signs nothing, which is every provider in
-    /// this workspace today. A provider that signs overrides this; the host
-    /// then checks each attestation against its [`TrustStore`](crate::TrustStore)
-    /// and records the outcome in the composition audit. Whatever it finds,
-    /// **the frames are served either way** (`SPEC.md` F9).
-    ///
-    /// Attestations travel beside the result rather than inside it because F6
-    /// makes them detached, and because the `frames` envelope has nowhere to
-    /// carry one yet — so a stdio or HTTP provider parses none and this seam is
-    /// how an in-process provider offers them. Issue #90 puts them on the wire;
-    /// when it lands the transports populate this and nothing else changes.
-    async fn query_attested(&self, query: &ContextQuery) -> Result<AttestedQueryResult, HostError> {
-        Ok(AttestedQueryResult::unattested(self.query(query).await?))
-    }
 
     /// Revalidate frames the host already holds, without any frame body
     /// travelling (`docs/context-reuse.md` §4 `context/verify`).

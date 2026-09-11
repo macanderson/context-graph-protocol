@@ -53,15 +53,16 @@
 //! matching rather than by envelope id (`SPEC.md` §9).
 
 use contextgraph_types::{
-    Capabilities, ContextQuery, ContextQueryResult, ErrorCode, ProvenanceAttestation, ProviderInfo,
-    VerifyRequest, VerifyResponse,
+    Capabilities, ContextQuery, ContextQueryResult, ErrorCode, ProviderInfo, VerifyRequest,
+    VerifyResponse,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::error::HostError;
 
 /// A public key a provider publishes at the handshake, so a verifier can check
-/// the [attestations](FrameAttestation) it goes on to serve (`SPEC.md` §6.5.4).
+/// the [attestations](contextgraph_types::FrameAttestation) it goes on to
+/// serve (`SPEC.md` §6.5.4).
 ///
 /// **A construction anchor, not a trust anchor.** A key handed over by the party
 /// being audited says nothing about *who* signed; it is enough to decide whether
@@ -75,31 +76,15 @@ use crate::error::HostError;
 /// once, before any frame moves, it cannot be.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AttesterKey {
-    /// The key's id, matching [`ProvenanceAttestation::key_id`]. Rotation is a
+    /// The key's id, matching [`ProvenanceAttestation::key_id`](contextgraph_types::ProvenanceAttestation::key_id). Rotation is a
     /// new id, never a reused one.
     pub key_id: String,
     /// The scheme this key is for, e.g.
     /// [`ALGORITHM_ED25519`](contextgraph_types::ALGORITHM_ED25519).
     pub algorithm: String,
     /// The raw public key, lowercase hex — the encoding
-    /// [`ProvenanceAttestation::signature`] already uses.
+    /// [`ProvenanceAttestation::signature`](contextgraph_types::ProvenanceAttestation::signature) already uses.
     pub public_key: String,
-}
-
-/// One detached [`ProvenanceAttestation`] bound to one frame of an answer
-/// (`SPEC.md` §6.5.2).
-///
-/// **Detached, per F6.** It names the frame it signs by id and travels beside
-/// the result rather than inside it, so re-signing after a key rotation never
-/// perturbs the frame's content-addressed identity, and no attestation is ever
-/// part of a preimage it covers.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FrameAttestation {
-    /// The [`ContextFrame::id`](contextgraph_types::ContextFrame::id) this
-    /// attestation covers, within the same answer.
-    pub frame_id: String,
-    /// The detached signature over that frame's frame commitment (§6.5.2).
-    pub attestation: ProvenanceAttestation,
 }
 
 /// One Context Graph Protocol message. Every variant is a small, versioned, `type`-tagged JSON
@@ -137,13 +122,12 @@ pub enum Envelope {
         /// The `id` of the `query` this answers, echoed verbatim.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,
+        /// The answer, including any detached provenance attestations it
+        /// carries. `SPEC.md` §6.5.5 puts those on the *result* and nowhere
+        /// else: an in-process provider that never builds an `Envelope` must
+        /// still be able to sign what it serves, and one wire home means two
+        /// encodings of the same signature can never disagree (ADR 0014).
         result: ContextQueryResult,
-        /// Detached provenance attestations over frames in `result`
-        /// (`SPEC.md` §6.5). Beside the frames, never inside one (F6). A frame
-        /// named by no entry here is simply unattested, and a frame whose entry
-        /// does not verify degrades to unattested too (F9) — never dropped.
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        attestations: Vec<FrameAttestation>,
     },
     /// Host → provider revalidation request: are these held frames still
     /// valid (`docs/context-reuse.md` §4 `context/verify`)? Carries frame
@@ -343,13 +327,7 @@ mod tests {
             },
             Envelope::Frames {
                 id: None,
-                result: ContextQueryResult {
-                    frames: vec![],
-                    truncated: false,
-                    dropped_estimate: None,
-                    ..Default::default()
-                },
-                attestations: vec![],
+                result: ContextQueryResult::unattested(vec![], false, None),
             },
             Envelope::Shutdown,
             Envelope::Error {

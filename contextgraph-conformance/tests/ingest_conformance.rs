@@ -181,11 +181,7 @@ async fn ingested_frames_pass_frame_budget_and_schema_conformance_in_every_repre
         }
 
         // The whole result round-trips through the real NDJSON `frames` envelope.
-        let envelope = Envelope::Frames {
-            id: None,
-            result,
-            attestations: vec![],
-        };
+        let envelope = Envelope::Frames { id: None, result };
         let line = encode_line(&envelope).expect("frames envelope encodes");
         assert!(matches!(
             decode_line(&line).expect("frames envelope decodes"),

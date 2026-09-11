@@ -694,14 +694,7 @@ pub fn run_stdio(config: &BridgeConfig) -> Result<(), String> {
                 }
                 let result = answer_query(&base_frames, &query);
                 // Echo the correlation id so the host can demultiplex (§H4).
-                write_envelope(
-                    &mut stdout,
-                    &Envelope::Frames {
-                        id,
-                        result,
-                        attestations: vec![],
-                    },
-                );
+                write_envelope(&mut stdout, &Envelope::Frames { id, result });
             }
             Envelope::Verify { request } => {
                 write_envelope(

@@ -50,7 +50,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/rust
-      - run: cargo publish --dry-run -p contextgraph-types
+      # `--locked` matches what the publish job below runs. Without it the dry
+      # run is allowed to update Cargo.lock and a lockfile out of sync with
+      # Cargo.toml passes here, then fails at the first step of `publish` —
+      # after a human has already spent the approval click this workflow's
+      # header describes.
+      - run: cargo publish --dry-run --locked -p contextgraph-types
 
   publish:
     name: publish crates.io (types -> host -> conformance -> trace)

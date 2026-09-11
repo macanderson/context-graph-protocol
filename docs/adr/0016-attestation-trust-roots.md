@@ -144,9 +144,14 @@ needs *some* answer, and "the operator supplies it" is an answer, written down.
   `AttestationState`, and an `AttestationLedger` produced by a fan-out. It
   enables `contextgraph-types`' `attestation` feature unconditionally; the
   types crate's own zero-dependency default is unchanged.
-- `AuditEntry` gains an `attestation` field, and `ContextProvider` gains a
-  default `query_attested` method. Both are Rust-semver breaking for
-  `contextgraph-host` and neither touches the wire.
+- `AuditEntry` gains an `attestation` field, a Rust-semver breaking change for
+  `contextgraph-host` that does not touch the wire.
+
+  This also added a defaulted `ContextProvider::query_attested` returning an
+  `AttestedQueryResult`, from the months when the `frames` envelope had nowhere
+  to put an attestation. ADR 0014 gave it one, so both are gone (#161): a
+  provider populates `frame_attestations` on the result `query` already
+  returns.
 - **What this does not prove, stated plainly:**
   - Trust is **local and non-transitive.** A frame this host marks `Attested`
     carries no weight for a second host that holds no key. The attestation

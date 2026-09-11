@@ -170,8 +170,10 @@ contextgraph-types = "2"
 contextgraph-host  = "2"
 ```
 
-Then fix three call-site shapes. Each is a compile error, so the compiler
-enumerates the work for you — none of this fails silently at runtime.
+Then fix the call-site shapes below. Each is a compile error, so the compiler
+enumerates the work for you — none of this fails silently at runtime. The first
+three affect everyone; §5.4 and §5.5 affect only a host or provider that touched
+the attestation types.
 
 ### 5.1 `match` on `FrameKind` needs a wildcard arm
 
@@ -215,7 +217,63 @@ It used to return `&'static str`, which duplicated the vocabulary in a second
 place and could not name a kind the host did not know. The returned lifetime is
 now tied to the kind, because an unknown kind owns its string.
 
-### 5.4 SDKs move in lockstep
+### 5.4 The attestation seam has one shape, and one home
+
+Only affects a host or provider written against the attestation work that landed
+after `1.x`. If you have never touched a `FrameAttestation`, skip to §5.5.
+
+`contextgraph-host` briefly defined two of its own `FrameAttestation` types
+beside the canonical one in `contextgraph-types`, and the `frames` envelope
+carried an `attestations` member while the query result already carried
+`frame_attestations`. One signed answer had two encodings and no rule for which
+won ([ADR 0019](./docs/adr/0019-one-home-for-an-attestation.md), #161). Four
+compile errors follow:
+
+```rust
+// The type: one definition, re-exported from contextgraph-host for convenience.
+use contextgraph_types::FrameAttestation;          // was: contextgraph_host::wire / ::trust
+FrameAttestation::signed(frame.identity(provider_id), attestation)  // was: ::new(frame_id, …)
+
+// The envelope: no attestations member. Put the evidence on the result.
+Envelope::Frames { id, result }                    // was: { id, result, attestations }
+
+// A signing provider populates the result `query` already returns.
+// `ContextProvider::query_attested` and `AttestedQueryResult` are gone.
+async fn query(&self, q: &ContextQuery) -> Result<ContextQueryResult, HostError> {
+    Ok(ContextQueryResult {
+        frame_attestations: self.sign(&frames),
+        ..ContextQueryResult::unattested(frames, false, None)
+    })
+}
+
+// The store reads the evidence off the result, so a mismatched pair is
+// no longer expressible.
+trust.check_result(provider_id, &result)           // was: (provider_id, &result, &attestations)
+```
+
+`Host::query_provider_attested` now returns `(ContextQueryResult, Vec<FrameAttestationOutcome>)`
+rather than an `AttestedQueryResult` in the first slot, so `.0.result` becomes
+`.0`.
+
+`AttestationState` gained `UnusableEvidence` for an entry that named a frame and
+could not be turned into a check. If you match that enum exhaustively, add an
+arm; F9 means it is treated as unattested for every decision.
+
+Nothing here changes the wire for a provider that was already putting its
+evidence on the result, which is where `SPEC.md` §6.5.5 has always put it.
+
+### 5.5 A caller that builds `ContextQueryResult` by hand
+
+Adding `frame_attestations` and `result_attestation` broke every three-field
+struct literal. Two one-line fixes, either is fine:
+
+```rust
+ContextQueryResult::unattested(frames, truncated, dropped_estimate)
+// or
+ContextQueryResult { frames, truncated, dropped_estimate, ..Default::default() }
+```
+
+### 5.6 SDKs move in lockstep
 
 `contextgraph-sdk` (Python) and `@contextgraphprotocol/typescript-sdk`
 (TypeScript) also go to `2.0.0`, for the same reason in their own type systems:

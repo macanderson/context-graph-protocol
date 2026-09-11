@@ -15,11 +15,10 @@
 //! and would still say `CommitmentMismatch`, while proving nothing about the
 //! binding at all.
 
-use contextgraph_host::wire::FrameAttestation;
 use contextgraph_host::{Envelope, RawStdioConnection};
 use contextgraph_types::{
-    AttestationVerdict, ContextFrame, frame_commitment, provenance_chain_head,
-    verify_frame_attestation,
+    AttestationVerdict, ContextFrame, FrameAttestation, ProvenanceAttestation, frame_commitment,
+    provenance_chain_head, verify_frame_attestation,
 };
 
 use contextgraph_conformance::sample_query;
@@ -56,11 +55,8 @@ async fn wire_exchange(
     .await
     .expect("query is accepted");
     let (frames, attestations) = match conn.recv().await.expect("fixture answers") {
-        Envelope::Frames {
-            result,
-            attestations,
-            ..
-        } => (result.frames, attestations),
+        // §6.5.5, #161: the evidence rides the result, and nowhere else.
+        Envelope::Frames { result, .. } => (result.frames, result.frame_attestations),
         other => panic!(
             "expected frames, got {}",
             contextgraph_host::envelope_kind(&other)
@@ -68,6 +64,19 @@ async fn wire_exchange(
     };
     let _ = conn.shutdown().await;
     (info.name, keys, frames, attestations)
+}
+
+/// The per-frame signature an entry carries.
+///
+/// The canonical `FrameAttestation` makes it optional, because a provider may
+/// attest through the signed result-set root instead (§6.5.3). This fixture
+/// signs every frame individually, so an absent one is a fixture bug rather
+/// than a shape the assertions below have to tolerate.
+fn signature(entry: &FrameAttestation) -> &ProvenanceAttestation {
+    entry
+        .attestation
+        .as_ref()
+        .expect("this fixture signs every frame it serves")
 }
 
 fn public_key(keys: &[contextgraph_host::AttesterKey], key_id: &str) -> Vec<u8> {
@@ -93,11 +102,11 @@ async fn the_honest_fixture_publishes_a_key_and_signs_every_frame_it_serves() {
     for entry in &attestations {
         let frame = frames
             .iter()
-            .find(|frame| frame.id == entry.frame_id)
+            .find(|frame| frame.id == entry.frame.frame_id)
             .expect("an attestation names a frame in the same answer");
-        let key = public_key(&keys, &entry.attestation.key_id);
+        let key = public_key(&keys, &signature(entry).key_id);
         assert_eq!(
-            verify_frame_attestation(&provider_id, frame, &entry.attestation, &key),
+            verify_frame_attestation(&provider_id, frame, signature(entry), &key),
             AttestationVerdict::Valid,
             "frame `{}` must verify against the published key",
             frame.id
@@ -111,15 +120,16 @@ async fn an_attestation_is_detached_and_never_rides_inside_the_frame_it_signs() 
     // attestation folded into the frame would perturb the frame's
     // content-addressed identity every time the key rotated.
     let (_, _, frames, attestations) = wire_exchange(None).await;
-    let signature = &attestations
-        .first()
-        .expect("the fixture attests its frames")
-        .attestation
-        .signature;
+    let lifted = &signature(
+        attestations
+            .first()
+            .expect("the fixture attests its frames"),
+    )
+    .signature;
     for frame in &frames {
         let json = serde_json::to_string(frame).expect("a frame serializes");
         assert!(
-            !json.contains(signature.as_str()),
+            !json.contains(lifted.as_str()),
             "frame `{}` carries its own attestation inline, which F6 forbids",
             frame.id
         );
@@ -156,11 +166,12 @@ async fn an_attestation_lift_differs_only_in_the_frame_id() {
 
     // Both entries carry the SAME signature — one genuine attestation, served
     // twice — and it is genuinely valid for the frame it was issued over.
-    let lifted = &attestations
-        .iter()
-        .find(|entry| entry.frame_id == forged.id)
-        .expect("the forged frame carries an attestation")
-        .attestation;
+    let lifted = signature(
+        attestations
+            .iter()
+            .find(|entry| entry.frame.frame_id == forged.id)
+            .expect("the forged frame carries an attestation"),
+    );
     let key = public_key(&keys, &lifted.key_id);
     assert_eq!(
         verify_frame_attestation(&provider_id, honest, lifted, &key),
@@ -186,16 +197,16 @@ async fn a_forged_signature_leaves_the_commitment_intact() {
     for entry in &attestations {
         let frame = frames
             .iter()
-            .find(|frame| frame.id == entry.frame_id)
+            .find(|frame| frame.id == entry.frame.frame_id)
             .expect("an attestation names a frame in the same answer");
         assert_eq!(
             contextgraph_types::digest_string(&frame_commitment(&provider_id, frame)),
-            entry.attestation.signed_commitment,
+            signature(entry).signed_commitment,
             "the commitment must be honest, or the mode would report a mismatch instead"
         );
-        let key = public_key(&keys, &entry.attestation.key_id);
+        let key = public_key(&keys, &signature(entry).key_id);
         assert_eq!(
-            verify_frame_attestation(&provider_id, frame, &entry.attestation, &key),
+            verify_frame_attestation(&provider_id, frame, signature(entry), &key),
             AttestationVerdict::BadSignature
         );
     }

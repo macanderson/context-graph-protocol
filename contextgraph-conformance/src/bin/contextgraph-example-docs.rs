@@ -16,7 +16,8 @@ use std::io::{BufRead, Write};
 use clap::{Parser, ValueEnum};
 use sha2::{Digest, Sha256};
 
-use contextgraph_host::wire::{AttesterKey, Envelope, FrameAttestation};
+use contextgraph_host::wire::{AttesterKey, Envelope};
+use contextgraph_types::FrameAttestation;
 use contextgraph_types::capability::{QueryCapability, fingerprint_dimensions};
 use contextgraph_types::frame::rel;
 use contextgraph_types::{
@@ -297,20 +298,17 @@ fn main() {
                     frames.retain(|f| !f.valid_from.as_deref().is_some_and(|vf| vf > as_of));
                 }
                 // Detached, per F6: the attestations are computed over the
-                // frames as finally filtered, and ride beside them rather than
-                // inside one.
+                // frames as finally filtered, and ride beside them on the
+                // result rather than inside a frame (§6.5.5).
                 let attestations = attestations_for(&frames, args.misbehave);
                 write_envelope(
                     &mut stdout,
                     &Envelope::Frames {
                         id: echoed,
                         result: ContextQueryResult {
-                            frames,
-                            truncated: false,
-                            dropped_estimate: None,
-                            ..Default::default()
+                            frame_attestations: attestations,
+                            ..ContextQueryResult::unattested(frames, false, None)
                         },
-                        attestations,
                     },
                 );
             }
@@ -517,9 +515,13 @@ fn attestations_for(
     frames: &[ContextFrame],
     misbehave: Option<Misbehave>,
 ) -> Vec<FrameAttestation> {
-    let staple = |frame: &ContextFrame, attestation: ProvenanceAttestation| FrameAttestation {
-        frame_id: frame.id.clone(),
-        attestation,
+    // The entry names the frame it *rides beside* by its full identity, which
+    // is what makes `lift-signature` and `swap-content` legible: the entry
+    // points at the served frame, and the signature was issued over a different
+    // one.
+    let provider_id = attestation_provider_id();
+    let staple = |frame: &ContextFrame, attestation: ProvenanceAttestation| {
+        FrameAttestation::signed(frame.identity(provider_id.clone()), attestation)
     };
     match misbehave {
         // A commitment computed honestly over the served frame, signed by a key

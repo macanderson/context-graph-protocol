@@ -203,8 +203,11 @@ same evidence is genuine.
   the constructions above exist to stop. F6–F9's "Verified by" column in
   `SPEC.md` points at that check rather than at this crate's own unit tests,
   which is the difference between a guarantee and a self-attestation (§11.1).
-- Attestations reach a verifier through two optional envelope members
-  (`handshake_ack.attester_keys`, `frames.attestations`, `SPEC.md` §6.5.5).
+- Attestations reach a verifier through `handshake_ack.attester_keys` and the
+  result's own `frame_attestations` / `result_attestation` members
+  (`SPEC.md` §6.5.5). They were briefly also carried on the `frames` envelope;
+  one signature with two wire homes and no tie-breaking rule was the defect
+  #161 removed.
 - Not yet done, and tracked as follow-up work: host-side verification wired into
   composition, an `attestation` conformance check with an adversarial
   `--misbehave` mode, attestations carried in the `frames` envelope and the JSON
