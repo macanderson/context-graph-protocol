@@ -348,9 +348,21 @@ impl Host {
                 }
             };
 
-        let outcomes = self
-            .trust
-            .check_result(id, &attested.result, &attested.attestations);
+        // Two ids, deliberately. Trust is keyed on `id`, the host's own key for
+        // this provider — the string the *operator* chose, in the same act as the
+        // consent grant. The commitment is recomputed with the provider's
+        // handshake-declared name, because that is the id §6.5.2 puts in the
+        // signed preimage, and the only one the provider could have signed
+        // against. Collapsing them made an honest signature read as
+        // `CommitmentMismatch` — a tampering finding — for every operator whose
+        // config id differed from the provider's declared name.
+        let signing_id = provider.info().name.clone();
+        let outcomes = self.trust.check_result_signed_as(
+            id,
+            &signing_id,
+            &attested.result,
+            &attested.attestations,
+        );
         Ok((attested, outcomes))
     }
 

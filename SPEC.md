@@ -229,7 +229,7 @@ content it explicitly excluded.
 Q1 is a filter, not a ranking rule: it says which frames are *eligible*, and
 leaves ordering provider-private like the rest of §5.
 
-### 5.1 Embedding space (E1)
+### 5.2 Embedding space (E1)
 
 | # | Requirement |
 | - | ----------- |
@@ -517,38 +517,6 @@ also keeps a local id for each provider it has configured, and that one is not a
 string the provider ever sees — so it is not one a provider could sign against.
 The declared name is the only identifier both ends of the wire observe.
 
-#### 6.5.5 Carrying an attestation
-
-An attestation travels **beside** the thing it signs, never inside it (F6).
-Two optional members carry it:
-
-* `handshake_ack.attester_keys` — the public keys the provider signs with. A
-  provider that publishes none offers no attestation, which is conformant.
-* `frames.attestations` — one entry per attested frame, naming its frame by id.
-
-```jsonc
-{
-  "type": "handshake_ack",
-  "protocol_version": "contextgraph/1.0",
-  "provider": { "name": "example-docs", "version": "1.0.0",
-                "data_flow": { "reads": true, "writes": false, "egress": false } },
-  "capabilities": { "query": { "kinds": ["doc"] } },
-  "attester_keys": [
-    { "key_id": "example-docs-ed25519-1", "algorithm": "ed25519",
-      "public_key": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a" }
-  ]
-}
-```
-
-A published key settles whether an attestation is **built** the way this section
-requires. It settles nothing about *who* signed: it comes from the party under
-audit. A deployment that needs the second answer resolves `key_id` against its
-own trust store and ignores what the handshake said.
-
-Both members are optional additions within `contextgraph/1`, so a peer that
-knows nothing about them drops them and behaves exactly as it did before (§13
-U1).
-
 #### 6.5.3 Result-set Merkle root
 
 A provider signing a whole answer commits to a Merkle root over its frames'
@@ -600,10 +568,42 @@ conforming verifiers can disagree about is not evidence.
 
 #### 6.5.5 Carrying an attestation on the wire (F11–F13)
 
-A `frames` envelope's `result` carries two optional members. Both are omitted
-when empty, so an unsigned answer is byte-identical to one from a provider
-written before attestation existed, and a 1.0 peer that ignores them still reads
-a signed answer as a valid answer (§13 U1).
+**Where an attestation lives.**
+
+An attestation travels **beside** the thing it signs, never inside it (F6).
+Two optional members carry it:
+
+* `handshake_ack.attester_keys` — the public keys the provider signs with. A
+  provider that publishes none offers no attestation, which is conformant.
+* `frames.attestations` — one entry per attested frame, naming its frame by id.
+
+```jsonc
+{
+  "type": "handshake_ack",
+  "protocol_version": "contextgraph/1.0",
+  "provider": { "name": "example-docs", "version": "1.0.0",
+                "data_flow": { "reads": true, "writes": false, "egress": false } },
+  "capabilities": { "query": { "kinds": ["doc"] } },
+  "attester_keys": [
+    { "key_id": "example-docs-ed25519-1", "algorithm": "ed25519",
+      "public_key": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a" }
+  ]
+}
+```
+
+A published key settles whether an attestation is **built** the way this section
+requires. It settles nothing about *who* signed: it comes from the party under
+audit. A deployment that needs the second answer resolves `key_id` against its
+own trust store and ignores what the handshake said.
+
+Both members are optional additions within `contextgraph/1`, so a peer that
+knows nothing about them drops them and behaves exactly as it did before (§13
+U1).
+
+**What the result carries.** A `frames` envelope's `result` carries two optional
+members. Both are omitted when empty, so an unsigned answer is byte-identical to
+one from a provider written before attestation existed, and a 1.0 peer that
+ignores them still reads a signed answer as a valid answer (§13 U1).
 
 ```jsonc
 {
@@ -832,6 +832,18 @@ content is what goes into a prompt.
 | **G3** | A provider declaring `capabilities.graph` **SHOULD** boost frames within a small number of relation hops of a query `anchor`. | `anchor-relevance` |
 | **G4** | A frame is **anchored** by an anchor URI when its own `uri` equals that anchor (zero hops), or any of its `relations[].target_uri` does (one hop). A provider declaring `capabilities.graph` and given a non-empty `anchors` **MUST** return at least one anchored frame when it has one to serve, and **SHOULD** rank anchored frames above unanchored ones. | `anchor-relevance` |
 
+### 8.1 Relation vocabulary (SHOULD)
+
+The `rel` vocabulary is **open** — a host **MUST NOT** reject an unknown value.
+These names are published so independent providers converge instead of each
+inventing `calls` / `call` / `code.call`:
+
+`code.calls` · `code.imports` · `code.defines` · `code.references` ·
+`doc.documents` · `episode.follows`
+
+Provider-specific edges belong under their own namespace (`myindex.owns`), which
+keeps the shared namespace meaningful.
+
 ### 8.2 Why anchoring needed a definition (G4)
 
 G3 said providers should "boost frames within a small number of relation hops of
@@ -847,18 +859,6 @@ G4 gives "anchored" a decidable predicate — string equality on URIs, at zero o
 one hop — so the SHOULD in G3 becomes something a suite can actually witness.
 Deeper traversal stays provider-private: G4 is a floor on what must be *found*,
 not a ceiling on how hard a provider may look.
-
-### 8.1 Relation vocabulary (SHOULD)
-
-The `rel` vocabulary is **open** — a host **MUST NOT** reject an unknown value.
-These names are published so independent providers converge instead of each
-inventing `calls` / `call` / `code.call`:
-
-`code.calls` · `code.imports` · `code.defines` · `code.references` ·
-`doc.documents` · `episode.follows`
-
-Provider-specific edges belong under their own namespace (`myindex.owns`), which
-keeps the shared namespace meaningful.
 
 ### 8.3 Multi-hop traversal is deferred
 
