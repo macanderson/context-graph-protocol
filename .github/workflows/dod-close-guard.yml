@@ -17,4 +17,4 @@ permissions:
 
 jobs:
   guard:
-    uses: macanderson/oxagen/.github/workflows/dod-close-guard.yml@main
+    uses: macanderson/oxagen/.github/workflows/dod-close-guard.yml@84fe021ba3cf455b1d5057b04ed1111152fdceda # last changed 2026-09-05

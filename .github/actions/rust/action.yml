@@ -1,0 +1,51 @@
+name: "Rust toolchain (pinned)"
+description: >
+  Install the exact toolchain named by this repository's rust-toolchain.toml.
+  Replaces `dtolnay/rust-toolchain@stable`, which floated with Rust's release
+  schedule and turned `main` red without a commit whenever a new lint shipped.
+
+inputs:
+  components:
+    description: >
+      Extra rustup components for this job, comma-separated (e.g. "clippy").
+      rust-toolchain.toml already declares rustfmt and clippy, so a job only
+      needs this for something beyond those.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    # rustup would honour rust-toolchain.toml on its own — the file outranks
+    # `rustup default` in rustup's override order — so this step is not what
+    # makes the pin effective. It is what makes the pin *visible*: the install
+    # happens in a named step that fails on its own line, rather than inside
+    # whichever `cargo` command happens to run first.
+    - id: pin
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Resolved from the action's own location, not the working directory,
+        # so this keeps working when a caller checks the repo out into a
+        # subdirectory — as downstream-canary.yml does with `path: cgp`.
+        toolchain_file="$GITHUB_ACTION_PATH/../../../rust-toolchain.toml"
+        if [[ ! -f "$toolchain_file" ]]; then
+          echo "::error::rust-toolchain.toml not found at $toolchain_file — the pin is the single source of truth for the CI toolchain and CI must not silently fall back to whatever stable happens to be."
+          exit 1
+        fi
+        channel=$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$toolchain_file" | head -1)
+        # Parsing a TOML file with sed is only safe if it refuses to guess.
+        # A quoting style this expression does not match would otherwise
+        # install one toolchain here while cargo used another, which is a
+        # worse failure than not building at all.
+        if [[ -z "$channel" ]]; then
+          echo "::error::could not read a quoted \`channel = \"...\"\` from $toolchain_file"
+          exit 1
+        fi
+        echo "Pinned toolchain: $channel"
+        echo "channel=$channel" >>"$GITHUB_OUTPUT"
+
+    - uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ steps.pin.outputs.channel }}
+        components: ${{ inputs.components }}

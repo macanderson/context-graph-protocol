@@ -83,8 +83,8 @@ func docFrame(id, title, content, file, rng, validFrom string, score float64, di
 		ID:            id,
 		Kind:          "doc",
 		Title:         title,
-		Content:       content,
-		ContentDigest: digest,
+		Content:       cg.Ptr(content),
+		ContentDigest: cg.Ptr(digest),
 		URI:           fixtureURI(file),
 		Score:         score,
 		// Honest cost: ceil(utf8_len(content)/4) (B3).
@@ -93,10 +93,10 @@ func docFrame(id, title, content, file, rng, validFrom string, score float64, di
 		RecordedAt: "2026-07-20T18:00:00Z",
 		Provenance: []cg.Provenance{{
 			Type:   "file",
-			URI:    fixtureURI(file),
-			Range:  rng,
-			Digest: digest,
-			By:     "contextgraph-go-example-docs",
+			URI:    cg.Ptr(fixtureURI(file)),
+			Range:  cg.Ptr(rng),
+			Digest: cg.Ptr(digest),
+			By:     cg.Ptr("contextgraph-go-example-docs"),
 		}},
 		CitationLabel: file + " " + rng,
 		// A labelled edge to the symbol this page documents. §G4 makes a frame

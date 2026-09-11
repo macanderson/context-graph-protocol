@@ -38,12 +38,22 @@
       "range": "L1-L2",
       "method": "résumé",
       "by": "𝄞-agent"
+    },
+    "empty_uri": {
+      "type": "file",
+      "uri": ""
+    },
+    "absent_uri": {
+      "type": "file"
     }
   },
   "links_note": "A field absent from a link object is the encoding's None (presence byte 0x00). An explicit empty string is Some(\"\") and encodes differently — that distinction is normative, so a reader must not collapse the two.",
+  "empty_versus_absent_note": "empty_uri and absent_uri are that rule as a pair a port can fail. They differ only in whether uri is present, so a decoder that folds \"\" into absent — which every language whose JSON reader returns a plain string will do unless it is stopped — produces one chain head where this fixture publishes two, and reports commitment_mismatch on an honest frame.",
   "link_encodings_hex": {
     "ascii_minimal": "0000000466696c6501000000016100000000",
-    "unicode": "0000000466696c650100000018646f63732f6e61c3af76652fe697a5e69cace8aa9e2e6d6401000000054c312d4c3200010000000872c3a973756dc3a9010000000af09d849e2d6167656e74"
+    "unicode": "0000000466696c650100000018646f63732f6e61c3af76652fe697a5e69cace8aa9e2e6d6401000000054c312d4c3200010000000872c3a973756dc3a9010000000af09d849e2d6167656e74",
+    "empty_uri": "0000000466696c65010000000000000000",
+    "absent_uri": "0000000466696c650000000000"
   },
   "unicode_length_trap": {
     "uri": {
@@ -62,7 +72,9 @@
     "empty": "sha256:2ab226c884ffeb5ac95d300a8d8ee726cb4488fb59a19047d21da7170e9b63d6",
     "file": "sha256:ac5418d723088033179a2671d17cd08d3e082eefa783e3eeb1a5145f83592178",
     "file_then_derivation": "sha256:2245cb46807d55e9e89479b2948d7887fbba95430dd315d63972744a47a18410",
-    "unicode": "sha256:af8acb1dd4bd884f03cfcb21983b680b906f92733d905c3f22949fe90c8de065"
+    "unicode": "sha256:af8acb1dd4bd884f03cfcb21983b680b906f92733d905c3f22949fe90c8de065",
+    "empty_uri": "sha256:616d4fa60a91420472f7fcc1ebb49ff503a05104e3762570b67011dbbcd22152",
+    "absent_uri": "sha256:1bba53f2944ffeb223e7418e32780d0e91510f6b3c58787055f1109a525d5675"
   },
   "frame_commitment": {
     "provider_id": "repo-graph",

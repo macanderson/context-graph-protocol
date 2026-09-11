@@ -163,6 +163,40 @@ host must be able to cite what it used without falling back to a bare id.
 This is checked by the `frame-validity` conformance check and is a
 platform-wide convention, not a CGP-specific quirk.
 
+### The signing contract
+
+Most providers sign nothing, and that is conformant — you can stop reading this
+section. It applies only if you attach a `ProvenanceAttestation` to a frame.
+
+**If you sign a frame, that frame must declare a `content_digest` (F14).**
+
+The reason is worth understanding rather than obeying, because the failure is
+silent and the guarantee people assume is the wrong one. A frame commitment is
+a hash over `(provider_id, frame_id, content_digest)` plus the provenance chain
+head. `content_digest` is optional, and when it is absent the preimage records
+that absence honestly — so what the signature covers is the frame's *identity
+and provenance*, and nothing whatsoever about its content.
+
+Concretely: sign a frame with no digest, serve one document under that id,
+serve a completely different document under the same id next week, and the
+original signature still verifies. Nothing was tampered with; the content was
+simply never in the preimage.
+
+A verifier must distinguish the two cases (F15). The reference implementation
+returns `AttestationVerdict::ValidIdentityOnly` rather than `Valid`, and
+`is_valid()` is **false** for it, so the default answer to "is this good?" is
+the safe one. The conformance suite reports it as a problem against the
+*attester*, not as an unverifiable attestation, because the frame is servable
+and the signature is real — what is wrong is the claim a reader would take
+from it.
+
+Populating `content_digest` costs nothing if you already compute one, and most
+providers do: it is part of a frame's identity, and `context/verify` compares
+it to decide whether a host's cached frame is still fresh.
+
+See `SPEC.md` §6.5.2 and
+[ADR 0018](./adr/0018-signing-a-frame-requires-a-content-digest.md).
+
 ### A complete minimal example
 
 The `contextgraph-example-docs` binary bundled with `contextgraph-conformance`

@@ -239,12 +239,23 @@ impl TrustStore {
             };
         };
 
+        // Both verifying verdicts are *attested* — an identity-only attestation
+        // is a narrower guarantee, not a failed one, and demoting it to
+        // `Invalid` would discard a signature that genuinely checks out.
+        //
+        // `covers_content` is read off the verdict rather than re-derived from
+        // `frame.content_digest.is_some()`. The two agreed when this was
+        // written, and a single source of truth is what keeps them agreeing:
+        // the rule for what a commitment binds lives in `frame_commitment`, and
+        // this is downstream of it (#128).
         match verify_frame_attestation(provider_id, frame, attestation, &public_key) {
-            AttestationVerdict::Valid => AttestationState::Attested {
-                key_id: attestation.key_id.clone(),
-                attester_id: echoed(&attestation.attester_id),
-                covers_content: frame.content_digest.is_some(),
-            },
+            verdict @ (AttestationVerdict::Valid | AttestationVerdict::ValidIdentityOnly) => {
+                AttestationState::Attested {
+                    key_id: attestation.key_id.clone(),
+                    attester_id: echoed(&attestation.attester_id),
+                    covers_content: verdict.binds_content(),
+                }
+            }
             verdict => AttestationState::Invalid { verdict },
         }
     }

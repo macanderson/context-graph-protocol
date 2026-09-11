@@ -49,7 +49,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/rust
       - run: cargo publish --dry-run -p contextgraph-types
 
   publish:
@@ -60,7 +60,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/rust
 
       - name: Publish contextgraph-types
         run: cargo publish -p contextgraph-types --locked

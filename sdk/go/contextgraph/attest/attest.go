@@ -9,12 +9,18 @@
 //
 // # Why a Link type of its own
 //
-// contextgraph.Provenance carries its optional fields as string with
-// omitempty, which cannot distinguish an absent URI from a present empty one.
-// The §6.5.1 presence byte is normative precisely because those two must
-// differ — without it a URI could be deleted from a signed chain without
-// disturbing the hash — so this package takes pointers and
-// [LinkFromProvenance] states the collapse it performs rather than hiding it.
+// [Link] is the encoding's view of a provenance link: the six fields that
+// enter the preimage and nothing else. contextgraph.Provenance is the wire
+// view, and carries the same optional fields as *string for the same reason —
+// the §6.5.1 presence byte is normative, so an absent URI and a present empty
+// one must never encode alike. Because both types can now hold both states,
+// [LinkFromProvenance] is a faithful copy and a Go verifier decoding somebody
+// else's JSON reproduces the signer's chain head exactly.
+//
+// [Frame] exists on the same principle: only the three fields §6.5.2 commits
+// to, so a caller holding a frame from elsewhere does not have to fabricate a
+// Score and a TokenCost to check a commitment. [FrameFromContextFrame] is the
+// decode-side bridge.
 //
 // # No JSON canonicalizer
 //
@@ -69,31 +75,27 @@ type Link struct {
 	By     *string
 }
 
-// Str is a convenience for building an optional field.
+// Str is a convenience for building an optional field. contextgraph.Ptr is the
+// same thing on the wire types, generic over the value type; either works here.
 func Str(s string) *string { return &s }
 
-// LinkFromProvenance converts a wire link.
+// LinkFromProvenance converts a wire link into the encoding's link.
 //
-// It collapses an empty string to absent, because contextgraph.Provenance
-// cannot represent the difference: its fields are string with omitempty, so a
-// present-but-empty URI never survives a JSON round trip in the first place.
-// A verifier handling frames produced elsewhere — where `"uri": ""` is
-// representable — must decode into [Link] directly rather than through this
-// helper, or it will compute a chain head the signer did not.
+// The conversion is faithful: presence is carried through field by field, and
+// nothing is collapsed. It used to fold an empty string into absent, because
+// the wire struct's fields were string with omitempty and could not hold the
+// difference. That fold was a divergence from §6.5.1 dressed as a convenience
+// — a frame produced elsewhere, where `"uri": ""` is perfectly representable,
+// hashed one way for its signer and another way here — and the wire struct now
+// carries *string so there is nothing left to collapse.
 func LinkFromProvenance(p contextgraph.Provenance) Link {
-	optional := func(s string) *string {
-		if s == "" {
-			return nil
-		}
-		return &s
-	}
 	return Link{
 		Type:   p.Type,
-		URI:    optional(p.URI),
-		Range:  optional(p.Range),
-		Digest: optional(p.Digest),
-		Method: optional(p.Method),
-		By:     optional(p.By),
+		URI:    p.URI,
+		Range:  p.Range,
+		Digest: p.Digest,
+		Method: p.Method,
+		By:     p.By,
 	}
 }
 
@@ -106,6 +108,26 @@ type Frame struct {
 	ID            string
 	ContentDigest *string
 	Provenance    []Link
+}
+
+// FrameFromContextFrame converts a decoded wire frame into the part §6.5.2
+// commits to.
+//
+// This is the whole verifier path: unmarshal a contextgraph.ContextFrame from
+// somebody else's JSON, convert it here, and [FrameCommitment] reproduces the
+// bytes the signer signed. Presence is preserved throughout — an absent
+// content_digest stays absent, a present empty one stays present — because the
+// preimage encodes the two differently.
+func FrameFromContextFrame(frame contextgraph.ContextFrame) Frame {
+	links := make([]Link, 0, len(frame.Provenance))
+	for _, p := range frame.Provenance {
+		links = append(links, LinkFromProvenance(p))
+	}
+	return Frame{
+		ID:            frame.ID,
+		ContentDigest: frame.ContentDigest,
+		Provenance:    links,
+	}
 }
 
 // InclusionStep is one step of an [InclusionProof]: the sibling hash and which

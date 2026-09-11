@@ -32,6 +32,22 @@ your copyright; no assignment, ever.
 Maintainers aim for a first response within a few days. "Needs work" is a
 normal part of the loop here, not a rejection.
 
+## The toolchain is pinned
+
+[`rust-toolchain.toml`](./rust-toolchain.toml) names the exact Rust release CI
+lints and tests with, and rustup reads it automatically — so `cargo build` in a
+fresh clone puts you on the same compiler as the runner, with `rustfmt` and
+`clippy` already attached. Don't `rustup override set` in this checkout; that
+outranks the file and puts you on a compiler CI is not using.
+
+That pin is **not** the MSRV. `[workspace.package] rust-version` in
+`Cargo.toml` is the oldest compiler the published crates promise to support,
+the `msrv` CI job proves it separately, and raising the pin is never a reason
+to raise the floor. [docs/toolchain.md](./docs/toolchain.md) explains both
+numbers and how to bump the pin: one deliberate PR that absorbs the new lints
+and any `cargo fmt --all` churn together, rather than an ambush on whoever
+opens the next pull request (#160).
+
 ## Sites and URLs (read before you `vercel` anything)
 
 **This repository deploys nothing, by decision.** `contextgraphprotocol.org`,

@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/rust
         with:
           components: rustfmt
       - run: cargo fmt --all -- --check
@@ -35,7 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/rust
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
@@ -46,7 +46,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
       # `attestation` is off by default, so the line above reaches
@@ -73,7 +73,7 @@ jobs:
     # catch a `cfg` that silently relies on the other being enabled too.
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/rust
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
@@ -100,14 +100,29 @@ jobs:
         with:
           toolchain: ${{ steps.msrv.outputs.version }}
       - uses: Swatinem/rust-cache@v2
+      # This job is the one place that must NOT use the pinned toolchain, and
+      # since `rust-toolchain.toml` landed it is also the one place that has to
+      # say so out loud. The action above installs the MSRV and makes it the
+      # rustup *default*, but rustup ranks a `rust-toolchain.toml` file above
+      # the default — so with the file present, `cargo build` here would
+      # silently use the pin and this job would prove the crates build on the
+      # newest compiler while claiming to prove they build on the oldest. A job
+      # that reports a guarantee it did not test is worse than no job.
+      #
+      # `RUSTUP_TOOLCHAIN` outranks the file, so this is the override that
+      # restores the job's meaning. Its value is the MSRV read from
+      # `Cargo.toml`, never the pin: the two numbers answer different
+      # questions and must keep moving independently.
       - run: cargo build --workspace
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
 
   conformance:
     name: conformance (green and --misbehave red)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
       - name: Suite is green against the conformant fixture
@@ -122,7 +137,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
       # No target-dir argument: the provider defaults to its bundled fixtures/,
@@ -135,7 +150,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
       - name: treesitter reference provider passes the conformance suite
@@ -149,7 +164,7 @@ jobs:
     # example providers pass. No network, no npx — the fixture is the MCP server.
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
       - name: Bridge wrapping the in-repo MCP fixture passes the conformance suite
@@ -163,7 +178,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
       - uses: actions/setup-node@v4
@@ -185,7 +200,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
       - uses: actions/setup-python@v5
@@ -202,7 +217,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
       - uses: actions/setup-go@v5
@@ -224,7 +239,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
       - uses: actions/setup-node@v4
@@ -254,7 +269,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
       - uses: actions/setup-python@v5
@@ -279,7 +294,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
       - uses: actions/setup-go@v5
@@ -377,7 +392,7 @@ jobs:
       CONTEXTGRAPH_INSPECT: ${{ github.workspace }}/target/debug/contextgraph-inspect
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
       - uses: actions/setup-node@v4
@@ -410,6 +425,26 @@ jobs:
           python-version: "3.12"
       - run: pip install jsonschema
       - run: python3 schema/validate-examples.py
+
+  toolchain-pin:
+    name: the CI toolchain is pinned on purpose
+    runs-on: ubuntu-latest
+    # Needs no toolchain of its own — it reads files — so it reports in
+    # seconds rather than waiting behind a compile.
+    #
+    # The pin's failure mode is silence. Re-adding
+    # `dtolnay/rust-toolchain@stable` to a new job reads as ordinary
+    # copy-paste, and nothing goes red until the next Rust release, weeks after
+    # the commit that caused it. Deleting the `msrv` job's `RUSTUP_TOOLCHAIN`
+    # override is worse: that job keeps passing and quietly stops testing the
+    # MSRV at all. Neither is visible in review, which is what earns them a
+    # gate (#160).
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 .github/scripts/check-toolchain-pin.py
 
   deploy-hygiene:
     name: advertised artifact URLs point at a host we serve
@@ -444,6 +479,6 @@ jobs:
     # pre-publish verification is asymmetric).
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo publish --dry-run -p contextgraph-types
