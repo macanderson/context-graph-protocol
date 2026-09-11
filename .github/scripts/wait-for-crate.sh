@@ -32,20 +32,31 @@ fi
 
 url="https://index.crates.io/$path"
 
-for attempt in $(seq 1 "$max_attempts"); do
-  if curl -fsSL "$url" 2>/dev/null | python3 -c "
-import json, sys
+# The version crosses into Python through the environment, never through the
+# program text. `$version` is a git tag name with a fixed prefix stripped
+# (`release.yml` passes "${GITHUB_REF_NAME#contextgraph-v}"), and git accepts
+# apostrophes and newlines in a tag. Interpolated into the source of the
+# snippet below, an apostrophe closed the string literal and killed the release
+# with a bare SyntaxError, and a newline plus a statement ran arbitrary Python
+# in the job that holds CARGO_REGISTRY_TOKEN. Reading it from os.environ is the
+# whole fix: the value is data on both sides of the boundary.
+read -r -d '' find_version <<'PYTHON' || true
+import json, os, sys
 
-target = '$version'
+target = os.environ["CRATE_VERSION"]
 for line in sys.stdin:
     line = line.strip()
     if not line:
         continue
     entry = json.loads(line)
-    if entry.get('vers') == target:
+    if entry.get("vers") == target:
         sys.exit(0)
 sys.exit(1)
-"; then
+PYTHON
+
+for attempt in $(seq 1 "$max_attempts"); do
+  if curl -fsSL "$url" 2>/dev/null |
+    CRATE_VERSION="$version" python3 -c "$find_version"; then
     echo "$crate $version is live on the sparse index."
     exit 0
   fi

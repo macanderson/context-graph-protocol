@@ -396,6 +396,22 @@ text lands without a human merge.
   `contextgraph/1.0` and the crates shipped `1.0.0`.
 
 ### Fixed
+- **A release script no longer pastes a git tag name into a Python program
+  (issue #150).** `.github/scripts/wait-for-crate.sh` built its sparse-index
+  poller by interpolating `$version` into the source text of a `python3 -c`
+  snippet, inside a single-quoted Python literal inside a double-quoted shell
+  string. `$version` is a pushed tag with a prefix stripped, and git tag names
+  accept apostrophes and newlines: one shape killed a release with a bare
+  `SyntaxError`, and another ran arbitrary Python in the one job that holds
+  `CARGO_REGISTRY_TOKEN`. The value now crosses into Python through
+  `os.environ`, so it is data on both sides of the boundary. Nothing changes
+  for a well-formed tag.
+- **The release preflight tests what the publish will do (issue #150).** The
+  `preflight` job ran `cargo publish --dry-run` without `--locked` while the
+  gated `publish` job runs with it, so a `Cargo.lock` out of sync with
+  `Cargo.toml` gave a green preflight and then failed at the publish job's
+  first step — after a human had spent the approval click. Both dry runs, here
+  and in `ci.yml`, now pass `--locked`.
 - **The version-compatibility example illustrated nothing.** `contextgraph/1.0`
   and `contextgraph/1.0` were given as two versions that interoperate — in
   **seven** files (`README.md`, `SPEC.md`, `docs/overview.md`, `docs/index.md`,
