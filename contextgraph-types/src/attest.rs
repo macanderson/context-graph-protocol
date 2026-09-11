@@ -1367,8 +1367,13 @@ mod tests {
         let frames = vec![frame.clone()];
         let (root, proofs) = root_signed("repo-graph", &frames);
 
-        let verdict =
-            verify_frame_inclusion("repo-graph", &frame, &proofs[0], &root, &public_key_for(&SEED));
+        let verdict = verify_frame_inclusion(
+            "repo-graph",
+            &frame,
+            &proofs[0],
+            &root,
+            &public_key_for(&SEED),
+        );
         assert_eq!(verdict, AttestationVerdict::ValidIdentityOnly);
         assert!(verdict.signature_verifies());
         assert!(!verdict.binds_content());

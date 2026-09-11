@@ -126,13 +126,18 @@ pub struct ContextQuery {
 structured record of relevance, cost, provenance, and validity.
 
 ```rust
-pub enum FrameKind { Snippet, Symbol, Fact, Doc, Memory, Episode, Graph }
+pub enum FrameKind {
+    Snippet, Symbol, Fact, Doc, Memory, Episode, Graph,
+    Unknown(String),                 // the vocabulary is OPEN — see below
+}
 
 pub struct ContextFrame {
     pub id: String,                  // stable, for dedup, never the on-screen label
     pub kind: FrameKind,
     pub title: String,               // human label, required
-    pub content: String,             // untrusted data, host quotes it, never executes it
+    pub content: Option<String>,     // untrusted data, host quotes it, never executes it;
+                                     // None on a `reference` frame, which carries a pointer
+                                     // instead of bytes (SPEC.md §P3)
     pub score: f32,                  // relevance in [0, 1]
     pub token_cost: u32,             // honest, conformance-audited
     pub provenance: Vec<Provenance>,
@@ -142,6 +147,16 @@ pub struct ContextFrame {
     // ...
 }
 ```
+
+**`FrameKind` is an open vocabulary, and a receiver must treat it that way.**
+The seven named kinds are the ones `contextgraph/1.0` defines; a later `1.x`
+may add more, and `SPEC.md` §13 U2 makes it a **MUST** that a host receiving an
+unrecognised `kind` treats the frame as opaque evidence rather than failing to
+deserialise it, rejecting it, or crashing. `FrameKind::from_wire` never fails,
+and `Unknown(String)` keeps the original wire string verbatim so the frame
+round-trips unchanged. Porting the enum as a closed set of seven is how you
+build the flag day the open vocabulary exists to prevent
+([ADR 0011](docs/adr/0011-open-frame-kind-vocabulary.md)).
 
 Frame content is transported as untrusted data. A conforming host delimits it as
 quoted material and never treats it as instructions, the same way a mail client

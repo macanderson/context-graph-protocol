@@ -396,6 +396,31 @@ text lands without a human merge.
   `contextgraph/1.0` and the crates shipped `1.0.0`.
 
 ### Fixed
+- **The provider-authoring docs describe the wire contract we have (issue
+  #151).** The pages someone reads before writing any provider code got four
+  things wrong, two of which would have produced a **non-conformant** provider.
+  `FrameKind` was printed as a closed set of seven in `README.md`,
+  `docs/overview.md`, `docs/protocol-surface.md` and `docs/GUIDE.md`; it is
+  **open**, `Unknown(String)` exists, and `SPEC.md` §13 U2 makes tolerating an
+  unrecognised kind a MUST — porting the enum as printed builds the flag day
+  [ADR 0011](./docs/adr/0011-open-frame-kind-vocabulary.md) exists to prevent.
+  `ContextFrame.content` was printed as `String`; it is `Option<String>`,
+  because a `reference` frame must be able to carry none.
+  `docs/implementing-a-provider.md` printed five of the trait's six methods
+  while telling you sixty lines later to implement the missing one, and called
+  the envelope "externally-tagged" while quoting the attribute that makes it
+  internally-tagged. And `contextgraph-host`'s own `capabilities()` doc comment
+  described `upsert`, `subscriptions` and `filters` — three fields
+  [ADR 0004](./docs/adr/0004-dead-capability-surface.md) deleted — which the
+  guide and `docs/protocol-advantages.md` had copied.
+- **A guard keeps those docs true (issue #151).**
+  `.github/scripts/check-doc-types.py` reads `contextgraph-types` and
+  `contextgraph-host` and checks the printed blocks against them: `FrameKind`
+  shown as open, `content` shown as optional, the provider guide naming every
+  method the trait declares, and nothing describing a `Capabilities` field the
+  struct does not have. It does not diff whole blocks — the docs elide fields on
+  purpose — only the claims a reader acts on. Verified to fail on the four
+  defects above and pass once they are fixed.
 - **A release script no longer pastes a git tag name into a Python program
   (issue #150).** `.github/scripts/wait-for-crate.sh` built its sparse-index
   poller by interpolating `$version` into the source text of a `python3 -c`

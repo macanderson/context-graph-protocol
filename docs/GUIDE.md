@@ -146,7 +146,12 @@ These are the Rust types that implement the schema above. If you're reading
 code, start here.
 
 **Frames and content**
-- `FrameKind` — the 7 kinds of frame (snippet, symbol, fact, doc, memory, episode, graph).
+- `FrameKind` — an **open** vocabulary. Seven kinds are defined (snippet, symbol,
+  fact, doc, memory, episode, graph) plus `Unknown(String)` for a kind this
+  revision does not know, which a later `1.x` may add. `SPEC.md` §13 U2 makes it
+  a MUST that a receiver accepts an unrecognised kind, treats the frame as opaque
+  evidence, and preserves the original string verbatim if it re-emits the frame
+  ([ADR 0011](./adr/0011-open-frame-kind-vocabulary.md)).
 - `ContextFrame` — the main frame type; the unit of exchange.
 - `FrameId` — a frame's stable identity (provider id + frame id + content hash) — used for dedup and stable ordering.
 - `Representation` — full / compact / reference (see 2.2).

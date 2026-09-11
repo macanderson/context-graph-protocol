@@ -31,9 +31,17 @@ pub trait ContextProvider: Send + Sync {
     /// (SPEC.md §3, ).
     fn info(&self) -> &ProviderInfo;
 
-    /// Capabilities negotiated at the handshake (SPEC.md §3) — which frame kinds
-    /// and filters this provider serves, whether it upserts, does graph, is
-    /// an embedder, or supports subscriptions.
+    /// Capabilities negotiated at the handshake (`SPEC.md` §3): which frame
+    /// kinds this provider serves, whether it echoes a correlation `id`, does
+    /// graph, names an embedding space, answers `context/verify`, which frame
+    /// representations it can return, and whether it answers `context/resolve`.
+    ///
+    /// That is the whole of [`Capabilities`] — seven fields. This comment used
+    /// to describe `upsert`, `subscriptions` and `filters`, which
+    /// [ADR 0004](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0004-dead-capability-surface.md)
+    /// removed because nothing implemented them. The sentence outlived them and
+    /// was copied into `docs/implementing-a-provider.md`, so a provider author
+    /// read it as the contract (#151).
     fn capabilities(&self) -> &Capabilities;
 
     /// Answer a context query with budgeted, provenance-carrying frames

@@ -187,7 +187,8 @@ The `DataFlow` struct is the security-critical field in CGP:
 ```rust
 pub struct DataFlow {
     pub reads: bool,   // can see workspace content via query payloads
-    pub writes: bool,  // persists context/upsert writes
+    pub writes: bool,  // persists writes somewhere (NOT a callable write method:
+                       // there is none in 1.0 — ADR 0004)
     pub egress: bool,  // sends anything off the local machine
 }
 ```

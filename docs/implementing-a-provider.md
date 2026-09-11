@@ -14,7 +14,10 @@ implement the one trait every source implements
 ```rust
 use async_trait::async_trait;
 use contextgraph_host::HostError;
-use contextgraph_types::{Capabilities, ContextQuery, ContextQueryResult, ProviderInfo};
+use contextgraph_types::{
+    Capabilities, ContextQuery, ContextQueryResult, ProviderInfo, Verdict,
+    VerifyRequest, VerifyResponse,
+};
 
 #[async_trait]
 pub trait ContextProvider: Send + Sync {
@@ -24,18 +27,36 @@ pub trait ContextProvider: Send + Sync {
     /// Identity + declared data-flow direction, surfaced at consent time.
     fn info(&self) -> &ProviderInfo;
 
-    /// Capabilities: which frame kinds and filters this provider serves,
-    /// whether it upserts, does graph, is an embedder, or supports
-    /// subscriptions.
+    /// Which frame kinds you serve, whether you echo a correlation `id`, do
+    /// graph, name an embedding space, answer `context/verify`, which
+    /// representations you can return, and whether you answer
+    /// `context/resolve`. Seven fields — that is all `Capabilities` has.
     fn capabilities(&self) -> &Capabilities;
 
     /// Answer a context query with budgeted, provenance-carrying frames.
+    /// A provider that signs what it serves puts the evidence on this result,
+    /// in `frame_attestations` / `result_attestation` — see "Attesting what you
+    /// serve" below.
     async fn query(&self, query: &ContextQuery) -> Result<ContextQueryResult, HostError>;
+
+    /// Revalidate frames the host already holds, with no frame body travelling.
+    /// Defaults to `Verdict::Unknown` for every requested identity, so a
+    /// provider that implements nothing is simply treated as unable to vouch
+    /// for its frames and the host re-queries them. Override it **and**
+    /// advertise `Capabilities::verify` — the host only asks providers that
+    /// declare support.
+    async fn verify(&self, request: &VerifyRequest) -> Result<VerifyResponse, HostError> {
+        Ok(VerifyResponse::uniform(request, Verdict::Unknown))
+    }
 
     /// Shut the provider down cleanly. Defaults to a no-op.
     async fn shutdown(&self) -> Result<(), HostError> { Ok(()) }
 }
 ```
+
+Four of the six are yours to write; `verify` and `shutdown` are defaulted, so
+the smallest conforming provider implements `id`, `info`, `capabilities` and
+`query` and nothing else.
 
 `info()` and `capabilities()` are cheap synchronous getters — cache them at
 construction time rather than recomputing per call. Register your provider
@@ -61,8 +82,10 @@ this protocol over two transports; you only need to implement one:
 > what those SDKs are built on, and all you need for any other language.
 
 Both transports carry the same message vocabulary, `contextgraph-host::wire::Envelope`
-(a `serde` externally-tagged enum, `#[serde(tag = "type", rename_all =
-"snake_case")]`):
+(a `serde` **internally-tagged** enum, `#[serde(tag = "type", rename_all =
+"snake_case")]` — the `type` discriminant sits *beside* the payload fields, as
+every transcript in `examples/` shows. Externally tagged would nest the
+payload, `{"query": {…}}`, and it does not):
 
 | `type` | direction | payload |
 |---|---|---|
@@ -131,9 +154,11 @@ never left to hang.
 do:
 
 - `reads: true` — you can see workspace content via query payloads.
-- `writes: true` — you persist `context/upsert`-style writes (not yet part
-  of the query/frames exchange in this crate; reserved for a future CGP
-  method).
+- `writes: true` — you persist writes. There is **no** callable write method
+  in `contextgraph/1.0`: [ADR 0004](./adr/0004-dead-capability-surface.md)
+  removed the `upsert` capability because nothing implemented it, and kept this
+  flag because it answers a separate and real consent question — whether using
+  you changes state somewhere.
 - `egress: true` — **anything you do sends data off the local machine.**
 
 **Declare `egress: true` honestly if your provider calls out to a remote
@@ -200,8 +225,8 @@ See `SPEC.md` §6.5.2 and
 ### A complete minimal example
 
 The `contextgraph-example-docs` binary bundled with `contextgraph-conformance`
-(`contextgraph-conformance/src/bin/contextgraph-example-docs.rs`) is a real, runnable ~150-line
-stdio provider that implements this whole exchange: it reads NDJSON lines
+(`contextgraph-conformance/src/bin/contextgraph-example-docs.rs`) is a real,
+runnable stdio provider that implements this whole exchange: it reads NDJSON lines
 from stdin, replies to `handshake` with a `handshake_ack`, replies to `query`
 with two canned `doc` frames, and exits cleanly on `shutdown`. Read it end to
 end as the reference implementation; it deliberately reuses `contextgraph-host`'s
