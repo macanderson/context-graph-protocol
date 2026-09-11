@@ -41,13 +41,13 @@ func (myProvider) Query(_ cg.ContextQuery) (cg.ContextQueryResult, error) {
 	return cg.ContextQueryResult{
 		Frames: []cg.ContextFrame{{
 			ID: "doc:1", Kind: "doc", Title: "Getting started",
-			Content:       content,
-			ContentDigest: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+			Content:       cg.Ptr(content),
+			ContentDigest: cg.Ptr("sha256:1111111111111111111111111111111111111111111111111111111111111111"),
 			Score:         0.9,
 			// TokenCost MUST equal ceil(utf8_len(content)/4).
 			TokenCost:     cg.BudgetTokens(content),
 			ValidFrom:     "2026-01-01T00:00:00Z",
-			Provenance:    []cg.Provenance{{Type: "file", URI: "file:///docs/start.md", Range: "L1-10", Digest: "sha256:1111111111111111111111111111111111111111111111111111111111111111"}},
+			Provenance:    []cg.Provenance{{Type: "file", URI: cg.Ptr("file:///docs/start.md"), Range: cg.Ptr("L1-10"), Digest: cg.Ptr("sha256:1111111111111111111111111111111111111111111111111111111111111111")}},
 			CitationLabel: "start.md L1-10",
 		}},
 	}, nil
@@ -55,6 +55,12 @@ func (myProvider) Query(_ cg.ContextQuery) (cg.ContextQueryResult, error) {
 
 func main() { cg.RunStdioProvider(myProvider{}) }
 ```
+
+`cg.Ptr` is there because the optional fields that feed a provenance
+attestation are `*string`, not `string`: SPEC.md §6.5.1 makes `"uri": null` and
+`"uri": ""` hash differently, and a plain `string` with `omitempty` cannot hold
+that difference in either direction. A `nil` is omitted; a pointer to `""` is
+emitted as `""`.
 
 To answer `context/verify`, also implement `cg.Verifier`. The runtime handles the
 whole lifecycle — handshake, query (echoing the correlation `id`), verify,
@@ -102,11 +108,24 @@ itself.
 
 Two things worth knowing:
 
-- **`attest.Link` is not `contextgraph.Provenance`.** The wire struct carries
-  its optional fields as `string` with `omitempty` and so cannot tell an absent
-  URI from a present empty one — a distinction the §6.5.1 presence byte makes
-  normative. `attest.Link` uses pointers, and `LinkFromProvenance` states the
-  collapse it performs rather than hiding it.
+- **`attest.Link` is not `contextgraph.Provenance`.** `Link` is the encoding's
+  view — the six fields that enter the preimage, nothing else — and `Frame` is
+  the three fields §6.5.2 commits to, so verifying a frame you received does not
+  mean fabricating a `Score` and a `TokenCost`. Both types carry their optional
+  fields as pointers, and so does the wire struct, so `LinkFromProvenance` and
+  `FrameFromContextFrame` copy presence straight through:
+
+  ```go
+  var frame cg.ContextFrame
+  json.Unmarshal(body, &frame)   // somebody else's frame, "uri": "" and all
+  result := attest.VerifyFrameAttestation(providerID,
+      attest.FrameFromContextFrame(frame), attestation, publicKey)
+  ```
+
+  Before `v0.2.0` the wire struct's optional fields were `string`, which folded
+  an absent URI and a present empty one together; a Go verifier then computed a
+  chain head the signer never did and answered `commitment_mismatch` on an
+  honest frame. See [`MIGRATION.md`](../../MIGRATION.md) §7.
 - **Go's `crypto/ed25519` accepts a small-order public key.** §6.5.4 asks for a
   strict verifier, so `VerifyCommitment` declines those keys — and any key
   whose `y` is not reduced — before the standard library sees them.

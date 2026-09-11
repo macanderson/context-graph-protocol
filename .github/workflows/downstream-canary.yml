@@ -68,7 +68,7 @@ jobs:
           repository: macanderson/stella
           path: stella
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./cgp/.github/actions/rust
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |

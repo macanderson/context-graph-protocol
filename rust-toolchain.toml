@@ -1,0 +1,30 @@
+# The toolchain CI lints and tests with, pinned to a concrete release.
+#
+# Before this file existed, every job ran `dtolnay/rust-toolchain@stable`, so
+# the compiler moved under the tree on Rust's release schedule rather than on
+# ours. Because clippy runs at `-D warnings`, each new warn-by-default lint
+# arrived as an unannounced red `main` — and it landed on whichever pull
+# request happened to be open, so its author paid for a change they had not
+# made. Rust 1.98's `clippy::chunks_exact_to_as_chunks` did exactly that to
+# `contextgraph-types/src/attest.rs`, code untouched and green since #87.
+# `rustfmt` has the same shape and is worse to diagnose, because a new stable
+# rustfmt reformats previously-clean files and the diff reads as the author's.
+#
+# Pinning does not make the repo stop tracking stable; it makes tracking it a
+# decision. Bumping is one deliberate pull request that absorbs the new lints
+# and any `cargo fmt --all` churn in the same commit. `docs/toolchain.md` has
+# the procedure.
+#
+# This is NOT the MSRV. `[workspace.package] rust-version` in `Cargo.toml` is
+# the oldest compiler the crates claim to support, it is a promise to
+# downstream consumers, and the `msrv` CI job proves it independently against
+# that number. The two are separate values with separate meanings: raising the
+# pin below says nothing about what a consumer needs, and must never be read
+# as raising the floor.
+[toolchain]
+channel = "1.98.1"
+# rustfmt and clippy are the components CI asks for by name. Declaring them
+# here rather than only in the workflow means a contributor who clones the
+# repo gets the same tools as the runner from their first `cargo fmt`.
+components = ["rustfmt", "clippy"]
+profile = "minimal"

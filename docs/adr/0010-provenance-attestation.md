@@ -73,9 +73,23 @@ This is not defensive detail; without it the scheme is a forgery primitive. Two
 frames citing the same source produce the same chain head, so a signature over
 the head alone can be lifted from an innocuous frame and stapled onto a
 fabricated one — it verifies, and the evidence is invented. Including
-`content_digest` further means the signature covers the frame's *bytes*, not
-merely its name, so a provider cannot re-serve different content under a
-previously signed frame id.
+`content_digest` further means that, **when the frame declares one**, the
+signature covers the frame's *bytes* and not merely its name, so a provider
+cannot re-serve different content under a previously signed frame id.
+
+**Correction (2026-09-10, #128).** The sentence above originally carried no
+qualifier, and as written it was false for the case it most needed to be true
+for. `content_digest` is an `Option`, so a frame may declare none — and an
+attestation over such a frame covers its identity and provenance and nothing
+about its bytes. A provider could sign one, serve different content under the
+same id later, and the original signature would still verify. The reference
+verifier reported that as `Valid`.
+
+SPEC.md §6.5.2 now states what such an attestation does and does not bind, and
+adds F14–F16: an attester **MUST** populate `content_digest` on any frame it
+signs, a verifier **MUST** distinguish the two cases, and a host **SHOULD**
+surface the distinction. The decision behind those rules is
+[ADR 0018](0018-signing-a-frame-requires-a-content-digest.md).
 
 ### 3. A length-prefixed encoding, not RFC 8785 (JCS)
 

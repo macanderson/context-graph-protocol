@@ -223,7 +223,7 @@ now tied to the kind, because an unknown kind owns its string.
 on `never`-narrowing stops type-checking. Narrow with the exported
 `isKnownFrameKind` / `KNOWN_FRAME_KINDS` when you need to branch only on kinds
 you understand. The Go SDK is unchanged in this release — porting it is tracked
-in issue #93.
+in issue #93. It takes a break of its own later; see §7.
 
 ## 6. The JSON Schemas moved to a branded `$id` — no action required
 
@@ -259,3 +259,137 @@ as before.
 **If you compare `$id` as a string,** that is the one thing that changed. A test
 asserting the old literal needs the new one. `contextgraph-conformance` does not
 do this, and neither does any SDK in this repository.
+
+## 7. Go SDK `v0.1.0` → `v0.2.0` — optional strings become `*string`
+
+**Nothing changes on the wire, and this is a compile error rather than a silent
+one — with one exception, in §7.3.** The Go SDK's optional string fields that a
+peer can observe as *absent* or as *present and empty* are now `*string`:
+
+| Type | Fields |
+| --- | --- |
+| `contextgraph.Provenance` | `URI`, `Range`, `Digest`, `Method`, `By` |
+| `contextgraph.ContextFrame` | `Content`, `ContentDigest` |
+
+Every other optional string in the package is unchanged.
+
+### 7.1 Why the break was worth taking
+
+`SPEC.md` §6.5.1 makes the presence byte normative: `enc_opt(None)` is `0x00`
+and `enc_opt(Some(s))` is `0x01 ‖ enc_str(s)`, so `"uri": null` and `"uri": ""`
+**must** hash differently — without that, a link's URI could be deleted from a
+signed chain without disturbing the hash. Go's `encoding/json` decodes an absent
+member and an explicit `""` into the same `string`, and `omitempty` drops an
+empty one on the way out, so the old wire struct could represent only one of the
+two states.
+
+That was survivable for a Go provider building its own links and fatal for a Go
+*verifier*. Handed an honest frame from a Rust, TypeScript or Python signer that
+carried `"uri": ""` — perfectly representable in all three — a Go verifier
+computed the chain head for an *absent* URI, and answered `commitment_mismatch`
+on evidence that was in fact intact (issue #124). `ContextFrame.ContentDigest`
+had the same shape and the same consequence, being an `enc_opt` field of the
+§6.5.2 frame commitment.
+
+The alternative was a decode-side wrapper type that preserved presence without
+changing the exported struct. Cheaper, and it would have left two ways to spell
+a provenance link in one SDK — the shape that produced this bug in the first
+place. One representation, correct by construction, was worth a major-shaped
+break in a `v0` module.
+
+`ContextFrame.Content` moves for a related reason: `omitempty` on a `string`
+silently omitted the member for a `full` frame carrying an empty document,
+producing a frame the schema rejects (its `full` branch requires `content`), and
+a `reference` frame is defined by omitting `content` entirely rather than by
+sending `""`.
+
+### 7.2 Fixing your call sites
+
+Build a present value with the new `contextgraph.Ptr` helper — generic, so it
+also builds the `*uint32` that `CanonicalTokenCost` takes:
+
+```go
+// before
+frame := cg.ContextFrame{
+    Content:       content,
+    ContentDigest: digest,
+    Provenance: []cg.Provenance{{Type: "file", URI: uri, Range: rng, Digest: digest}},
+}
+
+// after
+frame := cg.ContextFrame{
+    Content:       cg.Ptr(content),
+    ContentDigest: cg.Ptr(digest),
+    Provenance: []cg.Provenance{{Type: "file", URI: cg.Ptr(uri), Range: cg.Ptr(rng), Digest: cg.Ptr(digest)}},
+}
+```
+
+Reading a field now means checking presence, which is the point:
+
+```go
+if frame.ContentDigest == nil {
+    // Not verifiable — re-query rather than reuse (docs/context-reuse.md §4).
+}
+```
+
+Verifying somebody else's frame no longer needs a hand-rolled conversion:
+
+```go
+var frame cg.ContextFrame
+json.Unmarshal(body, &frame)
+result := attest.VerifyFrameAttestation(providerID,
+    attest.FrameFromContextFrame(frame), attestation, publicKey)
+```
+
+`attest.LinkFromProvenance` no longer collapses an empty string to absent. That
+collapse was documented rather than hidden, and `TestLinkFromProvenanceStatesItsCollapse`
+pinned it; both are gone, replaced by a vector that pins the faithful behaviour
+against `tests/vectors/attestation-vectors.json`.
+
+### 7.3 The one thing that does not fail loudly
+
+If your code used `""` to *mean* absent, wrapping it blindly changes your output
+bytes: `cg.Ptr("")` now emits `"digest": ""` where the old struct omitted the
+member. Do not blanket-wrap. Pass `nil` where you meant absent:
+
+```go
+uri := cg.Ptr(candidate)
+if candidate == "" {
+    uri = nil          // absent, not present-and-empty
+}
+```
+
+A provider that never set an empty optional emits byte-identical JSON before and
+after this change.
+
+### 7.4 What the missing `/vN` suffix means for you
+
+The module path is `github.com/macanderson/context-graph-protocol/sdk/go`, with
+**no `/vN` suffix**. Go's import-compatibility rule only requires a suffix at
+`v2` and above, and this module is on `v0` — where semantic versioning makes no
+compatibility promise at all and the Go toolchain permits a breaking minor.
+
+Said plainly:
+
+- The break ships as tag `sdk/go/v0.2.0` **at the same import path**. Not one
+  import line in your code changes.
+- Because the path is unchanged, `go get -u` will move a `v0.1.0` consumer onto
+  it. Your build then fails to compile, which is the loud outcome you want —
+  see §7.3 for the one case that is quieter.
+- There is no `/v2` escape hatch here. A `v2+` module path lets an old and a new
+  major coexist in one build; a `v0` module has no such path, so `v0.1.0` and
+  `v0.2.0` of this SDK cannot both be linked into the same binary.
+- To stay on the old behaviour, pin it and do not `-u`:
+
+  ```
+  require github.com/macanderson/context-graph-protocol/sdk/go v0.1.0
+  ```
+
+  Understand what you are pinning: `v0.1.0` is the version that reports
+  `commitment_mismatch` on honest frames carrying an empty optional. It is a
+  place to pause, not a place to stay.
+
+The SDK stays at `v0.x` deliberately. Its wire behaviour is pinned by the
+cross-language vectors and the conformance suite, not by its module version, and
+`v0` is the honest label for a surface still being reconciled port by port
+against the Rust reference.

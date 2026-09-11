@@ -316,8 +316,36 @@ impl FrameAttestation {
 /// responses: the first is an incident, the second is a configuration bug.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AttestationVerdict {
-    /// The signature verifies against the recomputed commitment.
+    /// The signature verifies against the recomputed commitment, and that
+    /// commitment binds the frame's content.
     Valid,
+    /// The signature verifies, but over a preimage that does not bind the
+    /// frame's content: the frame declared no `content_digest`, so
+    /// [`frame_commitment`] hashed the *absence* of one (`SPEC.md` §6.5.2).
+    ///
+    /// What this does and does not prove is the whole reason the variant
+    /// exists. It proves the named provider issued a frame with this id and
+    /// this provenance chain. It does not prove the bytes served under that id
+    /// are the bytes that were signed — the provider can serve one document
+    /// today and a different one tomorrow, and this same signature keeps
+    /// verifying, because the content was never in the preimage.
+    ///
+    /// Before this variant existed, that case returned [`Valid`](Self::Valid)
+    /// and a verifier had no way to tell the two apart (#128). A host that
+    /// rendered such a frame as "signed" was making a claim the signature did
+    /// not support.
+    ///
+    /// [`is_valid`](Self::is_valid) is **false** here, so the default answer is
+    /// the safe one. A host that has its own reason to accept an identity-only
+    /// attestation must say so by matching this variant or calling
+    /// [`signature_verifies`](Self::signature_verifies) — which is the point:
+    /// the decision becomes visible in the code that makes it.
+    ///
+    /// A conformant attester does not produce this. `SPEC.md` §6.5.2 requires a
+    /// provider that signs a frame to populate `content_digest`; encountering
+    /// this verdict means the frame was signed by a non-conformant attester, or
+    /// predates that requirement.
+    ValidIdentityOnly,
     /// The signature is well-formed and verifies, but over a *different*
     /// commitment than this frame produces — the frame or its provenance was
     /// altered after signing. The loudest possible finding.
@@ -342,12 +370,45 @@ pub enum AttestationVerdict {
 }
 
 impl AttestationVerdict {
-    /// Whether this verdict is [`Valid`](Self::Valid).
+    /// Whether this verdict is [`Valid`](Self::Valid) — the signature checks
+    /// out *and* it binds the frame's content.
     ///
     /// A host **MUST NOT** treat any other verdict as provisionally acceptable:
     /// the point of an attestation is that "I could not check it" and "it is
     /// good" are never the same answer.
+    ///
+    /// That includes [`ValidIdentityOnly`](Self::ValidIdentityOnly), which is
+    /// deliberately not valid here. Its signature does verify, but over a
+    /// preimage that says nothing about the bytes in hand, and a host asking
+    /// "is this good?" is asking about the bytes. Use
+    /// [`signature_verifies`](Self::signature_verifies) to ask the narrower
+    /// question on purpose.
     pub fn is_valid(&self) -> bool {
+        matches!(self, Self::Valid)
+    }
+
+    /// Whether the signature itself checked out, whatever it covers.
+    ///
+    /// True for [`Valid`](Self::Valid) and
+    /// [`ValidIdentityOnly`](Self::ValidIdentityOnly). This is the question to
+    /// ask when the caller genuinely wants provider identity and provenance
+    /// without a claim about content — an audit trail of who answered, say,
+    /// rather than a check that an answer is unaltered.
+    ///
+    /// It is a separate method rather than a looser `is_valid` because the
+    /// difference between them is the whole of #128: one accepts a frame whose
+    /// content can be swapped without disturbing the signature, and the other
+    /// does not. Whichever a caller wants, it should be legible at the call
+    /// site which one they asked for.
+    pub fn signature_verifies(&self) -> bool {
+        matches!(self, Self::Valid | Self::ValidIdentityOnly)
+    }
+
+    /// Whether the verified commitment binds the frame's content bytes.
+    ///
+    /// Only [`Valid`](Self::Valid) does. A verdict that did not verify at all
+    /// binds nothing, so this is false for every failure too.
+    pub fn binds_content(&self) -> bool {
         matches!(self, Self::Valid)
     }
 }
@@ -525,13 +586,32 @@ mod crypto {
     /// )
     /// ```
     ///
-    /// `content_digest` is included so the signature covers the frame's *bytes*,
-    /// not merely its name: without it, a provider could re-serve different
-    /// content under the same frame id and the old signature would still check
-    /// out. It is an `Option` because a frame is permitted to declare no digest
-    /// — such a frame is unverifiable by design
-    /// (`docs/context-reuse.md` §4), and the encoding records that absence
-    /// honestly rather than substituting a placeholder.
+    /// `content_digest` is included so that, **when the frame declares one**,
+    /// the signature covers the frame's *bytes* and not merely its name.
+    ///
+    /// When the frame declares none, it does not. `enc_opt` writes a single
+    /// `0x00` presence byte, so the preimage records the absence honestly
+    /// rather than substituting a placeholder — but what gets signed is then
+    /// identity and provenance alone, and a provider can re-serve entirely
+    /// different content under the same frame id with that signature still
+    /// checking out. The encoding is doing its job; the guarantee is simply
+    /// narrower than the presence of a signature suggests.
+    ///
+    /// Two things follow, and both are load-bearing (#128):
+    ///
+    /// - `SPEC.md` §6.5.2 requires a provider that *signs* a frame to populate
+    ///   `content_digest`. A digest-less frame remains conformant; signing one
+    ///   is not. This function still computes the commitment for such a frame,
+    ///   because a verifier has to be able to check signatures produced before
+    ///   that rule, or by an implementation that ignores it.
+    /// - [`verify_frame_attestation`] returns
+    ///   [`AttestationVerdict::ValidIdentityOnly`] rather than
+    ///   [`AttestationVerdict::Valid`] for exactly that case, so no caller can
+    ///   mistake the narrower guarantee for the wider one.
+    ///
+    /// A frame that declares no digest and carries no attestation is a
+    /// different thing again: unverifiable by design
+    /// (`docs/context-reuse.md` §4), and no rule here applies to it.
     pub fn frame_commitment(provider_id: &str, frame: &ContextFrame) -> [u8; 32] {
         let chain_head = provenance_chain_head(&frame.provenance);
         let mut preimage = Vec::new();
@@ -694,7 +774,18 @@ mod crypto {
         public_key: &[u8],
     ) -> AttestationVerdict {
         let expected = frame_commitment(provider_id, frame);
-        verify_commitment(&expected, attestation, public_key)
+        let verdict = verify_commitment(&expected, attestation, public_key);
+        // A frame with no `content_digest` was committed to by id and
+        // provenance alone, so a passing signature says nothing about the bytes
+        // (#128). Downgrade the verdict rather than let `Valid` carry a
+        // guarantee this preimage never made. Every failing verdict is left
+        // exactly as it is — it is already the more specific answer.
+        match verdict {
+            AttestationVerdict::Valid if frame.content_digest.is_none() => {
+                AttestationVerdict::ValidIdentityOnly
+            }
+            other => other,
+        }
     }
 
     /// Verify a detached attestation over an already-computed commitment — a
@@ -1198,6 +1289,107 @@ mod tests {
 }
 
 #[cfg(all(test, feature = "attestation"))]
+mod content_binding_tests {
+    use super::*;
+    use crate::frame::{ContextFrame, FrameKind};
+
+    const SEED: [u8; 32] = [7u8; 32];
+    const PROVIDER: &str = "acme.docs";
+
+    fn frame(id: &str, content: &str, digest: Option<&str>) -> ContextFrame {
+        let mut f = ContextFrame::full(id, FrameKind::Doc, "Retry policy", content, 0.9, 1);
+        f.content_digest = digest.map(Into::into);
+        f
+    }
+
+    fn attest(frame: &ContextFrame) -> ProvenanceAttestation {
+        sign_frame_attestation(PROVIDER, frame, &SEED, "k1", "acme", "2026-09-10T00:00:00Z")
+    }
+
+    /// The demonstration from #128, kept as a test so the guarantee cannot
+    /// quietly revert: sign a frame that declares no `content_digest`, rewrite
+    /// its content, and check that the verdict does not claim the signature
+    /// still covers it.
+    ///
+    /// Before the fix this asserted `Valid` — twice, for two different sets of
+    /// bytes — and a host had no way to tell that the second answer was not the
+    /// one that had been signed.
+    #[test]
+    fn a_signed_frame_with_no_content_digest_is_attested_over_nothing_it_says() {
+        let signed = frame("f1", "retry three times", None);
+        let attestation = attest(&signed);
+        let key = public_key_for(&SEED);
+
+        let before = verify_frame_attestation(PROVIDER, &signed, &attestation, &key);
+        assert_eq!(before, AttestationVerdict::ValidIdentityOnly);
+
+        // The same provider re-serves entirely different content under the same
+        // frame id. The signature is untouched and still verifies, because the
+        // content was never in the preimage — that is the defect. What must not
+        // happen is a verdict that calls it `Valid`.
+        let mut rewritten = signed.clone();
+        rewritten.content = Some("retry zero times, drop the request".into());
+
+        let after = verify_frame_attestation(PROVIDER, &rewritten, &attestation, &key);
+        assert_eq!(
+            after,
+            AttestationVerdict::ValidIdentityOnly,
+            "rewriting the content of a digest-less frame does not disturb the signature"
+        );
+
+        assert!(
+            !after.is_valid(),
+            "an identity-only attestation is not `is_valid`"
+        );
+        assert!(!after.binds_content(), "it binds nothing about the content");
+        assert!(
+            after.signature_verifies(),
+            "the signature itself is genuine — that is why this is subtle"
+        );
+    }
+
+    /// The contrasting case: a frame that declares a digest *is* bound, and
+    /// altering it is caught as the loud failure it should be.
+    #[test]
+    fn a_frame_that_declares_a_digest_is_bound_to_it() {
+        let signed = frame("f2", "retry three times", Some("sha256:aaaa"));
+        let attestation = attest(&signed);
+        let key = public_key_for(&SEED);
+
+        let verdict = verify_frame_attestation(PROVIDER, &signed, &attestation, &key);
+        assert_eq!(verdict, AttestationVerdict::Valid);
+        assert!(verdict.is_valid() && verdict.binds_content());
+
+        // Changing the declared digest changes the preimage, so the recomputed
+        // commitment no longer matches the signed one.
+        let mut altered = signed.clone();
+        altered.content_digest = Some("sha256:bbbb".into());
+        let verdict = verify_frame_attestation(PROVIDER, &altered, &attestation, &key);
+        assert!(
+            matches!(verdict, AttestationVerdict::CommitmentMismatch { .. }),
+            "got {verdict:?}"
+        );
+    }
+
+    /// Dropping the digest from a frame that was signed *with* one is a
+    /// mismatch, not a downgrade. The downgrade path must not become a way to
+    /// launder a tampered frame into a passing verdict.
+    #[test]
+    fn stripping_a_digest_after_signing_is_a_mismatch_not_a_downgrade() {
+        let signed = frame("f3", "retry three times", Some("sha256:aaaa"));
+        let attestation = attest(&signed);
+        let key = public_key_for(&SEED);
+
+        let mut stripped = signed.clone();
+        stripped.content_digest = None;
+
+        let verdict = verify_frame_attestation(PROVIDER, &stripped, &attestation, &key);
+        assert!(
+            matches!(verdict, AttestationVerdict::CommitmentMismatch { .. }),
+            "stripping the digest must not downgrade to ValidIdentityOnly; got {verdict:?}"
+        );
+
+#[cfg(all(test, feature = "attestation"))]
 mod lowercase_hex_tests {
     use super::*;
 
@@ -1281,7 +1473,7 @@ mod lowercase_hex_tests {
         assert_eq!(lowercase_hex_digit(b'9'), Some(9));
         assert_eq!(lowercase_hex_digit(b'a'), Some(10));
         assert_eq!(lowercase_hex_digit(b'f'), Some(15));
-        for byte in [b'A', b'F', b'g', b'G', b' ', b':'] {
+        for byte in *b"AFgG :" {
             assert_eq!(
                 lowercase_hex_digit(byte),
                 None,
