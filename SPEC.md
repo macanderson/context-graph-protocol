@@ -517,38 +517,6 @@ also keeps a local id for each provider it has configured, and that one is not a
 string the provider ever sees — so it is not one a provider could sign against.
 The declared name is the only identifier both ends of the wire observe.
 
-#### 6.5.5 Carrying an attestation
-
-An attestation travels **beside** the thing it signs, never inside it (F6).
-Two optional members carry it:
-
-* `handshake_ack.attester_keys` — the public keys the provider signs with. A
-  provider that publishes none offers no attestation, which is conformant.
-* `frames.attestations` — one entry per attested frame, naming its frame by id.
-
-```jsonc
-{
-  "type": "handshake_ack",
-  "protocol_version": "contextgraph/1.0",
-  "provider": { "name": "example-docs", "version": "1.0.0",
-                "data_flow": { "reads": true, "writes": false, "egress": false } },
-  "capabilities": { "query": { "kinds": ["doc"] } },
-  "attester_keys": [
-    { "key_id": "example-docs-ed25519-1", "algorithm": "ed25519",
-      "public_key": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a" }
-  ]
-}
-```
-
-A published key settles whether an attestation is **built** the way this section
-requires. It settles nothing about *who* signed: it comes from the party under
-audit. A deployment that needs the second answer resolves `key_id` against its
-own trust store and ignores what the handshake said.
-
-Both members are optional additions within `contextgraph/1`, so a peer that
-knows nothing about them drops them and behaves exactly as it did before (§13
-U1).
-
 #### 6.5.3 Result-set Merkle root
 
 A provider signing a whole answer commits to a Merkle root over its frames'
@@ -600,10 +568,41 @@ conforming verifiers can disagree about is not evidence.
 
 #### 6.5.5 Carrying an attestation on the wire (F11–F13)
 
-A `frames` envelope's `result` carries two optional members. Both are omitted
-when empty, so an unsigned answer is byte-identical to one from a provider
-written before attestation existed, and a 1.0 peer that ignores them still reads
-a signed answer as a valid answer (§13 U1).
+An attestation travels **beside** the thing it signs, never inside it (F6), and
+it reaches a verifier over two hops.
+
+**The key rides the handshake.** `handshake_ack.attester_keys` publishes the
+public keys the provider signs with. A provider that publishes none offers no
+attestation, which is conformant: §6.5 makes the *construction* mandatory and
+the signing optional.
+
+```jsonc
+{
+  "type": "handshake_ack",
+  "protocol_version": "contextgraph/1.0",
+  "provider": { "name": "example-docs", "version": "1.0.0",
+                "data_flow": { "reads": true, "writes": false, "egress": false } },
+  "capabilities": { "query": { "kinds": ["doc"] } },
+  "attester_keys": [
+    { "key_id": "example-docs-ed25519-1", "algorithm": "ed25519",
+      "public_key": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a" }
+  ]
+}
+```
+
+A published key settles whether an attestation is **built** the way this section
+requires. It settles nothing about *who* signed: it comes from the party under
+audit. A deployment that needs the second answer resolves `key_id` against its
+own trust store and ignores what the handshake said. It rides the handshake
+rather than the answer because a key republished with every response could be
+swapped by the same forgery that swapped the signature.
+
+**The evidence rides the result.** A `frames` envelope's `result` carries two
+optional members, and the `frames` envelope itself carries **no** attestation
+member of its own. Both are omitted when empty, so an unsigned answer is
+byte-identical to one from a provider written before attestation existed, and a
+1.0 peer that ignores them still reads a signed answer as a valid answer
+(§13 U1).
 
 ```jsonc
 {
@@ -654,6 +653,13 @@ They sit on the **result** rather than on the envelope for the same reason
 transport. The envelope carries only `type` and the correlation `id`, and an
 in-process provider that returns a result with no envelope at all must still be
 able to sign what it serves.
+
+**There is exactly one home, and that is the point.** An earlier revision of
+this section also allowed an `attestations` member on the `frames` envelope, so
+one signed answer had two encodings and nothing said which won when they
+disagreed. Two encodings of one fact with no tie-breaking rule is the ambiguity
+this specification exists to remove, and it is gone: a receiver that encounters
+an envelope-level `attestations` member ignores it.
 
 **The identity is echoed in full, never implied by position.** A parallel array
 indexed against `frames` would be smaller and unusable: a provider that

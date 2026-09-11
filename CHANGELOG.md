@@ -110,12 +110,12 @@ text lands without a human merge.
   Removing the frame-identity binding from `frame_commitment` makes
   `lift-signature` pass and turns `conformance-red.sh` red, which is the whole
   point of having the mode.
-- **Attestations travel on the wire** through two optional envelope members
-  (`SPEC.md` §6.5.5): `handshake_ack.attester_keys` publishes the public keys a
-  provider signs with, and `frames.attestations` carries one detached
-  attestation per attested frame — beside the frames, never inside one (F6).
-  Both are additive within `contextgraph/1`: a peer that knows nothing about
-  them drops them and behaves as before. §6.5.2 now also pins `provider_id` to
+- **Attestations travel on the wire** (`SPEC.md` §6.5.5):
+  `handshake_ack.attester_keys` publishes the public keys a provider signs with,
+  and the query result's own `frame_attestations` / `result_attestation` members
+  carry the evidence — beside the frames, never inside one (F6). All are
+  additive within `contextgraph/1`: a peer that knows nothing about them drops
+  them and behaves as before. §6.5.2 now also pins `provider_id` to
   the handshake-declared `provider.name`, the only identifier both ends of the
   wire observe.
 - **Attestation verification, wired into the host
@@ -153,10 +153,6 @@ text lands without a human merge.
   `compose_for_prompt_attested` and `FanOut::compose_for_prompt_with` take a
   `RankingStrategy` **and** an attestation ledger, and only the strategy can
   move a frame.
-- **`ContextProvider::query_attested`** — a defaulted trait method by which a
-  signing provider hands the host its detached attestations. Attestations are
-  detached (F6) and the `frames` envelope has nowhere to carry one yet, so this
-  is the host-side seam until it does (issue #90).
 - **Provenance attestation (`SPEC.md` §6.5, F6–F9;
   [ADR 0010](./docs/adr/0010-provenance-attestation.md)).** A digest is
   tamper-evident only to someone who already trusts whoever recorded it; the
@@ -245,6 +241,48 @@ text lands without a human merge.
   could never have seen it (#98).
 
 ### Changed
+- **One `FrameAttestation`, and one place on the wire for a signature (issue
+  #161; [ADR 0019](./docs/adr/0019-one-home-for-an-attestation.md)).** Three
+  types of that name existed at once — one in `contextgraph-types`, two in
+  `contextgraph-host` — and `Envelope::Frames` carried an `attestations` member
+  while `ContextQueryResult` already carried `frame_attestations` and
+  `result_attestation`. One signed answer had two encodings and nothing said
+  which won when they disagreed. `SPEC.md` had two sections numbered §6.5.5, one
+  per encoding, and the envelope schema had duplicate `$defs` keys for
+  `FrameAttestation` and `ProvenanceAttestation` where the second silently
+  shadowed the first.
+
+  `contextgraph_types::FrameAttestation` is now the only one, re-exported from
+  `contextgraph-host`; `Envelope::Frames.attestations` is gone; and
+  `ContextProvider::query_attested` and `AttestedQueryResult` are gone with it,
+  since a signing provider populates the result `query` already returns.
+  `TrustStore::check_result` reads the evidence off the result it is checking,
+  so a caller can no longer hand it signatures that disagree with the frames
+  they cover. `handshake_ack.attester_keys` stays and ADR 0019 says what it is —
+  a *construction* anchor, not a trust one; the trust-on-first-use tier remains
+  open under #130.
+- **A host verifies the proof-only attestation shape (issue #161).** A
+  `FrameAttestation` may carry a per-frame signature, an inclusion proof in the
+  signed `result_attestation` root, or both. The host checked only the first, so
+  a provider using the cheapest honest shape — one root signature instead of *n*
+  per-frame ones — read as unattested. New
+  `contextgraph_types::verify_frame_inclusion` recomputes the root from the
+  frame's own commitment and checks the answer-level signature over it, under
+  the same content-binding rule as `verify_frame_attestation`
+  ([ADR 0018](./docs/adr/0018-signing-a-frame-requires-a-content-digest.md)).
+  `MAX_INCLUSION_PATH_STEPS` caps the walk at 64 steps, because each step costs
+  a hash and the path arrives from the provider.
+- **`AttestationState::UnusableEvidence`** — an entry that named a frame and
+  could not be turned into a check: an inclusion proof with no signed root to
+  prove membership of, or an entry carrying neither member. F9 treats it as
+  unattested for every decision; the state is named so an audit can tell "the
+  provider signs nothing" from "the provider sent evidence that does not
+  resolve".
+- **`ContextQueryResult::unattested(frames, truncated, dropped_estimate)`** — a
+  constructor for an answer with no detached evidence. Adding
+  `frame_attestations` and `result_attestation` to that struct broke every
+  caller that built it with a three-field literal; this and `..Default::default()`
+  keep such a caller to a one-line change on the bump.
 - **CI pins the Rust toolchain (repository milestone; issue #160).** A new
   root [`rust-toolchain.toml`](./rust-toolchain.toml) names one concrete
   release (`1.98.1`), and every workflow job installs exactly that release
