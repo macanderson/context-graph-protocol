@@ -35,8 +35,7 @@ pub use attest::{
 pub use attest::{
     frame_commitment, inclusion_proof, merkle_root, provenance_chain_head, public_key_for,
     result_set_commitments, result_set_root, root_from_proof, sign_commitment,
-    sign_frame_attestation, verify_commitment, verify_frame_attestation,
-    verify_frame_inclusion,
+    sign_frame_attestation, verify_commitment, verify_frame_attestation, verify_frame_inclusion,
 };
 pub use attribution::{AttributionReport, ContextUse};
 pub use capability::{

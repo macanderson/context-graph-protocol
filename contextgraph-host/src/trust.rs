@@ -1074,21 +1074,13 @@ mod tests {
 
     #[test]
     fn a_proof_that_recomputes_a_different_root_is_a_commitment_mismatch() {
-        // The loud case: a proof lifted from another answer, or a frame edited
-        // after the root was signed.
+        // The loud case: a frame edited after the root was signed. The frame's
+        // *identity* is unchanged — provenance is not part of it — so the entry
+        // still names this frame, and the leaf it recomputes is a different one.
         let frames = vec![frame("frm_1"), frame("frm_2")];
         let mut result = root_signed_result(frames, &SEED);
         result.frames[0].provenance.clear();
-        match store_trusting(&SEED).check_result(PROVIDER, &result)[0].state {
-            AttestationState::Unattested => {
-                // Clearing the provenance also changed the frame's identity, so
-                // the entry no longer names it. Re-point the entry to the new
-                // identity and the mismatch is what is left.
-            }
-            ref other => panic!("expected the entry to stop matching, got {other:?}"),
-        }
-        let moved = result.frames[0].identity(PROVIDER);
-        result.frame_attestations[0].frame = moved;
+
         match store_trusting(&SEED).check_result(PROVIDER, &result)[0].state {
             AttestationState::Invalid {
                 verdict: AttestationVerdict::CommitmentMismatch { .. },

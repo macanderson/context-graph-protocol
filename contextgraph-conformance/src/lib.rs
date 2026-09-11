@@ -87,7 +87,7 @@ use contextgraph_host::{
 use contextgraph_types::capability::fingerprint_dimensions;
 use contextgraph_types::{
     AttestationVerdict, Capabilities, ConsentReceipt, ContextQuery, ContextQueryResult, ErrorCode,
-    FrameId, FrameKind, Grantor, ProviderInfo, verify_frame_attestation,
+    FrameId, FrameKind, Grantor, ProviderInfo, verify_frame_attestation, verify_frame_inclusion,
 };
 
 pub mod composition_conformance;
@@ -802,7 +802,8 @@ async fn correlation_stdio_probe(program: &str, args: &[String]) -> CheckResult 
 ///
 /// 1. reads the [attester keys](contextgraph_host::AttesterKey) the handshake
 ///    published — a *construction* anchor, not a trust one (see that type);
-/// 2. queries, and takes the detached attestations from the `frames` envelope;
+/// 2. queries, and takes the detached attestations off the *result* — their
+///    one wire home (`SPEC.md` §6.5.5, #161);
 /// 3. recomputes each named frame's commitment from the frame in hand and
 ///    verifies the signature over it, exactly as §6.5.4 orders the two steps;
 /// 4. when anything fails to verify, re-asks the same provider **through the
@@ -818,9 +819,9 @@ async fn correlation_stdio_probe(program: &str, args: &[String]) -> CheckResult 
 /// SPEC.md is tracked separately; until it is, an implementation reading only
 /// the spec could pick differently and fail this check for the wrong reason.
 ///
-/// Raw-stdio like the §R1, §E1 and §H4 probes, and for the same reason: the
-/// attestations ride the envelope, and [`Host::query_provider`] hands back a
-/// [`ContextQueryResult`] with the envelope already discarded.
+/// Raw-stdio like the §R1, §E1 and §H4 probes, but for a different reason: the
+/// attester keys are read off the handshake, which [`Host`] performs and does
+/// not surface.
 ///
 /// Passing outcomes, in order of how a provider reaches them:
 ///
@@ -864,12 +865,13 @@ async fn attestation_stdio_probe(program: &str, args: &[String]) -> CheckResult 
             format!("provider closed its input before the §6.5 probe query: {error}"),
         );
     }
-    let (frames, attestations) = match conn.recv().await {
-        Ok(contextgraph_host::Envelope::Frames {
-            result,
-            attestations,
-            ..
-        }) => (result.frames, attestations),
+    let (frames, attestations, result_attestation) = match conn.recv().await {
+        // §6.5.5: the evidence rides the *result*, and nowhere else (#161).
+        Ok(contextgraph_host::Envelope::Frames { result, .. }) => (
+            result.frames,
+            result.frame_attestations,
+            result.result_attestation,
+        ),
         Ok(other) => {
             return CheckResult::fail(
                 CHECK_ATTESTATION,
@@ -927,20 +929,50 @@ async fn attestation_stdio_probe(program: &str, args: &[String]) -> CheckResult 
     let mut degraded: Vec<String> = Vec::new();
 
     for entry in &attestations {
-        let Some(frame) = frames.iter().find(|frame| frame.id == entry.frame_id) else {
+        // §6.5.5 names the frame by its whole `(provider_id, frame_id,
+        // content_digest)` identity, never by a bare id. Matching on the triple
+        // is what stops a provider lending one frame's signature to another
+        // that happens to reuse its id.
+        let named = &entry.frame.frame_id;
+        let Some(frame) = frames
+            .iter()
+            .find(|frame| frame.identity(&info.name) == entry.frame)
+        else {
             problems.push(format!(
-                "attestation names frame `{}`, which is not in the answer it rides with (§6.5.2 binds a signature to one frame of one answer)",
-                entry.frame_id
+                "attestation names frame `{named}`, whose identity is not in the answer it rides with (§6.5.2 binds a signature to one frame of one answer, by provider id, frame id and content digest)"
             ));
             continue;
         };
-        let Some(key) = keys
-            .iter()
-            .find(|key| key.key_id == entry.attestation.key_id)
-        else {
+
+        // An entry carries a per-frame signature, or membership of the signed
+        // result-set root, or both (§6.5.5, F13). The second is the cheapest
+        // honest shape — one signature for n frames — and a probe that only
+        // understood the first would report every provider that chose it as
+        // having signed nothing.
+        let (signature, proof) = match (&entry.attestation, &entry.inclusion_proof) {
+            (Some(attestation), _) => (attestation, None),
+            (None, Some(proof)) => match result_attestation.as_ref() {
+                Some(root) => (root, Some(proof)),
+                None => {
+                    problems.push(format!(
+                        "frame `{named}` is attested only by an inclusion proof, but the answer carries no `result_attestation` for that proof to establish membership of (§6.5.3)"
+                    ));
+                    degraded.push(named.clone());
+                    continue;
+                }
+            },
+            (None, None) => {
+                problems.push(format!(
+                    "the attestation entry for frame `{named}` carries neither a signature nor an inclusion proof, so it names a frame and asserts nothing about it (§6.5.5)"
+                ));
+                continue;
+            }
+        };
+
+        let Some(key) = keys.iter().find(|key| key.key_id == signature.key_id) else {
             problems.push(format!(
-                "frame `{}` is signed under key_id `{}`, which the handshake never published",
-                entry.frame_id, entry.attestation.key_id
+                "frame `{named}` is signed under key_id `{}`, which the handshake never published",
+                signature.key_id
             ));
             continue;
         };
@@ -952,8 +984,13 @@ async fn attestation_stdio_probe(program: &str, args: &[String]) -> CheckResult 
             continue;
         };
 
-        match verify_frame_attestation(&info.name, frame, &entry.attestation, &key_bytes) {
-            AttestationVerdict::Valid => verified.push(entry.frame_id.clone()),
+        let verdict = match proof {
+            Some(proof) => verify_frame_inclusion(&info.name, frame, proof, signature, &key_bytes),
+            None => verify_frame_attestation(&info.name, frame, signature, &key_bytes),
+        };
+
+        match verdict {
+            AttestationVerdict::Valid => verified.push(named.clone()),
             // The signature checks out over a preimage that binds identity and
             // provenance but says nothing about the frame's bytes, because the
             // frame declared no `content_digest` (#128). `SPEC.md` §6.5.2
@@ -970,22 +1007,21 @@ async fn attestation_stdio_probe(program: &str, args: &[String]) -> CheckResult 
             // place a provider author finds out before a consumer does.
             AttestationVerdict::ValidIdentityOnly => {
                 problems.push(format!(
-                    "frame `{}` is signed but declares no `content_digest`, so the \
+                    "frame `{named}` is signed but declares no `content_digest`, so the \
                      signature binds its identity and provenance and nothing about its \
                      content — the same id can be re-served with different bytes and \
                      this signature still verifies. SPEC.md §6.5.2 requires an attester \
-                     to populate `content_digest` on any frame it signs",
-                    entry.frame_id
+                     to populate `content_digest` on any frame it signs"
                 ));
-                degraded.push(entry.frame_id.clone());
+                degraded.push(named.clone());
             }
             AttestationVerdict::UnknownAlgorithm(algorithm) => {
-                uncheckable.push(format!("{} (algorithm `{algorithm}`)", entry.frame_id));
-                degraded.push(entry.frame_id.clone());
+                uncheckable.push(format!("{named} (algorithm `{algorithm}`)"));
+                degraded.push(named.clone());
             }
             verdict => {
-                problems.push(describe_attestation_failure(&entry.frame_id, &verdict));
-                degraded.push(entry.frame_id.clone());
+                problems.push(describe_attestation_failure(named, &verdict));
+                degraded.push(named.clone());
             }
         }
     }

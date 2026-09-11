@@ -310,10 +310,7 @@ async fn every_verification_outcome_reaches_the_audit_with_its_own_name() {
     // 3. Key known, signature bad — signed by an impostor under the same id.
     let host = host_trusting(SigningProvider::new(
         vec![subject.clone()],
-        vec![entry(
-            "frm_1",
-            sign(&subject, &IMPOSTOR_SEED),
-        )],
+        vec![entry("frm_1", sign(&subject, &IMPOSTOR_SEED))],
     ));
     assert_eq!(
         state_after(&host).await,
@@ -411,10 +408,7 @@ async fn a_non_default_ranking_policy_still_carries_every_attestation_state() {
     let bare = frame("frm_bare", "an unsigned paragraph");
     let host = host_trusting(SigningProvider::new(
         vec![signed_frame.clone(), bare.clone()],
-        vec![entry(
-            "frm_signed",
-            sign(&signed_frame, &SEED),
-        )],
+        vec![entry("frm_signed", sign(&signed_frame, &SEED))],
     ));
 
     let fanout = host.query_all(&query()).await;

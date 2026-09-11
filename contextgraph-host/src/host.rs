@@ -25,9 +25,7 @@ use crate::consent::{ConsentDecision, ConsentRecord, ConsentStore};
 use crate::error::HostError;
 use crate::provider::{ContextProvider, capability_matches};
 use crate::stdio::StdioProvider;
-use crate::trust::{
-    AttestationLedger, FrameAttestationOutcome, TrustStore, TrustedKey,
-};
+use crate::trust::{AttestationLedger, FrameAttestationOutcome, TrustStore, TrustedKey};
 
 /// Default per-provider query budget — a slow or hung provider is cut off at
 /// this and reported as [`HostError::Timeout`], never allowed to stall the
@@ -335,17 +333,16 @@ impl Host {
             }
         }
 
-        let result = match tokio::time::timeout(self.per_provider_timeout, provider.query(query))
-            .await
-        {
-            Ok(result) => result?,
-            Err(_) => {
-                return Err(HostError::Timeout {
-                    id: id.to_string(),
-                    timeout_ms: self.per_provider_timeout.as_millis() as u64,
-                });
-            }
-        };
+        let result =
+            match tokio::time::timeout(self.per_provider_timeout, provider.query(query)).await {
+                Ok(result) => result?,
+                Err(_) => {
+                    return Err(HostError::Timeout {
+                        id: id.to_string(),
+                        timeout_ms: self.per_provider_timeout.as_millis() as u64,
+                    });
+                }
+            };
 
         let outcomes = self.trust.check_result(id, &result);
         Ok((result, outcomes))
@@ -459,21 +456,20 @@ impl Host {
             }
         }
 
-        let result = match tokio::time::timeout(self.per_provider_timeout, provider.query(query))
-            .await
-        {
-            Ok(Ok(result)) => result,
-            Ok(Err(error)) => {
-                return ProviderOutcome::unattested(id, ProviderResult::Failed(error));
-            }
-            Err(_) => {
-                let error = HostError::Timeout {
-                    id: id.clone(),
-                    timeout_ms: self.per_provider_timeout.as_millis() as u64,
-                };
-                return ProviderOutcome::unattested(id, ProviderResult::Failed(error));
-            }
-        };
+        let result =
+            match tokio::time::timeout(self.per_provider_timeout, provider.query(query)).await {
+                Ok(Ok(result)) => result,
+                Ok(Err(error)) => {
+                    return ProviderOutcome::unattested(id, ProviderResult::Failed(error));
+                }
+                Err(_) => {
+                    let error = HostError::Timeout {
+                        id: id.clone(),
+                        timeout_ms: self.per_provider_timeout.as_millis() as u64,
+                    };
+                    return ProviderOutcome::unattested(id, ProviderResult::Failed(error));
+                }
+            };
 
         // Budget honesty, axis 1 (§7, B2): frames that sum above the query
         // budget are a lie about `token_cost`. Drop them, report loudly.

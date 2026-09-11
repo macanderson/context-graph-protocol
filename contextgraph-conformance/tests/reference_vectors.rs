@@ -343,7 +343,6 @@ fn vectors() -> Vec<(&'static str, Envelope)> {
         (
             "frames/empty",
             Envelope::Frames {
-                attestations: vec![],
                 id: None,
                 result: ContextQueryResult {
                     frames: vec![],
@@ -356,7 +355,6 @@ fn vectors() -> Vec<(&'static str, Envelope)> {
         (
             "frames/all-representations",
             Envelope::Frames {
-                attestations: vec![],
                 id: Some("req-1".into()),
                 result: ContextQueryResult {
                     frames: vec![
@@ -380,7 +378,6 @@ fn vectors() -> Vec<(&'static str, Envelope)> {
         (
             "frames/attested",
             Envelope::Frames {
-                attestations: vec![],
                 id: Some("req-2".into()),
                 result: ContextQueryResult {
                     frames: vec![maximal_frame(), minimal_frame()],
