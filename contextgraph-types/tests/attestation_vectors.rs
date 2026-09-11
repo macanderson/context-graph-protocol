@@ -114,6 +114,35 @@ mod vectors {
         }
     }
 
+    /// The pair that separates "absent" from "present and empty".
+    ///
+    /// They differ in exactly one bit of the encoding — the presence byte — and in
+    /// nothing a JSON reader that returns a plain string can see. Every language
+    /// whose optional-string type is just `string` folds them together and computes
+    /// one chain head where this file publishes two, which is how a verifier ends
+    /// up reporting `commitment_mismatch` on an honest frame.
+    fn empty_uri_link() -> Provenance {
+        Provenance {
+            kind: "file".into(),
+            uri: Some(String::new()),
+            range: None,
+            digest: None,
+            method: None,
+            by: None,
+        }
+    }
+
+    fn absent_uri_link() -> Provenance {
+        Provenance {
+            kind: "file".into(),
+            uri: None,
+            range: None,
+            digest: None,
+            method: None,
+            by: None,
+        }
+    }
+
     /// The leaves the Merkle vectors are taken over: `f0`, `f1`, … each with the
     /// same content digest and no provenance, so a port reproduces them from the
     /// frame commitment rule alone.
@@ -156,6 +185,25 @@ mod vectors {
     #[test]
     fn an_empty_provenance_chain_hashes_to_the_published_genesis() {
         assert_eq!(digest_string(&provenance_chain_head(&[])), EMPTY_CHAIN_HEAD);
+    }
+
+    #[test]
+    fn the_published_empty_versus_absent_vectors_hold() {
+        // The presence byte, as a vector rather than as a sentence in §6.5.1.
+        assert_ne!(
+            encode_provenance_link(&empty_uri_link()),
+            encode_provenance_link(&absent_uri_link()),
+            "without the presence byte a link's uri could be deleted from a signed \
+         chain without disturbing the hash"
+        );
+        assert_eq!(
+            digest_string(&provenance_chain_head(&[empty_uri_link()])),
+            "sha256:616d4fa60a91420472f7fcc1ebb49ff503a05104e3762570b67011dbbcd22152"
+        );
+        assert_eq!(
+            digest_string(&provenance_chain_head(&[absent_uri_link()])),
+            "sha256:1bba53f2944ffeb223e7418e32780d0e91510f6b3c58787055f1109a525d5675"
+        );
     }
 
     #[test]
@@ -477,10 +525,23 @@ mod vectors {
         assert_eq!(fixture_link("file"), file_link());
         assert_eq!(fixture_link("derivation"), derivation_link());
         assert_eq!(fixture_link("unicode"), unicode_link());
+        // The pair a port most easily gets wrong. `fixture_link` maps an absent
+        // member to `None` and an explicit `""` to `Some("")`, so these two
+        // assertions also prove the fixture itself distinguishes them.
+        assert_eq!(fixture_link("empty_uri"), empty_uri_link());
+        assert_eq!(fixture_link("absent_uri"), absent_uri_link());
 
         assert_eq!(
             s("/link_encodings_hex/unicode"),
             hex(&encode_provenance_link(&unicode_link()))
+        );
+        assert_eq!(
+            s("/link_encodings_hex/empty_uri"),
+            hex(&encode_provenance_link(&empty_uri_link()))
+        );
+        assert_eq!(
+            s("/link_encodings_hex/absent_uri"),
+            hex(&encode_provenance_link(&absent_uri_link()))
         );
         let n = |pointer: &str| -> u64 {
             v.pointer(pointer)
@@ -516,6 +577,20 @@ mod vectors {
         assert_eq!(
             s("/chain_heads/file_then_derivation"),
             digest_string(&provenance_chain_head(&[file_link(), derivation_link()]))
+        );
+        assert_eq!(
+            s("/chain_heads/empty_uri"),
+            digest_string(&provenance_chain_head(&[empty_uri_link()]))
+        );
+        assert_eq!(
+            s("/chain_heads/absent_uri"),
+            digest_string(&provenance_chain_head(&[absent_uri_link()]))
+        );
+        assert_ne!(
+            s("/chain_heads/empty_uri"),
+            s("/chain_heads/absent_uri"),
+            "the fixture must publish two heads here, or a port that collapses \
+         empty into absent passes it"
         );
         assert_eq!(
             s("/frame_commitment/commitment"),

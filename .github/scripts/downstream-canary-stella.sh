@@ -73,8 +73,17 @@ echo "CGP crates available to patch in: ${crates[*]}"
 # this checkout so the canary tests source compatibility rather than stopping
 # at dependency resolution. This only mutates the disposable downstream checkout.
 cgp_version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$CGP_DIR/Cargo.toml" | head -1)
+# `sed -i` is not portable: GNU sed takes the suffix as an optional attached
+# argument, BSD sed (macOS) requires it as a separate one, so the GNU spelling
+# consumes the script's own expression as a backup suffix and fails. This file
+# promises above that it runs on a contributor's machine as well as on the
+# runner, and a promise the script breaks on every Mac is not a promise. Write
+# through a temp file instead — the one spelling both seds agree on.
 for crate in "${crates[@]}"; do
-  sed -i -E "s|^(${crate}[[:space:]]*=[[:space:]]*)\"=?[0-9][^\"]*\"|\1\"=${cgp_version}\"|" "$STELLA_MANIFEST"
+  tmp_manifest=$(mktemp)
+  sed -E "s|^(${crate}[[:space:]]*=[[:space:]]*)\"=?[0-9][^\"]*\"|\1\"=${cgp_version}\"|" \
+    "$STELLA_MANIFEST" >"$tmp_manifest"
+  mv "$tmp_manifest" "$STELLA_MANIFEST"
 done
 
 if grep -qF "$SENTINEL" "$STELLA_MANIFEST"; then

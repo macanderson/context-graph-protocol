@@ -202,11 +202,22 @@ mod hashing {
 
     /// [`record_hash`] for a record already parsed into the reference type.
     ///
-    /// Hashes the record **as this crate models it**. That is the same thing as
-    /// the wire bytes for any record the reference types round-trip, which the
-    /// conformance suite proves for every fixture — but a record carrying
-    /// members outside these types would lose them here, so a host relaying
-    /// unknown members hashes the wire JSON with [`record_hash`] instead.
+    /// Equal to [`record_hash`] of the bytes the record was parsed from — for
+    /// **every** record the profile permits, not only the ones this crate
+    /// happens to model. A member outside the reference types survives the
+    /// round-trip in [`ContextRecord::extra`], so a host that relays an
+    /// extended record and content-addresses it here computes the identity the
+    /// record was published with rather than a silently different one
+    /// (issue #118).
+    ///
+    /// That guarantee is checked, not asserted: `contextgraph-conformance`'s
+    /// `record_hash_typed_wire_parity` suite hashes every lifecycle fixture
+    /// both ways and compares, and does it again with a namespaced member no
+    /// reference type models injected into each one.
+    ///
+    /// [`record_hash`] remains the normative primitive (profile LH1). Prefer it
+    /// when you already hold the wire value — this is the convenience for when
+    /// you hold the type.
     pub fn record_hash_of(record: &ContextRecord) -> Result<String, RecordHashError> {
         let value = serde_json::to_value(record)
             .map_err(|error| RecordHashError::NotSerializable(error.to_string()))?;

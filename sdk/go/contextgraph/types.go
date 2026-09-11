@@ -2,20 +2,64 @@
 // Context Graph Protocol providers. The wire types below mirror
 // schema/contextgraph-envelope.schema.json; `omitempty` matches the reference
 // serializer, which omits an absent optional rather than emitting null.
+//
+// # Why optional strings are pointers
+//
+// An optional field whose empty value is *distinguishable from absence* is
+// declared *string, not string. Go's encoding/json decodes an absent member
+// and an explicit "" into the same string, and `omitempty` drops an empty one
+// on the way out, so a plain string silently conflates two states the protocol
+// keeps apart:
+//
+//   - The five optional fields of [Provenance] and [ContextFrame.ContentDigest]
+//     are enc_opt inputs to the attestation preimage (SPEC.md §6.5.1, §6.5.2).
+//     The presence byte there is normative — enc_opt(None) is 0x00 and
+//     enc_opt(Some(s)) is 0x01 ‖ enc_str(s) — precisely so a link's URI cannot
+//     be deleted from a signed chain without disturbing the hash. Conflating
+//     them left a Go verifier computing a chain head the signer never did, and
+//     reporting commitment_mismatch on an honest frame.
+//   - [ContextFrame.Content] is absent for a reference frame and present for a
+//     full frame, which the schema enforces per representation. A full frame
+//     carrying an empty document must still emit `"content": ""`; omitting the
+//     member reshapes it into a frame the schema rejects.
+//
+// Every other optional string here is either an enum member or carries a
+// schema `minLength`/`pattern` that makes "" invalid on the wire, so absent and
+// empty are not two states a peer can distinguish. Those stay plain strings.
+//
+// A nil pointer is omitted by `omitempty`; a pointer to "" serializes as "".
+// Use [Ptr] to build one.
 package contextgraph
 
 // ProtocolVersion is the protocol version this SDK speaks.
 const ProtocolVersion = "contextgraph/1.0"
 
+// Ptr returns a pointer to v.
+//
+// Go has no literal for the address of a constant, and the optional fields of
+// these wire types are pointers so absence stays distinct from emptiness:
+//
+//	cg.Provenance{Type: "file", URI: cg.Ptr("file:///docs/start.md")}
+//
+// Generic, so the same call also builds the *uint32 that
+// [ContextFrame.CanonicalTokenCost] takes.
+func Ptr[T any](v T) *T { return &v }
+
 // Provenance is one link in a frame's provenance chain. Type is the wire name
 // for the entry's kind ("file", "derivation", ...).
+//
+// The five optional fields are pointers because they are enc_opt inputs to the
+// normative §6.5.1 link encoding: `"uri": null` and `"uri": ""` MUST hash
+// differently, so this type has to be able to hold both. Convert to the
+// encoding's link type with attest.LinkFromProvenance, which now copies the
+// presence through rather than collapsing it.
 type Provenance struct {
-	Type   string `json:"type"`
-	URI    string `json:"uri,omitempty"`
-	Range  string `json:"range,omitempty"`
-	Digest string `json:"digest,omitempty"`
-	Method string `json:"method,omitempty"`
-	By     string `json:"by,omitempty"`
+	Type   string  `json:"type"`
+	URI    *string `json:"uri,omitempty"`
+	Range  *string `json:"range,omitempty"`
+	Digest *string `json:"digest,omitempty"`
+	Method *string `json:"method,omitempty"`
+	By     *string `json:"by,omitempty"`
 }
 
 // Relation is a graph edge a frame participates in, surfaced by DisplayName.
@@ -41,11 +85,17 @@ type Transform struct {
 
 // ContextFrame is one context frame returned from context/query.
 type ContextFrame struct {
-	ID                       string       `json:"id"`
-	Kind                     string       `json:"kind"`
-	Title                    string       `json:"title"`
-	Content                  string       `json:"content,omitempty"` // absent for reference frames
-	ContentDigest            string       `json:"content_digest,omitempty"`
+	ID    string `json:"id"`
+	Kind  string `json:"kind"`
+	Title string `json:"title"`
+	// Content is absent for a reference frame and present for every other
+	// representation — including a full frame whose document is empty, which
+	// must still emit `"content": ""` to satisfy the schema's full branch.
+	Content *string `json:"content,omitempty"`
+	// ContentDigest is an enc_opt input to the §6.5.2 frame commitment, so
+	// absent and present-but-empty must stay distinct here (see the package
+	// doc). Absent ⇒ the frame is not verifiable and a host re-queries it.
+	ContentDigest            *string      `json:"content_digest,omitempty"`
 	URI                      string       `json:"uri,omitempty"`
 	Representation           string       `json:"representation,omitempty"`
 	ContentFidelity          string       `json:"content_fidelity,omitempty"`

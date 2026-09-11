@@ -19,7 +19,12 @@ green forever after someone corrected one here.
 **A diff to any value in this file is a wire-breaking change** and needs a new
 major family (`SPEC.md` §15). Adding a *new* vector is not: it publishes a case
 the set could not previously distinguish, which is what #93 did for non-ASCII
-input, non-power-of-two Merkle trees, inclusion proofs and signatures.
+input, non-power-of-two Merkle trees, inclusion proofs and signatures, and what
+#124 did for the presence byte. The `empty_uri` / `absent_uri` pair differs in
+nothing a JSON reader returning a plain string can see, so a port whose optional
+type is just `string` publishes one chain head where this file publishes two —
+which is exactly how the Go SDK came to report `commitment_mismatch` on honest
+frames.
 
 This directory is deliberately not `tests/fixtures/`, which
 [`schema/validate-examples.py`](../../schema/validate-examples.py) globs and

@@ -15,6 +15,7 @@ pub mod attribution;
 pub mod capability;
 pub mod consent;
 pub mod error_code;
+pub mod extension;
 pub mod frame;
 pub mod identity;
 pub mod query;
@@ -43,6 +44,7 @@ pub use capability::{
 };
 pub use consent::{ConsentReceipt, Grantor};
 pub use error_code::{ErrorCode, HostReaction};
+pub use extension::ExtensionValue;
 pub use frame::{
     ContentFidelity, ContentRef, ContextFrame, FrameEmbedding, FrameKind, InlineContentRequirement,
     Provenance, Relation, Representation, Transform, rel,
@@ -51,9 +53,9 @@ pub use identity::{FrameId, canonical_order};
 pub use query::{ContextQuery, ContextQueryResult};
 pub use record::{
     ConstraintEffect, ContextRecord, ContractRequirement, DirectiveKind, Enforcement,
-    KnowledgeKind, LIFECYCLE_SCHEMA_VERSION, OriginClass, RecordAttestation, RecordBody,
-    RecordLink, RecordProvenance, RecordScope, RecordStatus, RequirementResult, SharingScope,
-    ValidationOutcome,
+    KnowledgeKind, LIFECYCLE_SCHEMA_VERSION, OriginClass, RESERVED_RECORD_MEMBERS,
+    RecordAttestation, RecordBody, RecordLink, RecordProvenance, RecordScope, RecordStatus,
+    RequirementResult, SharingScope, ValidationOutcome, is_reserved_record_member,
 };
 pub use record_attest::{
     RECORD_ATTESTATION_DOMAIN, RECORD_HASH_MEMBER, RecordHashError, record_attestation_message,

@@ -144,7 +144,7 @@ func mustHex(t *testing.T, s string) []byte {
 
 func TestLinkEncodingMatchesThePublishedBytes(t *testing.T) {
 	v := loadVectors(t)
-	for _, name := range []string{"ascii_minimal", "unicode"} {
+	for _, name := range []string{"ascii_minimal", "unicode", "empty_uri", "absent_uri"} {
 		got := hex.EncodeToString(EncodeLink(link(v, name)))
 		if want := v.LinkEncodingsHex[name]; got != want {
 			t.Errorf("%s link encoding\n got %s\nwant %s", name, got, want)
@@ -182,16 +182,125 @@ func TestAnAbsentFieldNeverEncodesLikeAnEmptyOne(t *testing.T) {
 	}
 }
 
-func TestLinkFromProvenanceStatesItsCollapse(t *testing.T) {
-	// The wire struct cannot represent a present-but-empty URI, and the
-	// helper says so by producing the same link an absent URI would.
-	wire := contextgraph.Provenance{Type: "file", URI: ""}
-	if string(EncodeLink(LinkFromProvenance(wire))) != string(EncodeLink(Link{Type: "file"})) {
-		t.Error("LinkFromProvenance is documented to collapse empty to absent")
+func TestLinkFromProvenancePreservesPresenceRatherThanCollapsingIt(t *testing.T) {
+	// This helper used to fold an empty string into absent, because the wire
+	// struct's fields were string and could not hold the difference. The wire
+	// struct now carries *string, so the conversion is a straight copy and
+	// each of the three states a field can be in stays itself.
+	absent := contextgraph.Provenance{Type: "file"}
+	empty := contextgraph.Provenance{Type: "file", URI: contextgraph.Ptr("")}
+	populated := contextgraph.Provenance{Type: "file", URI: contextgraph.Ptr("src/retry.rs")}
+
+	if LinkFromProvenance(absent).URI != nil {
+		t.Error("an absent URI must convert to an absent one")
 	}
-	populated := contextgraph.Provenance{Type: "file", URI: "src/retry.rs"}
-	if LinkFromProvenance(populated).URI == nil {
-		t.Error("a non-empty field must survive the conversion")
+	if got := LinkFromProvenance(empty).URI; got == nil || *got != "" {
+		t.Errorf("a present empty URI must survive the conversion, got %v", got)
+	}
+	if got := LinkFromProvenance(populated).URI; got == nil || *got != "src/retry.rs" {
+		t.Errorf("a populated URI must survive the conversion, got %v", got)
+	}
+	if string(EncodeLink(LinkFromProvenance(absent))) == string(EncodeLink(LinkFromProvenance(empty))) {
+		t.Error("absent and present-but-empty must not encode alike after conversion")
+	}
+}
+
+// TestADecodedEmptyURIKeepsTheChainHeadItsSignerComputed is the regression
+// witness for issue #124.
+//
+// The bug was not in the encoder — [EncodeLink] always honoured the presence
+// byte. It was that contextgraph.Provenance could not carry a present-but-empty
+// URI as far as the encoder: encoding/json decoded `{"type":"file","uri":""}`
+// and `{"type":"file"}` into the same value, so a Go verifier handed an honest
+// frame from a Rust, TypeScript or Python signer computed one chain head where
+// the signer computed another, and answered commitment_mismatch.
+//
+// Both expected digests come from tests/vectors/attestation-vectors.json, which
+// contextgraph-types/tests/attestation_vectors.rs computes from the reference
+// implementation and pins.
+func TestADecodedEmptyURIKeepsTheChainHeadItsSignerComputed(t *testing.T) {
+	v := loadVectors(t)
+
+	decode := func(raw string) contextgraph.Provenance {
+		t.Helper()
+		var p contextgraph.Provenance
+		if err := json.Unmarshal([]byte(raw), &p); err != nil {
+			t.Fatalf("%s: %v", raw, err)
+		}
+		return p
+	}
+	headOf := func(p contextgraph.Provenance) string {
+		return DigestString(ChainHead([]Link{LinkFromProvenance(p)}))
+	}
+
+	empty := decode(`{"type":"file","uri":""}`)
+	absent := decode(`{"type":"file"}`)
+
+	if got := empty.URI; got == nil || *got != "" {
+		t.Fatalf(`decoding "uri": "" must yield a present empty URI, got %v`, got)
+	}
+	if absent.URI != nil {
+		t.Fatalf("decoding an absent uri must yield an absent URI, got %q", *absent.URI)
+	}
+
+	emptyHead, absentHead := headOf(empty), headOf(absent)
+	if emptyHead == absentHead {
+		t.Error("a Go verifier must not fold an empty URI into an absent one; §6.5.1 makes them differ")
+	}
+	if want := v.ChainHeads["empty_uri"]; emptyHead != want {
+		t.Errorf(`chain head for "uri": ""\n got %s\nwant %s`, emptyHead, want)
+	}
+	if want := v.ChainHeads["absent_uri"]; absentHead != want {
+		t.Errorf("chain head for an absent uri\n got %s\nwant %s", absentHead, want)
+	}
+
+	// The other direction: a verifier that re-serializes what it verified must
+	// hand the next hop the same two documents it was given.
+	for _, c := range []struct {
+		link contextgraph.Provenance
+		want string
+	}{
+		{empty, `{"type":"file","uri":""}`},
+		{absent, `{"type":"file"}`},
+	} {
+		raw, err := json.Marshal(c.link)
+		if err != nil {
+			t.Fatalf("marshalling %+v: %v", c.link, err)
+		}
+		if string(raw) != c.want {
+			t.Errorf("round trip\n got %s\nwant %s", raw, c.want)
+		}
+	}
+}
+
+// TestFrameFromContextFrameKeepsTheContentDigestPresence covers the second
+// enc_opt field the wire types feed into a commitment (§6.5.2). Same defect,
+// same consequence: a frame whose content_digest is present and empty commits
+// differently from one that carries none.
+func TestFrameFromContextFrameKeepsTheContentDigestPresence(t *testing.T) {
+	decode := func(raw string) Frame {
+		t.Helper()
+		var frame contextgraph.ContextFrame
+		if err := json.Unmarshal([]byte(raw), &frame); err != nil {
+			t.Fatalf("%s: %v", raw, err)
+		}
+		return FrameFromContextFrame(frame)
+	}
+
+	empty := decode(`{"id":"retry-policy","content_digest":"","provenance":[{"type":"file","uri":""}]}`)
+	absent := decode(`{"id":"retry-policy","provenance":[{"type":"file"}]}`)
+
+	if got := empty.ContentDigest; got == nil || *got != "" {
+		t.Fatalf(`a present empty content_digest must survive the decode, got %v`, got)
+	}
+	if absent.ContentDigest != nil {
+		t.Fatalf("an absent content_digest must stay absent, got %q", *absent.ContentDigest)
+	}
+	if FrameCommitment("repo-graph", empty) == FrameCommitment("repo-graph", absent) {
+		t.Error("the §6.5.2 preimage encodes content_digest as an option; the two must not commit alike")
+	}
+	if len(empty.Provenance) != 1 || empty.Provenance[0].URI == nil {
+		t.Error("the frame's provenance links must convert with their presence intact")
 	}
 }
 
