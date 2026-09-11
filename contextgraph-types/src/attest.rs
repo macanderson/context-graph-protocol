@@ -1388,6 +1388,8 @@ mod content_binding_tests {
             matches!(verdict, AttestationVerdict::CommitmentMismatch { .. }),
             "stripping the digest must not downgrade to ValidIdentityOnly; got {verdict:?}"
         );
+    }
+}
 
 #[cfg(all(test, feature = "attestation"))]
 mod lowercase_hex_tests {
