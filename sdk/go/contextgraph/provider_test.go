@@ -152,10 +152,12 @@ func TestProviderErrorCodeIgnoresNilPointer(t *testing.T) {
 // provider could declare an embeddings fingerprint and never attach one.
 func TestFrameEmbeddingRoundTrips(t *testing.T) {
 	frame := ContextFrame{
-		ID:            "frm_1",
-		Kind:          "doc",
-		Title:         "Getting Started",
-		Content:       "hello",
+		ID:    "frm_1",
+		Kind:  "doc",
+		Title: "Getting Started",
+		// A pointer since #124: the attestation encoding needs an absent field
+		// to be distinguishable from an empty one.
+		Content:       ptrTo("hello"),
 		Score:         0.5,
 		TokenCost:     BudgetTokens("hello"),
 		CitationLabel: "getting-started.md L1-40",
@@ -239,3 +241,8 @@ func TestHasEmbeddingDistinguishesAbsentFromEmpty(t *testing.T) {
 		}
 	}
 }
+
+// ptrTo is the one-liner the pointer-valued optional fields need in tests.
+// Those fields are pointers so an absent value and an empty one stay
+// distinguishable, which the §6.5.2 frame commitment's enc_opt requires (#124).
+func ptrTo[T any](v T) *T { return &v }

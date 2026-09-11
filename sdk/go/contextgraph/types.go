@@ -124,7 +124,11 @@ type ContextFrame struct {
 	RecordedAt               string       `json:"recorded_at,omitempty"`
 	Provenance               []Provenance `json:"provenance,omitempty"`
 	CitationLabel            string       `json:"citation_label,omitempty"`
-	Relations                []Relation   `json:"relations,omitempty"`
+	// Embedding is the field Rust, TypeScript and Python all carry and Go did
+	// not (#155). Its absence meant a Go provider could not express a frame's
+	// vector at all, and §E1 could not be probed against it.
+	Embedding *FrameEmbedding `json:"embedding,omitempty"`
+	Relations []Relation      `json:"relations,omitempty"`
 }
 
 // ContextQuery is a request to a provider for frames relevant to a goal.
