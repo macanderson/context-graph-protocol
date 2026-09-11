@@ -1151,7 +1151,10 @@ mod tests {
             "an honest signature must verify regardless of what the operator \
              named the provider locally, got {state:?}"
         );
-        assert!(state.covers_content(), "the frame declares a content_digest");
+        assert!(
+            state.covers_content(),
+            "the frame declares a content_digest"
+        );
 
         // The trust lookup still keys on the local id: a provider cannot reach a
         // key by *declaring* the name it was trusted under.

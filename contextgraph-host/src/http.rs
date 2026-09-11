@@ -347,10 +347,7 @@ async fn post_envelope(
 /// The limit is enforced incrementally over the chunk stream, so an oversized
 /// body is abandoned as soon as it crosses the line rather than after it has
 /// already been allocated.
-async fn read_bounded_body(
-    response: reqwest::Response,
-    id: &str,
-) -> Result<Vec<u8>, HostError> {
+async fn read_bounded_body(response: reqwest::Response, id: &str) -> Result<Vec<u8>, HostError> {
     // Refuse on the advertised length first, when there is one: it costs nothing
     // and avoids reading a single chunk of a body already declared too large.
     if let Some(len) = response.content_length()
@@ -895,8 +892,9 @@ mod tests {
                     Ok(Envelope::Handshake { .. }) => {
                         ResponseTemplate::new(200).set_body_json(ack_body(PROTOCOL_VERSION))
                     }
-                    _ => ResponseTemplate::new(307)
-                        .insert_header("location", attacker_uri.as_str()),
+                    _ => {
+                        ResponseTemplate::new(307).insert_header("location", attacker_uri.as_str())
+                    }
                 }
             })
             .mount(&provider_server)
@@ -978,7 +976,11 @@ mod tests {
     #[test]
     fn a_provider_error_body_is_clamped_before_it_reaches_a_host_error() {
         let short = "upstream index unavailable";
-        assert_eq!(truncate_for_error(short), short, "short bodies pass through");
+        assert_eq!(
+            truncate_for_error(short),
+            short,
+            "short bodies pass through"
+        );
 
         let flood = "E".repeat(100_000);
         let clamped = truncate_for_error(&flood);
