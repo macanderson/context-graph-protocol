@@ -30,6 +30,13 @@
 // Everything that needs the feature is gated at item scope beneath it.
 
 #[test]
+// The assertion IS constant, which is the point, so clippy's
+// `assertions_on_constants` is right in general and wrong here. `cfg!` folds to
+// `true` when the feature is on and `false` when it is off, and the false case
+// is the one that must fail the build loudly rather than let the file compile
+// to zero tests and report `ok. 0 passed` (#117). A non-constant spelling would
+// only be obfuscation.
+#[allow(clippy::assertions_on_constants)]
 fn these_vectors_are_only_meaningful_with_the_feature_on() {
     assert!(
         cfg!(feature = "record-attestation"),
