@@ -83,6 +83,15 @@ jobs:
       - run: cargo test -p contextgraph-types --features record-hash
       - run: cargo test -p contextgraph-types --features record-attestation
 
+      # The job above defends the features that exist today. This defends the
+      # next one: a feature added to the crate without a line here would leave
+      # its gated vector file compiling to zero tests, and cargo reports that as
+      # success (#117). The guard reads the crate's [features] table and this
+      # job's own commands and fails when they disagree, so the job's coverage
+      # is checkable rather than something somebody has to remember.
+      - name: every declared feature is built by this job
+        run: python3 .github/scripts/check-feature-matrix.py
+
   msrv:
     name: msrv (rust-version from Cargo.toml)
     runs-on: ubuntu-latest
@@ -484,6 +493,28 @@ jobs:
           python-version: "3.12"
       - run: python3 .github/scripts/check-conformance-counts.py
 
+  doc-types:
+    name: docs print the types the crates declare
+    runs-on: ubuntu-latest
+    # The provider-facing type blocks are duplicated across five documents and
+    # nothing tied them to the source, so they drifted. #151 found four ways,
+    # two of which would have made a reader build a NON-CONFORMANT provider:
+    # `FrameKind` printed as a closed set of seven when the vocabulary is open
+    # (SPEC.md §13 U2), and `ContextFrame.content` printed as `String` when a
+    # `reference` frame must be able to omit it. It also found the provider
+    # guide printing five of the trait's six methods, and a `capabilities()`
+    # doc comment describing `upsert`/`subscriptions`/`filters` — three fields
+    # ADR 0004 deleted — which the guide had then copied verbatim.
+    #
+    # Reading the source is the only way the docs stay true without somebody
+    # remembering to make them true.
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 .github/scripts/check-doc-types.py
+
   publish-dry-run:
     name: contextgraph-types packages cleanly (crates.io dry run)
     runs-on: ubuntu-latest
@@ -501,4 +532,6 @@ jobs:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
-      - run: cargo publish --dry-run -p contextgraph-types
+      # `--locked`, matching the real publish in release.yml: a dry run allowed
+      # to update Cargo.lock proves something the publish will not do.
+      - run: cargo publish --dry-run --locked -p contextgraph-types

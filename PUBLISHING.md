@@ -58,7 +58,7 @@ Publishing out of order fails outright, not partially.
 This is also why local pre-publish verification is asymmetric:
 
 - `contextgraph-types` has no workspace-internal deps, so
-  `cargo publish --dry-run -p contextgraph-types` runs the **full** verify (packages,
+  `cargo publish --dry-run --locked -p contextgraph-types` runs the **full** verify (packages,
   resolves, compiles the packaged tarball in isolation, then aborts before
   upload) — this is complete proof it's ready.
 - `contextgraph-host` and `contextgraph-conformance` depend on a crate (`contextgraph-types`) that

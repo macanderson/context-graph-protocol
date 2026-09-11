@@ -18,8 +18,8 @@ use contextgraph_host::{
 use contextgraph_types::attest::{ProvenanceAttestation, public_key_for, sign_frame_attestation};
 use contextgraph_types::capability::QueryCapability;
 use contextgraph_types::{
-    Capabilities, ContextFrame, ContextQuery, ContextQueryResult, DataFlow, FrameKind, Provenance,
-    ProviderInfo,
+    Capabilities, ContextFrame, ContextQuery, ContextQueryResult, DataFlow, FrameId, FrameKind,
+    Provenance, ProviderInfo,
 };
 
 /// A deterministic signing seed. Signs nothing outside this file.
@@ -31,8 +31,8 @@ const PROVIDER: &str = "docs";
 const KEY_ID: &str = "docs-2026-08";
 
 /// An in-process provider that serves frames and offers whatever attestations
-/// the test hands it — the seam a signing provider implements
-/// ([`ContextProvider::query_attested`]).
+/// the test hands it — on the result, which is the one place an attestation
+/// rides (`SPEC.md` §6.5.5, ADR 0014).
 struct SigningProvider {
     info: ProviderInfo,
     capabilities: Capabilities,
@@ -78,24 +78,9 @@ impl ContextProvider for SigningProvider {
     }
     async fn query(&self, _query: &ContextQuery) -> Result<ContextQueryResult, HostError> {
         Ok(ContextQueryResult {
-            frames: self.frames.clone(),
-            truncated: false,
-            dropped_estimate: None,
-            // This fixture serves its attestations through `query_attested`
-            // below, not on the result envelope (#138). Reconciling the two
-            // paths is tracked separately.
-            frame_attestations: Vec::new(),
-            result_attestation: None,
+            frame_attestations: self.attestations.clone(),
+            ..ContextQueryResult::unattested(self.frames.clone(), false, None)
         })
-    }
-    async fn query_attested(
-        &self,
-        query: &ContextQuery,
-    ) -> Result<contextgraph_host::AttestedQueryResult, HostError> {
-        Ok(contextgraph_host::AttestedQueryResult::with_attestations(
-            self.query(query).await?,
-            self.attestations.clone(),
-        ))
     }
 }
 
@@ -114,6 +99,24 @@ fn frame(id: &str, content: &str) -> ContextFrame {
         by: None,
     }];
     frame
+}
+
+/// Bind an attestation to the frame it covers.
+///
+/// The canonical `FrameAttestation` names the whole
+/// `(provider_id, frame_id, content_digest)` triple rather than a bare id
+/// (#161), so evidence cannot be lent from one frame to another that happens to
+/// share an id. Every frame here comes from [`frame`], whose digest is
+/// [`digest_of`] its id.
+fn entry(frame_id: &str, attestation: ProvenanceAttestation) -> FrameAttestation {
+    FrameAttestation::signed(
+        FrameId {
+            provider_id: PROVIDER.into(),
+            frame_id: frame_id.into(),
+            content_digest: Some(digest_of(frame_id)),
+        },
+        attestation,
+    )
 }
 
 /// A well-formed, frame-distinct `sha256:` digest built from the frame id, so
@@ -177,7 +180,7 @@ async fn a_composed_prompts_audit_distinguishes_attested_from_unattested_evidenc
     let bare = frame("frm_bare", "an unsigned paragraph");
     let host = host_trusting(SigningProvider::new(
         vec![attested.clone(), bare.clone()],
-        vec![FrameAttestation::new("frm_signed", sign(&attested, &SEED))],
+        vec![entry("frm_signed", sign(&attested, &SEED))],
     ));
 
     let fanout = host.query_all(&query()).await;
@@ -233,7 +236,7 @@ async fn a_frame_carrying_a_garbage_attestation_is_still_served_marked_unatteste
 
     let host = host_trusting(SigningProvider::new(
         vec![poisoned.clone()],
-        vec![FrameAttestation::new("frm_poisoned", garbage)],
+        vec![entry("frm_poisoned", garbage)],
     ));
 
     let fanout = host.query_all(&query()).await;
@@ -286,7 +289,7 @@ async fn every_verification_outcome_reaches_the_audit_with_its_own_name() {
     // 1. Verified.
     let host = host_trusting(SigningProvider::new(
         vec![subject.clone()],
-        vec![FrameAttestation::new("frm_1", sign(&subject, &SEED))],
+        vec![entry("frm_1", sign(&subject, &SEED))],
     ));
     assert!(state_after(&host).await.is_attested());
 
@@ -295,7 +298,7 @@ async fn every_verification_outcome_reaches_the_audit_with_its_own_name() {
     let mut untrusting = Host::new();
     untrusting.register(Box::new(SigningProvider::new(
         vec![subject.clone()],
-        vec![FrameAttestation::new("frm_1", sign(&subject, &SEED))],
+        vec![entry("frm_1", sign(&subject, &SEED))],
     )));
     assert_eq!(
         state_after(&untrusting).await,
@@ -307,10 +310,7 @@ async fn every_verification_outcome_reaches_the_audit_with_its_own_name() {
     // 3. Key known, signature bad — signed by an impostor under the same id.
     let host = host_trusting(SigningProvider::new(
         vec![subject.clone()],
-        vec![FrameAttestation::new(
-            "frm_1",
-            sign(&subject, &IMPOSTOR_SEED),
-        )],
+        vec![entry("frm_1", sign(&subject, &IMPOSTOR_SEED))],
     ));
     assert_eq!(
         state_after(&host).await,
@@ -325,7 +325,7 @@ async fn every_verification_outcome_reaches_the_audit_with_its_own_name() {
     malformed.signature = "0123".into();
     let host = host_trusting(SigningProvider::new(
         vec![subject.clone()],
-        vec![FrameAttestation::new("frm_1", malformed)],
+        vec![entry("frm_1", malformed)],
     ));
     assert_eq!(
         state_after(&host).await,
@@ -339,7 +339,7 @@ async fn every_verification_outcome_reaches_the_audit_with_its_own_name() {
     future_scheme.algorithm = "ml-dsa-65".into();
     let host = host_trusting(SigningProvider::new(
         vec![subject.clone()],
-        vec![FrameAttestation::new("frm_1", future_scheme)],
+        vec![entry("frm_1", future_scheme)],
     ));
     assert_eq!(
         state_after(&host).await,
@@ -371,7 +371,7 @@ async fn a_host_with_an_empty_trust_store_serves_everything_and_claims_nothing()
     let mut host = Host::new();
     host.register(Box::new(SigningProvider::new(
         vec![one.clone()],
-        vec![FrameAttestation::new("frm_1", sign(&one, &SEED))],
+        vec![entry("frm_1", sign(&one, &SEED))],
     )));
 
     let fanout = host.query_all(&query()).await;
@@ -408,10 +408,7 @@ async fn a_non_default_ranking_policy_still_carries_every_attestation_state() {
     let bare = frame("frm_bare", "an unsigned paragraph");
     let host = host_trusting(SigningProvider::new(
         vec![signed_frame.clone(), bare.clone()],
-        vec![FrameAttestation::new(
-            "frm_signed",
-            sign(&signed_frame, &SEED),
-        )],
+        vec![entry("frm_signed", sign(&signed_frame, &SEED))],
     ));
 
     let fanout = host.query_all(&query()).await;
@@ -472,7 +469,7 @@ async fn verification_changes_neither_selection_nor_order() {
     // arrangement most likely to tempt a reranker.
     let attested_host = host_trusting(SigningProvider::new(
         vec![high.clone(), low.clone()],
-        vec![FrameAttestation::new("frm_low", sign(&low, &SEED))],
+        vec![entry("frm_low", sign(&low, &SEED))],
     ));
 
     let without = unattested_host
@@ -512,14 +509,14 @@ async fn the_single_provider_door_reports_the_same_outcomes() {
     let one = frame("frm_1", "content");
     let host = host_trusting(SigningProvider::new(
         vec![one.clone()],
-        vec![FrameAttestation::new("frm_1", sign(&one, &SEED))],
+        vec![entry("frm_1", sign(&one, &SEED))],
     ));
 
     let (attested, outcomes) = host
         .query_provider_attested(PROVIDER, &query())
         .await
         .expect("the provider answers");
-    assert_eq!(attested.result.frames.len(), 1);
+    assert_eq!(attested.frames.len(), 1);
     assert_eq!(outcomes.len(), 1, "one outcome per frame, always");
     assert!(outcomes[0].state.is_attested());
     assert_eq!(outcomes[0].frame, one.identity(PROVIDER));
@@ -529,5 +526,5 @@ async fn the_single_provider_door_reports_the_same_outcomes() {
         .query_provider(PROVIDER, &query())
         .await
         .expect("the provider answers");
-    assert_eq!(plain.frames, attested.result.frames);
+    assert_eq!(plain.frames, attested.frames);
 }

@@ -89,6 +89,12 @@ pub use compose::{
     order_by, order_by_value, rendered_token_cost,
 };
 pub use consent::{ConsentDecision, ConsentRecord, ConsentStore};
+/// The one `FrameAttestation` (`SPEC.md` §6.5.5). It is defined in
+/// `contextgraph-types` because it is a **wire** type that rides
+/// [`ContextQueryResult`](contextgraph_types::ContextQueryResult), and it is
+/// re-exported here so a host author has one import rather than two. This crate
+/// briefly defined two more of its own; see #161.
+pub use contextgraph_types::FrameAttestation;
 pub use error::HostError;
 pub use host::{
     DropReason, DroppedFrame, FanOut, Host, ProviderOutcome, ProviderResult, VerifyOutcome,
@@ -101,8 +107,7 @@ pub use ingest::{
 pub use provider::{ContextProvider, capability_matches, frame_kind_name};
 pub use stdio::{RawStdioConnection, StdioProvider};
 pub use trust::{
-    AttestationLedger, AttestationState, AttestedQueryResult, FrameAttestation,
-    FrameAttestationOutcome, TrustStore, TrustedKey,
+    AttestationLedger, AttestationState, FrameAttestationOutcome, TrustStore, TrustedKey,
 };
 pub use verify::{DigestVerification, verify_file_provenance, verify_provenance_digest};
 pub use wire::{

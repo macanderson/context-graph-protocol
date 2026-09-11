@@ -143,6 +143,8 @@ sources honestly.
 ```rust
 pub enum FrameKind {
     Snippet, Symbol, Fact, Doc, Memory, Episode, Graph,
+    Unknown(String),                     // OPEN vocabulary: a kind this revision
+                                         // does not define, kept verbatim (ADR 0011)
 }
 
 pub enum Representation { Full, Compact, Reference }   // absent ⇒ Full (legacy)
@@ -200,6 +202,16 @@ pub struct FrameEmbedding {
     pub vector: Option<Vec<f32>>,
 }
 ```
+
+`FrameKind` is **open**. `SPEC.md` §13 U2 makes it a MUST that a receiver
+handed an unrecognised `kind` — most likely one a later `1.x` added — treats
+the frame as opaque evidence rather than rejecting it or failing to
+deserialise; it MAY decline to specialise its handling, which is a rendering
+decision. `from_wire` never fails, and `Unknown(String)` retains the original
+string so the frame re-emits unchanged. The JSON Schema's `FrameKind` **is** a
+closed enum of seven on purpose: it is an authoring lint that catches a typo in
+a fixture, and its own `$comment` says not to validate a peer's messages with
+it ([ADR 0011](./adr/0011-open-frame-kind-vocabulary.md)).
 
 Two contract points worth calling out explicitly, because the conformance
 suite checks both:

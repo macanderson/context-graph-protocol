@@ -206,6 +206,16 @@ pub struct InclusionStep {
     pub sibling_is_left: bool,
 }
 
+/// The longest inclusion path this crate will walk (`SPEC.md` §6.5.3).
+///
+/// A path of *n* steps describes a Merkle tree over up to 2ⁿ leaves, so 64
+/// steps covers every answer that could exist and then some. The cap is not
+/// about correctness — a wrong path yields a wrong root and fails the
+/// comparison — it is about work: each step costs a hash, the path arrives from
+/// the provider, and a verifier that walked an arbitrary one would hash for as
+/// long as a peer cared to make it.
+pub const MAX_INCLUSION_PATH_STEPS: usize = 64;
+
 /// A proof that one frame commitment is a leaf of a signed [`merkle_root`]
 /// (`SPEC.md` §6.5.3).
 ///
@@ -788,6 +798,58 @@ mod crypto {
         }
     }
 
+    /// Verify that a frame was a leaf of a signed result-set root
+    /// (`SPEC.md` §6.5.3, F13).
+    ///
+    /// This is the other half of §6.5. A provider that signs **one** root and
+    /// ships a per-frame [`InclusionProof`] has attested every frame it served
+    /// with a single signature, and the `attestation` member of the matching
+    /// [`FrameAttestation`] entry is then absent. A verifier that only knew how
+    /// to check per-frame signatures would report every such frame as
+    /// unattested — the cheapest honest signing shape would be the one nothing
+    /// could check — which is why this lives beside
+    /// [`verify_frame_attestation`] rather than inside one host.
+    ///
+    /// `result_attestation` is the answer-level attestation, whose
+    /// `signed_commitment` must equal the root this proof recomputes from the
+    /// frame's own commitment.
+    ///
+    /// The content-binding rule is [`verify_frame_attestation`]'s, unchanged
+    /// and for the same reason (#128): the leaf is a [`frame_commitment`], so a
+    /// frame that declares no `content_digest` is committed to by identity and
+    /// provenance alone however many hashes sit between it and the signature.
+    ///
+    /// # Bounded work
+    ///
+    /// Every field of `proof` comes from the provider, and each step of the
+    /// path costs a hash. [`MAX_INCLUSION_PATH_STEPS`] caps that before any
+    /// hashing starts: a longer path describes a tree with more leaves than any
+    /// answer can hold, and is rejected on its length rather than walked.
+    pub fn verify_frame_inclusion(
+        provider_id: &str,
+        frame: &ContextFrame,
+        proof: &InclusionProof,
+        result_attestation: &ProvenanceAttestation,
+        public_key: &[u8],
+    ) -> AttestationVerdict {
+        if proof.path.len() > MAX_INCLUSION_PATH_STEPS {
+            return AttestationVerdict::MalformedCommitment;
+        }
+        let commitment = frame_commitment(provider_id, frame);
+        let Some(root) = root_from_proof(&commitment, proof) else {
+            // A malformed sibling, or a leaf index outside the tree the proof
+            // describes. Either way there is no root to compare against, and
+            // that is a malformed commitment rather than a bad signature.
+            return AttestationVerdict::MalformedCommitment;
+        };
+        match verify_commitment(&root, result_attestation, public_key) {
+            AttestationVerdict::Valid if frame.content_digest.is_none() => {
+                AttestationVerdict::ValidIdentityOnly
+            }
+            other => other,
+        }
+    }
+
     /// Verify a detached attestation over an already-computed commitment — a
     /// [`merkle_root`] for a result set, or a [`frame_commitment`].
     pub fn verify_commitment(
@@ -896,7 +958,7 @@ mod crypto {
 pub use crypto::{
     frame_commitment, inclusion_proof, merkle_root, provenance_chain_head, public_key_for,
     result_set_commitments, result_set_root, root_from_proof, sign_commitment,
-    sign_frame_attestation, verify_commitment, verify_frame_attestation,
+    sign_frame_attestation, verify_commitment, verify_frame_attestation, verify_frame_inclusion,
 };
 
 #[cfg(all(test, feature = "attestation"))]
@@ -1249,6 +1311,145 @@ mod tests {
         let lone = merkle_root(&[frame_commitment("repo-graph", &frame_with("only", vec![]))]);
         assert_ne!(empty, lone);
         assert!(inclusion_proof(&[], 0).is_none());
+    }
+
+    /// The whole cheap-signing path in one helper: sign the root over `frames`
+    /// and hand back the root attestation plus each frame's inclusion proof, in
+    /// canonical order.
+    fn root_signed(
+        provider_id: &str,
+        frames: &[ContextFrame],
+    ) -> (ProvenanceAttestation, Vec<InclusionProof>) {
+        let commitments: Vec<[u8; 32]> = result_set_commitments(provider_id, frames)
+            .into_iter()
+            .map(|(_, commitment)| commitment)
+            .collect();
+        let root = merkle_root(&commitments);
+        let proofs = (0..commitments.len())
+            .map(|index| inclusion_proof(&commitments, index).expect("index is in range"))
+            .collect();
+        let attestation = sign_commitment(
+            &root,
+            &SEED,
+            "repo-graph-2026-08",
+            "repo-graph",
+            "2026-08-29T00:00:00Z",
+        );
+        (attestation, proofs)
+    }
+
+    #[test]
+    fn one_root_signature_attests_every_frame_it_covers() {
+        // The point of §6.5.3: a provider signs once, and every frame in the
+        // answer is verifiable from its own proof. A verifier that only knew
+        // how to check per-frame signatures would call all of these unattested.
+        let frames = vec![
+            frame_with("a", vec![link("file", Some("src/a.rs"), Some("sha256:aa"))]),
+            frame_with("b", vec![]),
+            frame_with("c", vec![]),
+        ];
+        // Canonical order is by `FrameId`, which is what the proofs index into.
+        let ordered: Vec<ContextFrame> = {
+            let mut sorted = frames.clone();
+            sorted.sort_by_key(|frame| frame.identity("repo-graph"));
+            sorted
+        };
+        let (root, proofs) = root_signed("repo-graph", &frames);
+        let public_key = public_key_for(&SEED);
+
+        for (frame, proof) in ordered.iter().zip(&proofs) {
+            assert_eq!(
+                verify_frame_inclusion("repo-graph", frame, proof, &root, &public_key),
+                AttestationVerdict::Valid,
+                "frame `{}` is a leaf of the signed root",
+                frame.id
+            );
+        }
+    }
+
+    #[test]
+    fn a_frame_edited_after_the_root_was_signed_recomputes_a_different_root() {
+        let frames = vec![frame_with("a", vec![]), frame_with("b", vec![])];
+        let (root, proofs) = root_signed("repo-graph", &frames);
+        let mut ordered = frames.clone();
+        ordered.sort_by_key(|frame| frame.identity("repo-graph"));
+        ordered[0].provenance.push(link("derivation", None, None));
+
+        assert!(
+            matches!(
+                verify_frame_inclusion(
+                    "repo-graph",
+                    &ordered[0],
+                    &proofs[0],
+                    &root,
+                    &public_key_for(&SEED),
+                ),
+                AttestationVerdict::CommitmentMismatch { .. }
+            ),
+            "a proof must not launder an edit the root never covered"
+        );
+    }
+
+    #[test]
+    fn a_digest_less_frame_proven_through_a_root_binds_no_content() {
+        // #128's rule survives the tree: the leaf is a frame commitment, so a
+        // frame declaring no `content_digest` is committed to by identity and
+        // provenance alone however many hashes sit above it.
+        let mut frame = frame_with("a", vec![]);
+        frame.content_digest = None;
+        let frames = vec![frame.clone()];
+        let (root, proofs) = root_signed("repo-graph", &frames);
+
+        let verdict = verify_frame_inclusion(
+            "repo-graph",
+            &frame,
+            &proofs[0],
+            &root,
+            &public_key_for(&SEED),
+        );
+        assert_eq!(verdict, AttestationVerdict::ValidIdentityOnly);
+        assert!(verdict.signature_verifies());
+        assert!(!verdict.binds_content());
+    }
+
+    #[test]
+    fn a_root_signed_by_the_wrong_key_is_a_bad_signature_not_a_mismatch() {
+        let frames = vec![frame_with("a", vec![])];
+        let (root, proofs) = root_signed("repo-graph", &frames);
+        let impostor = public_key_for(&[8u8; 32]);
+        assert_eq!(
+            verify_frame_inclusion("repo-graph", &frames[0], &proofs[0], &root, &impostor),
+            AttestationVerdict::BadSignature
+        );
+    }
+
+    #[test]
+    fn an_inclusion_path_longer_than_the_cap_is_rejected_before_it_is_walked() {
+        // Every step costs a hash and the path comes from the provider, so the
+        // length is checked before any hashing starts.
+        let frames = vec![frame_with("a", vec![])];
+        let (root, _) = root_signed("repo-graph", &frames);
+        let oversized = InclusionProof {
+            leaf_index: 0,
+            leaf_count: usize::MAX,
+            path: vec![
+                InclusionStep {
+                    sibling: digest_string(&[1u8; 32]),
+                    sibling_is_left: false,
+                };
+                MAX_INCLUSION_PATH_STEPS + 1
+            ],
+        };
+        assert_eq!(
+            verify_frame_inclusion(
+                "repo-graph",
+                &frames[0],
+                &oversized,
+                &root,
+                &public_key_for(&SEED)
+            ),
+            AttestationVerdict::MalformedCommitment
+        );
     }
 
     #[test]

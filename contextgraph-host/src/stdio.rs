@@ -936,7 +936,6 @@ mod tests {
                 dropped_estimate: None,
                 ..Default::default()
             },
-            attestations: vec![],
         };
         serde_json::to_string(&env).unwrap()
     }
@@ -1006,7 +1005,6 @@ mod tests {
                 dropped_estimate: None,
                 ..Default::default()
             },
-            attestations: vec![],
         };
         serde_json::to_string(&env).unwrap()
     }

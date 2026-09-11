@@ -193,7 +193,6 @@ fn handle_query(
             dropped_estimate,
             ..Default::default()
         },
-        attestations: vec![],
     }
 }
 

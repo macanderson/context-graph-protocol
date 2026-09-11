@@ -763,7 +763,6 @@ fn frames_line() -> String {
             dropped_estimate: None,
             ..Default::default()
         },
-        attestations: vec![],
     };
     serde_json::to_string(&env).expect("a fixed frames envelope always serializes")
 }

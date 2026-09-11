@@ -146,7 +146,12 @@ These are the Rust types that implement the schema above. If you're reading
 code, start here.
 
 **Frames and content**
-- `FrameKind` — the 7 kinds of frame (snippet, symbol, fact, doc, memory, episode, graph).
+- `FrameKind` — an **open** vocabulary. Seven kinds are defined (snippet, symbol,
+  fact, doc, memory, episode, graph) plus `Unknown(String)` for a kind this
+  revision does not know, which a later `1.x` may add. `SPEC.md` §13 U2 makes it
+  a MUST that a receiver accepts an unrecognised kind, treats the frame as opaque
+  evidence, and preserves the original string verbatim if it re-emits the frame
+  ([ADR 0011](./adr/0011-open-frame-kind-vocabulary.md)).
 - `ContextFrame` — the main frame type; the unit of exchange.
 - `FrameId` — a frame's stable identity (provider id + frame id + content hash) — used for dedup and stable ordering.
 - `Representation` — full / compact / reference (see 2.2).
@@ -212,8 +217,11 @@ Read the full ADR before changing anything it covers.
 | [0012](./adr/0012-sdk-version-pins-share-a-major.md) | A version pin names its manifest's major | The scaffolder's default SDK pins had drifted a whole major behind the packages they name, invisibly, because every CI job overrides them with a local path. A guard now compares them. |
 | [0013](./adr/0013-schema-identity-on-a-branded-versioned-url.md) | Schema identity on a branded, versioned URL | The JSON Schemas are now known by a URL on the protocol's own domain, numbered by wire family (`/schema/v1/`) rather than tracking a git branch. The old URLs keep working and implementers need do nothing. |
 | [0014](./adr/0014-attestations-on-the-wire.md) | Attestations on the wire | A signed answer finally has somewhere to put the signature: beside the frames on the `frames` result, never inside a frame. Inclusion proofs are optional to send, and a host that keeps only part of a signed answer has to save them before it drops the rest. |
+| [0015](./adr/0015-cross-provider-ranking-strategies.md) | Cross-provider ranking is the host's policy | Two providers returning `0.8` are not making the same claim, so any ordering across them is a decision the host owns and must be able to name. One seam, three shipped strategies, and no pretence that the protocol decided it. |
 | [0016](./adr/0016-attestation-trust-roots.md) | Trust roots for provenance attestation | A host learns a provider's signing key from the person running it, the same way `ssh` learns a host key — no registry, no directory, nothing you have to be part of an organization to reach. A signature it cannot check makes the evidence *unsigned*, never missing. |
 | [0017](./adr/0017-record-hash-and-record-attestation.md) | `record_hash` and `RecordAttestation` | The record layer's identity, implemented: RFC 8785 canonicalization with the record's own hash removed from the preimage, and a domain-separated Ed25519 signature over it. Says why JCS is right here and wrong at the frame layer. |
+| [0018](./adr/0018-signing-a-frame-requires-a-content-digest.md) | Signing a frame requires a content digest | A signature over a frame that declares no `content_digest` covers its name and its provenance and nothing it says, so the provider can serve different bytes tomorrow and the signature still verifies. The verifier now returns a separate verdict instead of calling it valid. |
+| [0019](./adr/0019-one-home-for-an-attestation.md) | One `FrameAttestation`, one wire home | Three types of that name and two wire places for one signature, with no rule for which wins when they disagree. The canonical type is the types crate's, the home is the result, and `handshake_ack.attester_keys` is written down as a construction anchor rather than a trust one. |
 
 
 ---

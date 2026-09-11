@@ -12,6 +12,18 @@
 //! **wire-breaking change** that requires a new major family (`SPEC.md` §15).
 //! That is exactly why they are written out rather than recomputed.
 
+// Gated at file scope, and the reason that is safe is a guard rather than a
+// habit: `.github/scripts/check-feature-matrix.py` fails CI if any feature this
+// crate declares is not built by the `features` job. So a gated file always has
+// a run that builds it, and the `ok. 0 passed` a default-features run prints is
+// a suite that was not expected to run rather than one that silently did not
+// (#117).
+//
+// An earlier revision also carried an always-on test asserting
+// `cfg!(feature = "attestation")`. It was removed: the workspace-wide CI job runs
+// with default features, where these vectors are *correctly* skipped, and the
+// assertion turned that legitimate run red. Making the skip loud there would
+// have meant making a true thing fail.
 #![cfg(feature = "attestation")]
 
 use contextgraph_types::attest::{

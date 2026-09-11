@@ -545,7 +545,6 @@ mod tests {
                 dropped_estimate: None,
                 ..Default::default()
             },
-            attestations: vec![],
         })
         .unwrap()
     }

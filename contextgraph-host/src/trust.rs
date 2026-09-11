@@ -42,8 +42,9 @@
 use std::collections::{BTreeMap, HashMap};
 
 use contextgraph_types::{
-    ALGORITHM_ED25519, AttestationVerdict, ContextFrame, ContextQueryResult, FrameId,
-    ProvenanceAttestation, verify_frame_attestation,
+    ALGORITHM_ED25519, AttestationVerdict, ContextFrame, ContextQueryResult, FrameAttestation,
+    FrameId, InclusionProof, ProvenanceAttestation, verify_frame_attestation,
+    verify_frame_inclusion,
 };
 use serde::{Deserialize, Serialize};
 
@@ -279,27 +280,35 @@ impl TrustStore {
         }
     }
 
-    /// Check every attestation a provider offered for one query result, and
-    /// return one outcome per frame in the result — including the frames no
-    /// attestation covered, which are [`AttestationState::Unattested`].
+    /// Check the evidence a provider attached to one query result, and return
+    /// one outcome per frame in it — including the frames no entry covered,
+    /// which are [`AttestationState::Unattested`].
+    ///
+    /// The evidence is read off `result` itself
+    /// ([`frame_attestations`](ContextQueryResult::frame_attestations) and
+    /// [`result_attestation`](ContextQueryResult::result_attestation)), not
+    /// passed alongside it. That is deliberate and it is the whole of #161: an
+    /// attestation has exactly one home (`SPEC.md` §6.5.5, ADR 0014), so a
+    /// caller cannot hand this method a set of signatures that disagrees with
+    /// the answer they cover, and no tie-breaking rule is needed because there
+    /// is never a tie.
     ///
     /// The result is a **total** account of the frames: a caller can read a
     /// state for every frame it is about to compose, and never has to guess
     /// whether an absent entry means unsigned or unchecked.
     ///
-    /// At most one attestation is checked per frame, and at most
-    /// `result.frames.len()` entries of `attestations` are examined at all. A
-    /// conforming provider sends no more than one attestation per frame, so the
-    /// cap binds only a provider that already over-sent — and the consequence
-    /// falls on that provider alone: its own later attestations read as absent,
-    /// and its frames are still served.
+    /// At most one entry is checked per frame, and at most
+    /// `result.frames.len()` entries are examined at all. A conforming provider
+    /// sends no more than one entry per frame, so the cap binds only a provider
+    /// that already over-sent — and the consequence falls on that provider
+    /// alone: its own later entries read as absent, and its frames are still
+    /// served.
     pub fn check_result(
         &self,
         provider_id: &str,
         result: &ContextQueryResult,
-        attestations: &[FrameAttestation],
     ) -> Vec<FrameAttestationOutcome> {
-        self.check_result_signed_as(provider_id, provider_id, result, attestations)
+        self.check_result_signed_as(provider_id, provider_id, result)
     }
 
     /// [`check_result`](Self::check_result) with the two provider identities
@@ -326,41 +335,167 @@ impl TrustStore {
     /// answers "whose key may sign this?" and the declared name answers "what
     /// bytes were signed?" — different questions with different right answers.
     ///
-    /// The resulting [`FrameId`]s are keyed by `local_id`, matching the identity
-    /// the composition path builds, so a ledger from here lines up with an audit.
+    /// # The same split decides matching, not only verifying
+    ///
+    /// A provider has no notion of this host's local routing id, so every
+    /// [`FrameAttestation::frame`] it puts on the wire is built from the same
+    /// name it signs under (the reference provider builds both from its one
+    /// `attestation_provider_id()`). Matching `offered` against
+    /// `frame.identity(local_id)` would therefore miss every entry whenever an
+    /// operator's config id differs from the provider's declared name — the
+    /// same false negative this split exists to close, one layer above the
+    /// signature check itself. The lookup key is `frame.identity(signing_id)`
+    /// for that reason.
+    ///
+    /// The **returned** [`FrameId`]s are keyed by `local_id`, not
+    /// `signing_id`: [`FrameId::provider_id`] is documented as "the same
+    /// routing/consent key the host registered it under", and it is the id
+    /// the rest of the composition path (`compose.rs`, `usage_report`) already
+    /// builds its own `FrameId`s from. Echoing `signing_id` here instead would
+    /// desynchronize this ledger from every other identity the host emits for
+    /// the same frame.
     pub fn check_result_signed_as(
         &self,
         local_id: &str,
         signing_id: &str,
         result: &ContextQueryResult,
-        attestations: &[FrameAttestation],
     ) -> Vec<FrameAttestationOutcome> {
-        let provider_id = local_id;
-        let mut offered: HashMap<&str, &ProvenanceAttestation> = HashMap::new();
-        for offer in attestations.iter().take(result.frames.len()) {
-            // First offer wins: a flood of duplicates for one frame cannot
+        let mut offered: HashMap<&FrameId, &FrameAttestation> = HashMap::new();
+        for entry in result.frame_attestations.iter().take(result.frames.len()) {
+            // First entry wins: a flood of duplicates for one frame cannot
             // multiply the verification work.
-            offered
-                .entry(offer.frame_id.as_str())
-                .or_insert(&offer.attestation);
+            offered.entry(&entry.frame).or_insert(entry);
         }
 
         result
             .frames
             .iter()
             .map(|frame| {
-                let state = match offered.get(frame.id.as_str()) {
-                    Some(attestation) => {
-                        self.check_signed_as(local_id, signing_id, frame, attestation)
-                    }
+                // Match on the whole identity triple, never on the frame id
+                // alone: two frames sharing an id but not a digest are
+                // different bytes, and handing the first one's evidence to the
+                // second is the substitution the binding exists to prevent
+                // (`SPEC.md` §6.5.2). Built from `signing_id` — see this
+                // method's doc comment for why.
+                let signing_identity = frame.identity(signing_id);
+                let state = match offered.get(&signing_identity) {
+                    Some(entry) => self.check_entry(
+                        local_id,
+                        signing_id,
+                        frame,
+                        entry,
+                        result.result_attestation.as_ref(),
+                    ),
                     None => AttestationState::Unattested,
                 };
                 FrameAttestationOutcome {
-                    frame: frame.identity(provider_id),
+                    // Built from `local_id`, deliberately different from the
+                    // lookup key above — see this method's doc comment.
+                    frame: frame.identity(local_id),
                     state,
                 }
             })
             .collect()
+    }
+
+    /// One entry's outcome: the per-frame signature if it carries one, its
+    /// membership of the signed result-set root if it does not.
+    ///
+    /// A [`FrameAttestation`] carries **either** shape, and the reason both
+    /// exist is cost: signing one Merkle root with a per-frame inclusion proof
+    /// says with one signature what *n* per-frame signatures say. A host that
+    /// checked only the first shape would report every provider that chose the
+    /// cheap one as unattested.
+    ///
+    /// The per-frame signature wins when an entry carries both. It is the
+    /// narrower claim — it binds this frame directly, with no tree in between —
+    /// and checking it costs one verification rather than a walk plus one.
+    fn check_entry(
+        &self,
+        local_id: &str,
+        signing_id: &str,
+        frame: &ContextFrame,
+        entry: &FrameAttestation,
+        result_attestation: Option<&ProvenanceAttestation>,
+    ) -> AttestationState {
+        if let Some(attestation) = &entry.attestation {
+            return self.check_signed_as(local_id, signing_id, frame, attestation);
+        }
+        match (&entry.inclusion_proof, result_attestation) {
+            (Some(proof), Some(root)) => {
+                self.check_inclusion(local_id, signing_id, frame, proof, root)
+            }
+            // A proof of membership of a root the answer never carried, or an
+            // entry naming a frame and asserting nothing about it. Neither can
+            // be turned into a check, and F9 makes that a degradation to
+            // unattested rather than a reason to withhold the frame.
+            _ => AttestationState::UnusableEvidence,
+        }
+    }
+
+    /// Check one frame's membership of the signed result-set root
+    /// (`SPEC.md` §6.5.3, F13).
+    ///
+    /// Ordered exactly as [`check`](Self::check) is, and for the same reason:
+    /// the scheme, then the key, then the structural lengths, and only then any
+    /// hashing. The key lookup in particular is the bound that keeps an
+    /// untrusted peer from spending this host's CPU walking a Merkle path —
+    /// reaching the walk at all requires an operator to have trusted a key
+    /// under the root attestation's exact `key_id`.
+    /// [`check_inclusion`](Self::check_inclusion) — same two-id split as
+    /// [`check_signed_as`](Self::check_signed_as) and for the same reason:
+    /// `local_id` keys the trust lookup, `signing_id` recomputes the root
+    /// (`frame_commitment` inside [`verify_frame_inclusion`]), because the
+    /// root was built over commitments the provider signed under its own
+    /// declared name.
+    fn check_inclusion(
+        &self,
+        local_id: &str,
+        signing_id: &str,
+        frame: &ContextFrame,
+        proof: &InclusionProof,
+        root: &ProvenanceAttestation,
+    ) -> AttestationState {
+        if root.algorithm != ALGORITHM_ED25519 {
+            return AttestationState::UnknownAlgorithm {
+                algorithm: echoed(&root.algorithm),
+            };
+        }
+        let Some(key) = self.key(local_id, &root.key_id) else {
+            return AttestationState::NoTrustedKey {
+                key_id: echoed(&root.key_id),
+            };
+        };
+        if root.signed_commitment.len() != COMMITMENT_LEN {
+            return AttestationState::Invalid {
+                verdict: AttestationVerdict::MalformedCommitment,
+            };
+        }
+        if root.signature.len() != ED25519_SIGNATURE_HEX_LEN {
+            return AttestationState::Invalid {
+                verdict: AttestationVerdict::MalformedSignature,
+            };
+        }
+        let Some(public_key) = decode_hex(&key.public_key) else {
+            return AttestationState::Invalid {
+                verdict: AttestationVerdict::MalformedKey,
+            };
+        };
+
+        // `covers_content` is read off the verdict rather than re-derived, for
+        // the reason `check` gives: the rule for what a commitment binds lives
+        // in `frame_commitment`, and both call sites stay downstream of it
+        // (#128).
+        match verify_frame_inclusion(signing_id, frame, proof, root, &public_key) {
+            verdict @ (AttestationVerdict::Valid | AttestationVerdict::ValidIdentityOnly) => {
+                AttestationState::Attested {
+                    key_id: root.key_id.clone(),
+                    attester_id: echoed(&root.attester_id),
+                    covers_content: verdict.binds_content(),
+                }
+            }
+            verdict => AttestationState::Invalid { verdict },
+        }
     }
 }
 
@@ -426,6 +561,17 @@ pub enum AttestationState {
         /// The scheme the attestation named.
         algorithm: String,
     },
+    /// An entry named this frame and this host could not turn it into a check:
+    /// an inclusion proof with no signed `result_attestation` root to prove
+    /// membership *of*, or an entry carrying neither a signature nor a proof.
+    ///
+    /// F9: the frame is served, and every decision treats this as unattested.
+    /// The state is named rather than folded into
+    /// [`Unattested`](Self::Unattested) because the two say different things
+    /// about the provider — one chose not to sign, the other sent evidence that
+    /// does not resolve — and only the second is worth an operator's attention.
+    /// [`was_offered`](Self::was_offered) is true here.
+    UnusableEvidence,
     /// A trusted key was found and the check did not succeed — a forgery, a
     /// frame altered after signing, or an attestation too malformed to check.
     /// The verdict says which.
@@ -463,70 +609,6 @@ impl AttestationState {
     /// second is the provider's choice.
     pub fn was_offered(&self) -> bool {
         !matches!(self, Self::NotChecked | Self::Unattested)
-    }
-}
-
-/// One attestation, bound to the frame it covers.
-///
-/// The binding is by [`ContextFrame::id`] — provider-scoped, which is all it
-/// needs to be, since a result comes from exactly one provider.
-///
-/// **This shape lives here for now.** A `ProvenanceAttestation` is detached
-/// (`SPEC.md` F6) and today's `frames` envelope has nowhere to carry one, so a
-/// transport-backed provider parses none and this type is how an in-process
-/// provider hands attestations to the host. Carrying attestations on the wire
-/// is issue #90; when that lands, this becomes the host-side view of a wire
-/// field rather than the only source of one.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FrameAttestation {
-    /// The provider-scoped id of the frame this attestation covers.
-    pub frame_id: String,
-    /// The detached attestation.
-    pub attestation: ProvenanceAttestation,
-}
-
-impl FrameAttestation {
-    /// Bind an attestation to a frame id.
-    pub fn new(frame_id: impl Into<String>, attestation: ProvenanceAttestation) -> Self {
-        Self {
-            frame_id: frame_id.into(),
-            attestation,
-        }
-    }
-}
-
-/// A query result together with the attestations the provider offered for its
-/// frames — what [`ContextProvider::query_attested`](crate::ContextProvider::query_attested)
-/// returns.
-#[derive(Debug, Clone, PartialEq)]
-pub struct AttestedQueryResult {
-    /// The frames, exactly as `context/query` returned them.
-    pub result: ContextQueryResult,
-    /// Zero or more attestations, each naming the frame it covers. A provider
-    /// that signs nothing returns an empty vector, which is the honest
-    /// [`AttestationState::Unattested`] rather than a gap.
-    pub attestations: Vec<FrameAttestation>,
-}
-
-impl AttestedQueryResult {
-    /// A result no attestation covers — what every provider that does not sign
-    /// returns.
-    pub fn unattested(result: ContextQueryResult) -> Self {
-        Self {
-            result,
-            attestations: Vec::new(),
-        }
-    }
-
-    /// A result with attestations attached.
-    pub fn with_attestations(
-        result: ContextQueryResult,
-        attestations: Vec<FrameAttestation>,
-    ) -> Self {
-        Self {
-            result,
-            attestations,
-        }
     }
 }
 
@@ -648,7 +730,9 @@ fn sha256(bytes: &[u8]) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use contextgraph_types::{FrameKind, Provenance, public_key_for, sign_frame_attestation};
+    use contextgraph_types::{
+        FrameKind, Provenance, public_key_for, sign_commitment, sign_frame_attestation,
+    };
 
     /// A deterministic seed. Tests need reproducible signatures, and this key
     /// signs nothing outside this file.
@@ -907,18 +991,18 @@ mod tests {
         let bare_frame = frame("frm_bare");
         let attestation = signed(&signed_frame, &SEED);
         let result = ContextQueryResult {
-            frames: vec![signed_frame.clone(), bare_frame.clone()],
-            truncated: false,
-            dropped_estimate: None,
-            frame_attestations: Vec::new(),
-            result_attestation: None,
+            frame_attestations: vec![FrameAttestation::signed(
+                signed_frame.identity(PROVIDER),
+                attestation,
+            )],
+            ..ContextQueryResult::unattested(
+                vec![signed_frame.clone(), bare_frame.clone()],
+                false,
+                None,
+            )
         };
 
-        let outcomes = store_trusting(&SEED).check_result(
-            PROVIDER,
-            &result,
-            &[FrameAttestation::new("frm_signed", attestation)],
-        );
+        let outcomes = store_trusting(&SEED).check_result(PROVIDER, &result);
 
         assert_eq!(outcomes.len(), 2, "one outcome per frame, always");
         assert_eq!(outcomes[0].frame, signed_frame.identity(PROVIDER));
@@ -927,26 +1011,92 @@ mod tests {
         assert_eq!(outcomes[1].state, AttestationState::Unattested);
     }
 
+    /// **The result-level match survives the same split the single-attestation
+    /// check does.** A provider builds `FrameAttestation.frame` from its own
+    /// declared name — it has no other identity to build it from — so an
+    /// operator whose local config id differs from that name must still see
+    /// the evidence matched, not silently dropped to `Unattested`. This is
+    /// `check_result_signed_as`'s half of #161's fix; the single-attestation
+    /// half is
+    /// `a_local_id_that_differs_from_the_declared_name_still_verifies` above.
+    #[test]
+    fn a_result_matches_evidence_built_under_the_declared_name_even_when_the_local_id_differs() {
+        const DECLARED: &str = "acme-docs";
+        const LOCAL: &str = "docs-1";
+        let served = frame("frm_1");
+        let attestation = sign_frame_attestation(
+            DECLARED,
+            &served,
+            &SEED,
+            KEY_ID,
+            DECLARED,
+            "2026-08-29T00:00:00Z",
+        );
+        // The wire identity is built from `DECLARED`, exactly as the reference
+        // provider builds it — from its own `attestation_provider_id()`, which
+        // is the only identity it has for itself.
+        let result = ContextQueryResult {
+            frame_attestations: vec![FrameAttestation::signed(
+                served.identity(DECLARED),
+                attestation,
+            )],
+            ..ContextQueryResult::unattested(vec![served.clone()], false, None)
+        };
+
+        let mut store = TrustStore::new();
+        store.trust(
+            LOCAL,
+            TrustedKey::ed25519_bytes(KEY_ID, &public_key_for(&SEED)),
+        );
+
+        let outcomes = store.check_result_signed_as(LOCAL, DECLARED, &result);
+        assert_eq!(outcomes.len(), 1);
+        assert!(
+            outcomes[0].state.is_attested(),
+            "matching must key on the declared name the provider actually used \
+             on the wire, got {:?}",
+            outcomes[0].state
+        );
+        assert_eq!(
+            outcomes[0].frame,
+            served.identity(LOCAL),
+            "the returned FrameId is keyed by the operator's local id, matching \
+             the rest of the composition path"
+        );
+    }
+
     #[test]
     fn an_attestation_naming_a_frame_that_is_not_in_the_result_is_ignored() {
         let served = frame("frm_served");
         let elsewhere = frame("frm_elsewhere");
         let result = ContextQueryResult {
-            frames: vec![served.clone()],
-            truncated: false,
-            dropped_estimate: None,
-            frame_attestations: Vec::new(),
-            result_attestation: None,
-        };
-        let outcomes = store_trusting(&SEED).check_result(
-            PROVIDER,
-            &result,
-            &[FrameAttestation::new(
-                "frm_elsewhere",
+            frame_attestations: vec![FrameAttestation::signed(
+                elsewhere.identity(PROVIDER),
                 signed(&elsewhere, &SEED),
             )],
-        );
+            ..ContextQueryResult::unattested(vec![served.clone()], false, None)
+        };
+        let outcomes = store_trusting(&SEED).check_result(PROVIDER, &result);
         assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].state, AttestationState::Unattested);
+    }
+
+    #[test]
+    fn an_entry_matching_the_frame_id_but_not_the_digest_does_not_attest_it() {
+        // #161: matching is on the whole identity triple. Two frames can share
+        // an id and differ in bytes, and lending the first one's signature to
+        // the second is the substitution the binding exists to prevent.
+        let served = frame("frm_1");
+        let mut impostor_identity = served.identity(PROVIDER);
+        impostor_identity.content_digest = Some(format!("sha256:{}", "ee".repeat(32)));
+        let result = ContextQueryResult {
+            frame_attestations: vec![FrameAttestation::signed(
+                impostor_identity,
+                signed(&served, &SEED),
+            )],
+            ..ContextQueryResult::unattested(vec![served.clone()], false, None)
+        };
+        let outcomes = store_trusting(&SEED).check_result(PROVIDER, &result);
         assert_eq!(outcomes[0].state, AttestationState::Unattested);
     }
 
@@ -955,39 +1105,209 @@ mod tests {
         // A provider flooding duplicates for one frame buys one verification,
         // and the frames are still served either way.
         let one = frame("frm_1");
-        let result = ContextQueryResult {
-            frames: vec![one.clone()],
-            truncated: false,
-            dropped_estimate: None,
-            frame_attestations: Vec::new(),
-            result_attestation: None,
-        };
+        let identity = one.identity(PROVIDER);
         let good = signed(&one, &SEED);
         let bad = signed(&one, &OTHER_SEED);
-        // First offer wins, so the leading good one decides.
-        let outcomes = store_trusting(&SEED).check_result(
-            PROVIDER,
-            &result,
-            &[
-                FrameAttestation::new("frm_1", good),
-                FrameAttestation::new("frm_1", bad.clone()),
+        // First entry wins, so the leading good one decides.
+        let result = ContextQueryResult {
+            frame_attestations: vec![
+                FrameAttestation::signed(identity.clone(), good),
+                FrameAttestation::signed(identity.clone(), bad.clone()),
             ],
-        );
+            ..ContextQueryResult::unattested(vec![one.clone()], false, None)
+        };
+        let outcomes = store_trusting(&SEED).check_result(PROVIDER, &result);
         assert!(outcomes[0].state.is_attested());
 
         // And the scan is capped at frames.len(), so a leading junk entry is
         // what a provider that over-sends gets judged on — a degradation that
         // falls on that provider, never a dropped frame.
-        let outcomes = store_trusting(&SEED).check_result(
-            PROVIDER,
-            &result,
-            &[
-                FrameAttestation::new("frm_unrelated", bad),
-                FrameAttestation::new("frm_1", signed(&one, &SEED)),
+        let mut unrelated = identity.clone();
+        unrelated.frame_id = "frm_unrelated".into();
+        let result = ContextQueryResult {
+            frame_attestations: vec![
+                FrameAttestation::signed(unrelated, bad),
+                FrameAttestation::signed(identity, signed(&one, &SEED)),
             ],
-        );
+            ..ContextQueryResult::unattested(vec![one.clone()], false, None)
+        };
+        let outcomes = store_trusting(&SEED).check_result(PROVIDER, &result);
         assert_eq!(outcomes.len(), 1);
         assert_eq!(outcomes[0].state, AttestationState::Unattested);
+    }
+
+    /// Sign the Merkle root over `frames` and hand back a result whose every
+    /// frame is attested *only* through an inclusion proof — the cheap shape:
+    /// one signature for the whole answer, no per-frame signature at all.
+    fn root_signed_result(frames: Vec<ContextFrame>, seed: &[u8; 32]) -> ContextQueryResult {
+        use contextgraph_types::{inclusion_proof, result_set_commitments, result_set_root};
+
+        // Canonical order is by `FrameId`, not the order the frames were
+        // served in, so the leaf index comes from the commitment list.
+        let ordered = result_set_commitments(PROVIDER, &frames);
+        let commitments: Vec<[u8; 32]> = ordered.iter().map(|(_, c)| *c).collect();
+        let root = result_set_root(PROVIDER, &frames);
+        let entries = ordered
+            .iter()
+            .enumerate()
+            .map(|(index, (id, _))| {
+                FrameAttestation::proven(
+                    id.clone(),
+                    inclusion_proof(&commitments, index).expect("index is in range"),
+                )
+            })
+            .collect();
+        ContextQueryResult {
+            frame_attestations: entries,
+            result_attestation: Some(sign_commitment(
+                &root,
+                seed,
+                KEY_ID,
+                "docs-provider",
+                "2026-08-29T00:00:00Z",
+            )),
+            ..ContextQueryResult::unattested(frames, false, None)
+        }
+    }
+
+    #[test]
+    fn a_frame_attested_only_through_an_inclusion_proof_is_attested() {
+        // #161: the canonical `FrameAttestation` makes `attestation` optional
+        // so one root signature can stand for n frames. A host that only knew
+        // how to check per-frame signatures would call every one of these
+        // unattested, which would make the cheapest honest shape the one
+        // nothing can verify.
+        let frames = vec![frame("frm_1"), frame("frm_2"), frame("frm_3")];
+        let result = root_signed_result(frames.clone(), &SEED);
+
+        let outcomes = store_trusting(&SEED).check_result(PROVIDER, &result);
+
+        assert_eq!(outcomes.len(), 3);
+        for (outcome, frame) in outcomes.iter().zip(&frames) {
+            assert_eq!(outcome.frame, frame.identity(PROVIDER));
+            assert_eq!(
+                outcome.state,
+                AttestationState::Attested {
+                    key_id: KEY_ID.to_string(),
+                    attester_id: "docs-provider".to_string(),
+                    covers_content: true,
+                },
+                "every leaf of the signed root is attested by the one signature"
+            );
+        }
+    }
+
+    #[test]
+    fn a_proof_of_a_root_this_host_holds_no_key_for_is_a_configuration_gap() {
+        let frames = vec![frame("frm_1"), frame("frm_2")];
+        let result = root_signed_result(frames, &SEED);
+        let outcomes = TrustStore::new().check_result(PROVIDER, &result);
+        assert_eq!(
+            outcomes[0].state,
+            AttestationState::NoTrustedKey {
+                key_id: KEY_ID.to_string()
+            },
+            "no key means nothing was checked, never that something failed"
+        );
+    }
+
+    #[test]
+    fn a_proof_that_recomputes_a_different_root_is_a_commitment_mismatch() {
+        // The loud case: a frame edited after the root was signed. The frame's
+        // *identity* is unchanged — provenance is not part of it — so the entry
+        // still names this frame, and the leaf it recomputes is a different one.
+        let frames = vec![frame("frm_1"), frame("frm_2")];
+        let mut result = root_signed_result(frames, &SEED);
+        result.frames[0].provenance.clear();
+
+        match store_trusting(&SEED).check_result(PROVIDER, &result)[0].state {
+            AttestationState::Invalid {
+                verdict: AttestationVerdict::CommitmentMismatch { .. },
+            } => {}
+            ref other => panic!("expected a CommitmentMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_inclusion_proof_with_no_signed_root_is_unusable_not_unattested() {
+        // F9 treats it as unattested for every decision, but the state is named
+        // so an audit can tell "the provider signs nothing" from "the provider
+        // sent evidence that does not resolve".
+        let frames = vec![frame("frm_1"), frame("frm_2")];
+        let mut result = root_signed_result(frames, &SEED);
+        result.result_attestation = None;
+
+        let outcomes = store_trusting(&SEED).check_result(PROVIDER, &result);
+
+        assert_eq!(outcomes[0].state, AttestationState::UnusableEvidence);
+        assert!(!outcomes[0].state.is_attested());
+        assert!(
+            outcomes[0].state.was_offered(),
+            "something was offered; it just could not be checked"
+        );
+    }
+
+    #[test]
+    fn an_entry_carrying_neither_a_signature_nor_a_proof_asserts_nothing() {
+        let one = frame("frm_1");
+        let mut entry = FrameAttestation::signed(one.identity(PROVIDER), signed(&one, &SEED));
+        entry.attestation = None;
+        let result = ContextQueryResult {
+            frame_attestations: vec![entry.clone()],
+            ..ContextQueryResult::unattested(vec![one.clone()], false, None)
+        };
+        assert!(!entry.carries_evidence());
+        assert_eq!(
+            store_trusting(&SEED).check_result(PROVIDER, &result)[0].state,
+            AttestationState::UnusableEvidence
+        );
+    }
+
+    #[test]
+    fn a_per_frame_signature_is_preferred_over_a_proof_on_the_same_entry() {
+        // Both shapes on one entry: check the narrower claim, which binds this
+        // frame directly with no tree in between, and costs one verification
+        // rather than a walk plus one.
+        let frames = vec![frame("frm_1"), frame("frm_2")];
+        let mut result = root_signed_result(frames.clone(), &SEED);
+        // A per-frame signature from a key nobody trusts. If the proof were
+        // preferred the frame would read as attested; the signature must decide.
+        result.frame_attestations[0].attestation = Some(signed(&frames[0], &OTHER_SEED));
+
+        assert_eq!(
+            store_trusting(&SEED).check_result(PROVIDER, &result)[0].state,
+            AttestationState::Invalid {
+                verdict: AttestationVerdict::BadSignature
+            }
+        );
+    }
+
+    #[test]
+    fn an_unbounded_inclusion_path_is_rejected_on_its_length() {
+        // Every step of the path costs a hash and the path comes from the
+        // provider. `MAX_INCLUSION_PATH_STEPS` caps the walk before it starts.
+        use contextgraph_types::{InclusionStep, MAX_INCLUSION_PATH_STEPS};
+
+        let one = frame("frm_1");
+        let mut result = root_signed_result(vec![one.clone()], &SEED);
+        result.frame_attestations[0].inclusion_proof = Some(InclusionProof {
+            leaf_index: 0,
+            leaf_count: usize::MAX,
+            path: vec![
+                InclusionStep {
+                    sibling: format!("sha256:{}", "11".repeat(32)),
+                    sibling_is_left: false,
+                };
+                MAX_INCLUSION_PATH_STEPS + 1
+            ],
+        });
+
+        assert_eq!(
+            store_trusting(&SEED).check_result(PROVIDER, &result)[0].state,
+            AttestationState::Invalid {
+                verdict: AttestationVerdict::MalformedCommitment
+            }
+        );
     }
 
     #[test]

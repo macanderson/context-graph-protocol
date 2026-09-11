@@ -25,9 +25,7 @@ use crate::consent::{ConsentDecision, ConsentRecord, ConsentStore};
 use crate::error::HostError;
 use crate::provider::{ContextProvider, capability_matches};
 use crate::stdio::StdioProvider;
-use crate::trust::{
-    AttestationLedger, AttestedQueryResult, FrameAttestationOutcome, TrustStore, TrustedKey,
-};
+use crate::trust::{AttestationLedger, FrameAttestationOutcome, TrustStore, TrustedKey};
 
 /// Default per-provider query budget — a slow or hung provider is cut off at
 /// this and reported as [`HostError::Timeout`], never allowed to stall the
@@ -295,7 +293,7 @@ impl Host {
         id: &str,
         query: &ContextQuery,
     ) -> Result<ContextQueryResult, HostError> {
-        Ok(self.query_provider_attested(id, query).await?.0.result)
+        Ok(self.query_provider_attested(id, query).await?.0)
     }
 
     /// [`query_provider`](Self::query_provider), plus what the host found when
@@ -312,7 +310,7 @@ impl Host {
         &self,
         id: &str,
         query: &ContextQuery,
-    ) -> Result<(AttestedQueryResult, Vec<FrameAttestationOutcome>), HostError> {
+    ) -> Result<(ContextQueryResult, Vec<FrameAttestationOutcome>), HostError> {
         let provider = self
             .providers
             .iter()
@@ -335,10 +333,8 @@ impl Host {
             }
         }
 
-        let attested =
-            match tokio::time::timeout(self.per_provider_timeout, provider.query_attested(query))
-                .await
-            {
+        let result =
+            match tokio::time::timeout(self.per_provider_timeout, provider.query(query)).await {
                 Ok(result) => result?,
                 Err(_) => {
                     return Err(HostError::Timeout {
@@ -357,13 +353,8 @@ impl Host {
         // `CommitmentMismatch` — a tampering finding — for every operator whose
         // config id differed from the provider's declared name.
         let signing_id = provider.info().name.clone();
-        let outcomes = self.trust.check_result_signed_as(
-            id,
-            &signing_id,
-            &attested.result,
-            &attested.attestations,
-        );
-        Ok((attested, outcomes))
+        let outcomes = self.trust.check_result_signed_as(id, &signing_id, &result);
+        Ok((result, outcomes))
     }
 
     /// Fan a query out to every capability-matching provider concurrently,
@@ -474,11 +465,9 @@ impl Host {
             }
         }
 
-        let attested =
-            match tokio::time::timeout(self.per_provider_timeout, provider.query_attested(query))
-                .await
-            {
-                Ok(Ok(attested)) => attested,
+        let result =
+            match tokio::time::timeout(self.per_provider_timeout, provider.query(query)).await {
+                Ok(Ok(result)) => result,
                 Ok(Err(error)) => {
                     return ProviderOutcome::unattested(id, ProviderResult::Failed(error));
                 }
@@ -490,7 +479,6 @@ impl Host {
                     return ProviderOutcome::unattested(id, ProviderResult::Failed(error));
                 }
             };
-        let result = attested.result;
 
         // Budget honesty, axis 1 (§7, B2): frames that sum above the query
         // budget are a lie about `token_cost`. Drop them, report loudly.
@@ -524,9 +512,14 @@ impl Host {
         // runs on a set the `max_frames` audit above has already bounded — and
         // it can only *annotate* that set. F9: whatever it finds, these frames
         // are served.
-        let attestations = self
-            .trust
-            .check_result(&id, &result, &attested.attestations);
+        //
+        // Two ids again, as in `query_provider_attested`: `id` is the operator's
+        // local routing key, `signing_id` is the name this provider declared at
+        // handshake and signed under (§6.5.2). Matching evidence on `id` alone
+        // would silently read every attested frame as unattested whenever the
+        // two differ.
+        let signing_id = provider.info().name.clone();
+        let attestations = self.trust.check_result_signed_as(&id, &signing_id, &result);
 
         ProviderOutcome {
             provider_id: id,

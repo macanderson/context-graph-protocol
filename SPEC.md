@@ -568,14 +568,13 @@ conforming verifiers can disagree about is not evidence.
 
 #### 6.5.5 Carrying an attestation on the wire (F11–F13)
 
-**Where an attestation lives.**
+An attestation travels **beside** the thing it signs, never inside it (F6), and
+it reaches a verifier over two hops.
 
-An attestation travels **beside** the thing it signs, never inside it (F6).
-Two optional members carry it:
-
-* `handshake_ack.attester_keys` — the public keys the provider signs with. A
-  provider that publishes none offers no attestation, which is conformant.
-* `frames.attestations` — one entry per attested frame, naming its frame by id.
+**The key rides the handshake.** `handshake_ack.attester_keys` publishes the
+public keys the provider signs with. A provider that publishes none offers no
+attestation, which is conformant: §6.5 makes the *construction* mandatory and
+the signing optional.
 
 ```jsonc
 {
@@ -594,16 +593,16 @@ Two optional members carry it:
 A published key settles whether an attestation is **built** the way this section
 requires. It settles nothing about *who* signed: it comes from the party under
 audit. A deployment that needs the second answer resolves `key_id` against its
-own trust store and ignores what the handshake said.
+own trust store and ignores what the handshake said. It rides the handshake
+rather than the answer because a key republished with every response could be
+swapped by the same forgery that swapped the signature.
 
-Both members are optional additions within `contextgraph/1`, so a peer that
-knows nothing about them drops them and behaves exactly as it did before (§13
-U1).
-
-**What the result carries.** A `frames` envelope's `result` carries two optional
-members. Both are omitted when empty, so an unsigned answer is byte-identical to
-one from a provider written before attestation existed, and a 1.0 peer that
-ignores them still reads a signed answer as a valid answer (§13 U1).
+**The evidence rides the result.** A `frames` envelope's `result` carries two
+optional members, and the `frames` envelope itself carries **no** attestation
+member of its own. Both are omitted when empty, so an unsigned answer is
+byte-identical to one from a provider written before attestation existed, and a
+1.0 peer that ignores them still reads a signed answer as a valid answer
+(§13 U1).
 
 ```jsonc
 {
@@ -654,6 +653,13 @@ They sit on the **result** rather than on the envelope for the same reason
 transport. The envelope carries only `type` and the correlation `id`, and an
 in-process provider that returns a result with no envelope at all must still be
 able to sign what it serves.
+
+**There is exactly one home, and that is the point.** An earlier revision of
+this section also allowed an `attestations` member on the `frames` envelope, so
+one signed answer had two encodings and nothing said which won when they
+disagreed. Two encodings of one fact with no tie-breaking rule is the ambiguity
+this specification exists to remove, and it is gone: a receiver that encounters
+an envelope-level `attestations` member ignores it.
 
 **The identity is echoed in full, never implied by position.** A parallel array
 indexed against `frames` would be smaller and unusable: a provider that
