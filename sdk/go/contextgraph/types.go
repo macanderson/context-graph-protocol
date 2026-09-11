@@ -69,6 +69,17 @@ type Relation struct {
 	DisplayName string `json:"display_name,omitempty"`
 }
 
+// FrameEmbedding is a frame's vector, in the embedding space named by
+// Fingerprint. The vector payload itself is elidable — a provider may name the
+// space it embedded in without shipping the numbers — so Fingerprint is the
+// required half and Vector the optional one, exactly as
+// schema/contextgraph-envelope.schema.json declares and as the Rust
+// (Option<Vec<f32>>), TypeScript (vector?: number[]) and Python SDKs expose it.
+type FrameEmbedding struct {
+	Fingerprint string    `json:"fingerprint"`
+	Vector      []float64 `json:"vector,omitempty"`
+}
+
 // ContentRef is an opaque resolver handle for a compact/reference frame.
 type ContentRef struct {
 	ProviderID string `json:"provider_id"`
@@ -113,13 +124,27 @@ type ContextFrame struct {
 	RecordedAt               string       `json:"recorded_at,omitempty"`
 	Provenance               []Provenance `json:"provenance,omitempty"`
 	CitationLabel            string       `json:"citation_label,omitempty"`
-	Relations                []Relation   `json:"relations,omitempty"`
+	// Embedding is the field Rust, TypeScript and Python all carry and Go did
+	// not (#155). Its absence meant a Go provider could not express a frame's
+	// vector at all, and §E1 could not be probed against it.
+	Embedding *FrameEmbedding `json:"embedding,omitempty"`
+	Relations []Relation      `json:"relations,omitempty"`
 }
 
 // ContextQuery is a request to a provider for frames relevant to a goal.
 type ContextQuery struct {
-	Goal                      string    `json:"goal"`
-	QueryText                 string    `json:"query_text,omitempty"`
+	Goal      string `json:"goal"`
+	QueryText string `json:"query_text,omitempty"`
+	// Embedding is the query vector, and its *presence* is load-bearing:
+	// SPEC.md §E1 rejects a vector whose length contradicts the provider's
+	// declared embeddings_fingerprint dimension, and an empty vector has length
+	// 0, which contradicts every non-zero dimension. Use HasEmbedding to ask
+	// whether the host sent one — encoding/json leaves this nil for an absent
+	// or null `embedding` and gives it a non-nil zero-length slice for `[]`, so
+	// nil corresponds exactly to Rust's None and a present-but-empty vector is
+	// distinguishable from no vector at all. Testing len() alone silently
+	// accepts `"embedding": []`, which the Rust, TypeScript and Python
+	// implementations all reject.
 	Embedding                 []float64 `json:"embedding,omitempty"`
 	Kinds                     []string  `json:"kinds,omitempty"`
 	Anchors                   []string  `json:"anchors,omitempty"`
@@ -129,7 +154,27 @@ type ContextQuery struct {
 	RepresentationPreferences []string  `json:"representation_preferences,omitempty"`
 }
 
+// HasEmbedding reports whether the host sent an `embedding` field at all, as
+// distinct from sending an empty one. It is the Go spelling of Rust's
+// `query.embedding.is_some()`, TypeScript's `embedding !== undefined` and
+// Python's `embedding is not None` — the guard a §E1 dimension check belongs
+// behind, so an empty vector is rejected rather than waved through.
+//
+// (The `omitempty` on Embedding means a Go-built query re-encodes a
+// present-but-empty vector as absent. That direction never runs in a provider,
+// which only ever decodes queries, and dropping an empty vector loses no
+// information a provider could have used.)
+func (q ContextQuery) HasEmbedding() bool { return q.Embedding != nil }
+
 // ContextQueryResult is the response to a query.
+//
+// Frames is required on the wire and must be an array even when empty:
+// "I have nothing relevant" is a permitted answer, but `"frames": null` is a
+// deserialization error at a conforming host (the reference host declares
+// `Vec<ContextFrame>` with no serde default, and rejects null with
+// "invalid type: null, expected a sequence"). Go marshals a nil slice to null,
+// so the SDK normalizes a nil Frames to an empty slice on the way out — a
+// provider may return the zero value and be understood.
 type ContextQueryResult struct {
 	Frames          []ContextFrame `json:"frames"`
 	Truncated       bool           `json:"truncated"`
@@ -186,7 +231,9 @@ type VerifyRequest struct {
 	Frames []FrameID `json:"frames"`
 }
 
-// VerifyResponse is a provider's answer to a VerifyRequest.
+// VerifyResponse is a provider's answer to a VerifyRequest. Like
+// ContextQueryResult.Frames, Verdicts must be an array on the wire even when
+// empty; the SDK normalizes a nil Verdicts to an empty slice before writing.
 type VerifyResponse struct {
 	Verdicts []FrameVerdict `json:"verdicts"`
 }

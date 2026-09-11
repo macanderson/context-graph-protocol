@@ -78,7 +78,7 @@ func currentDigest(frameID string) (string, bool) {
 	}
 }
 
-func docFrame(id, title, content, file, rng string, score float64, digest string) cg.ContextFrame {
+func docFrame(id, title, content, file, rng, validFrom string, score float64, digest string) cg.ContextFrame {
 	return cg.ContextFrame{
 		ID:            id,
 		Kind:          "doc",
@@ -89,7 +89,7 @@ func docFrame(id, title, content, file, rng string, score float64, digest string
 		Score:         score,
 		// Honest cost: ceil(utf8_len(content)/4) (B3).
 		TokenCost:  cg.BudgetTokens(content),
-		ValidFrom:  "2026-01-01T00:00:00Z",
+		ValidFrom:  validFrom,
 		RecordedAt: "2026-07-20T18:00:00Z",
 		Provenance: []cg.Provenance{{
 			Type:   "file",
@@ -108,6 +108,30 @@ func docFrame(id, title, content, file, rng string, score float64, digest string
 			DisplayName: title + " overview",
 		}},
 	}
+}
+
+// retain keeps only the frames satisfying keep, preserving order — the Go
+// spelling of the reference provider's Vec::retain. It filters in place, so the
+// result is never nil even when nothing survives; the SDK normalizes that
+// anyway, but an honest empty answer starts here.
+func retain(frames []cg.ContextFrame, keep func(cg.ContextFrame) bool) []cg.ContextFrame {
+	kept := frames[:0]
+	for _, frame := range frames {
+		if keep(frame) {
+			kept = append(kept, frame)
+		}
+	}
+	return kept
+}
+
+// containsKind reports whether kinds names frame's kind.
+func containsKind(kinds []string, kind string) bool {
+	for _, candidate := range kinds {
+		if candidate == kind {
+			return true
+		}
+	}
+	return false
 }
 
 // isAnchored reports whether frame is anchored by any of anchors (SPEC.md §G4):
@@ -163,12 +187,17 @@ func (exampleDocsProvider) Query(query cg.ContextQuery) (cg.ContextQueryResult, 
 	// fingerprint dimension names a different vector space; scoring it would
 	// yield plausible-looking, meaningless similarity. An honest provider
 	// rejects it `bad_request` rather than pretending.
-	if n := len(query.Embedding); n > 0 && n != embeddingDimensions {
-		return cg.ContextQueryResult{}, cg.ProviderError{
+	//
+	// The test is presence, not length: an empty vector is length 0, which
+	// contradicts 384 exactly as 385 does. Rust, TypeScript and Python all
+	// reject `"embedding": []` for that reason, and HasEmbedding is what lets
+	// Go ask the same question.
+	if query.HasEmbedding() && len(query.Embedding) != embeddingDimensions {
+		return cg.ContextQueryResult{}, &cg.ProviderError{
 			Code: "bad_request",
 			Message: fmt.Sprintf(
 				"query embedding has %d dimensions; this provider indexes %d (%s) (§E1)",
-				n, embeddingDimensions, embeddingFingerprint,
+				len(query.Embedding), embeddingDimensions, embeddingFingerprint,
 			),
 		}
 	}
@@ -179,6 +208,8 @@ func (exampleDocsProvider) Query(query cg.ContextQuery) (cg.ContextQueryResult, 
 			"Install the reference binding, then implement the required provider methods.",
 			"getting-started.md",
 			"L1-40",
+			// Valid since the start of the year — before the as_of probe's pin.
+			"2026-01-01T00:00:00Z",
 			0.82,
 			gettingStartedDigest,
 		),
@@ -188,9 +219,24 @@ func (exampleDocsProvider) Query(query cg.ContextQuery) (cg.ContextQueryResult, 
 			"Providers declare their data-flow direction at the handshake so hosts can gate consent before sending any query.",
 			"configuration.md",
 			"L1-25",
+			// Became true only in the autumn — after the as_of probe's pin, so a
+			// mid-year pinned query must not see it. The reference fixture gives
+			// its two frames the same disjoint windows, for the same reason: a
+			// filter nothing can trip is a filter nothing checks.
+			"2026-09-01T00:00:00Z",
 			0.61,
 			configurationDigest,
 		),
+	}
+	// §Q1: a non-empty Kinds is a filter, not a hint. Returning a frame outside
+	// it spends the host's budget on content it explicitly excluded. Both canned
+	// frames here are `doc`, so a query narrowed to `snippet` — a kind this
+	// provider declares but does not currently serve — honestly answers with
+	// zero frames rather than with documents the host ruled out.
+	if len(query.Kinds) > 0 {
+		frames = retain(frames, func(frame cg.ContextFrame) bool {
+			return containsKind(query.Kinds, frame.Kind)
+		})
 	}
 	// §G4: a frame is anchored when its own URI, or any relation's TargetURI,
 	// equals one of the query's anchors. A graph-declaring provider ranks
@@ -202,6 +248,20 @@ func (exampleDocsProvider) Query(query cg.ContextQuery) (cg.ContextQueryResult, 
 			return isAnchored(frames[i], query.Anchors) && !isAnchored(frames[j], query.Anchors)
 		})
 	}
+	// §F4/§6.1: honour an as_of pin — content that was not yet true at the
+	// pinned instant is not returned. The timestamp profile admits one spelling
+	// per instant, so a lexicographic compare on the UTC strings is a
+	// chronological one.
+	if query.AsOf != "" {
+		frames = retain(frames, func(frame cg.ContextFrame) bool {
+			return frame.ValidFrom == "" || frame.ValidFrom <= query.AsOf
+		})
+	}
+	// Truncated stays false however many frames the filters dropped, matching
+	// the reference: truncation means the provider had more candidates than the
+	// *budget* fit, not that the host's own filter excluded some. Reporting a
+	// filtered-out frame as dropped would tell the host it is missing context it
+	// deliberately asked not to receive.
 	return cg.ContextQueryResult{Frames: frames, Truncated: false}, nil
 }
 

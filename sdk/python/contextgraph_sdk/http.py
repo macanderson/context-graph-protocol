@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 from typing import Any, Callable, Iterable
 
-from .provider import Provider, ProviderError
+from .provider import Provider, bad_request, error_envelope_for, payload_of
 from .types import PROTOCOL_VERSION
 
 
@@ -30,49 +30,73 @@ def handle_envelope(provider: Provider, envelope: dict[str, Any]) -> dict[str, A
     This is the whole protocol state machine, transport-free: hand it a decoded
     envelope from whatever web framework you use and serialize what it returns.
     It mirrors :func:`run_stdio_provider`'s per-line handling exactly --
-    including echoing a ``query``'s correlation ``id`` (H4) and catching a
-    :class:`ProviderError` into a coded ``error`` envelope (§E1) -- minus the
-    process lifecycle.
+    including echoing a ``query``'s correlation ``id`` (H4), answering a
+    :class:`ProviderError` with its own code (§E1), and answering any other
+    exception ``internal`` -- minus the process lifecycle.
+
+    It never raises for a fault inside ``provider``. That matters because
+    :func:`respond_to_body` is called from framework routes that have no outer
+    handler of their own: relying on the exception escaping would leave them
+    answering a 500 with no envelope, or nothing at all (``SPEC.md`` §11 R1).
     """
+    if not isinstance(envelope, dict):
+        return bad_request("request body was not a CGP envelope object")
+
     kind = envelope.get("type")
 
     if kind == "handshake":
-        return {
-            "type": "handshake_ack",
-            "protocol_version": PROTOCOL_VERSION,
-            "provider": provider.info(),
-            "capabilities": provider.capabilities(),
-        }
+        # `info()` and `capabilities()` are provider code and can raise; an
+        # unanswered handshake strands the host before the session starts.
+        try:
+            return {
+                "type": "handshake_ack",
+                "protocol_version": PROTOCOL_VERSION,
+                "provider": provider.info(),
+                "capabilities": provider.capabilities(),
+            }
+        except Exception as error:  # noqa: BLE001 - every fault becomes a reply
+            return error_envelope_for(error, "provider.info()/capabilities()")
 
     if kind == "query":
         echoed = envelope.get("id")
+        payload = payload_of(envelope, "query")
+        if payload is None:
+            return bad_request("query envelope is missing its `query` payload", echoed)
         try:
-            result = provider.query(envelope["query"])
-        except ProviderError as error:
-            # A deliberate, coded refusal of a request the provider can't
-            # honestly serve (§E1): an error envelope, not frames.
-            reply: dict[str, Any] = {"type": "error", "message": error.message}
-            if error.code is not None:
-                reply["code"] = error.code
-        else:
-            reply = {"type": "frames", "result": result}
+            result = provider.query(payload)
+        except Exception as error:  # noqa: BLE001 - every fault becomes a reply
+            # A ProviderError keeps its own code (§E1); anything else is
+            # answered `internal` and reported to stderr.
+            return error_envelope_for(error, "provider.query()", echoed)
+        reply: dict[str, Any] = {"type": "frames", "result": result}
         # Echo the correlation id so the host can match reply to request (H4).
         if echoed is not None:
             reply["id"] = echoed
         return reply
 
     if kind == "verify":
-        verify = getattr(provider, "verify", None)
-        if callable(verify):
-            response = verify(envelope["request"])
-        else:
-            # No verify support: vouch for nothing; the host re-queries.
-            response = {
-                "verdicts": [
-                    {"frame": frame, "status": "unknown"}
-                    for frame in envelope["request"]["frames"]
-                ]
-            }
+        echoed = envelope.get("id")
+        request = payload_of(envelope, "request")
+        if request is None or not isinstance(request.get("frames"), list):
+            return bad_request(
+                "verify envelope is missing its `request.frames` payload", echoed
+            )
+        try:
+            verify = getattr(provider, "verify", None)
+            if callable(verify):
+                response = verify(request)
+            else:
+                # No verify support: vouch for nothing; the host re-queries.
+                response = {
+                    "verdicts": [
+                        {"frame": frame, "status": "unknown"}
+                        for frame in request["frames"]
+                    ]
+                }
+        except Exception as error:  # noqa: BLE001 - every fault becomes a reply
+            # Identical stranded-host outcome to a failing query, so the
+            # identical answer.
+            return error_envelope_for(error, "provider.verify()", echoed)
         return {"type": "verified", "response": response}
 
     # `shutdown` ends the exchange but keeps the server alive for the next host;
