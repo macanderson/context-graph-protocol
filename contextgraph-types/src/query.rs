@@ -93,6 +93,29 @@ pub struct ContextQueryResult {
 }
 
 impl ContextQueryResult {
+    /// An answer carrying no detached evidence — what every provider that does
+    /// not sign returns.
+    ///
+    /// It exists so that adding [`frame_attestations`](Self::frame_attestations)
+    /// and [`result_attestation`](Self::result_attestation) to this struct is
+    /// not a rewrite for a caller that never signs anything. A struct literal
+    /// naming the first three fields stopped compiling when those two landed;
+    /// this constructor, and `..Default::default()` on a literal, are the two
+    /// ways to keep such a caller to a one-line change.
+    pub fn unattested(
+        frames: Vec<ContextFrame>,
+        truncated: bool,
+        dropped_estimate: Option<u32>,
+    ) -> Self {
+        Self {
+            frames,
+            truncated,
+            dropped_estimate,
+            frame_attestations: Vec::new(),
+            result_attestation: None,
+        }
+    }
+
     /// Sum of `token_cost` across returned frames — must never exceed the
     /// query's `max_tokens` for a conforming provider (checked in
     /// `contextgraph-conformance`, phase 3; this is the cheap client-side sanity
