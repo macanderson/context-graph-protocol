@@ -73,7 +73,7 @@ use async_trait::async_trait;
 use contextgraph_host::{
     ConsentRecord, ContextProvider, DigestVerification, Envelope, ExclusionReason,
     FrameDisposition, Host, HostError, PROTOCOL_VERSION, ProviderResult, StdioProvider,
-    compose_context, compose_for_prompt, verify_file_provenance,
+    compose_context, compose_for_prompt, rendered_token_cost, verify_file_provenance,
 };
 use contextgraph_types::capability::QueryCapability;
 use contextgraph_types::{
@@ -458,14 +458,17 @@ fn check_content_quoting() -> CheckResult {
 /// **without** dropping anything — so the check passes only if the audit
 /// **discriminates**, never by dropping everything or nothing.
 fn check_composition_audit() -> CheckResult {
-    // A 5-token composition budget. Costs are canonical (`budget_tokens`):
-    // "abcd" is 1 token, "shared evidence" (15 bytes) is 4, the 400-byte block
-    // is 100 — far over the budget.
-    let budget = 5u32;
     let dup_low = audit_frame("dup_low", "shared evidence", 0.30, "sha256:dup");
     let dup_high = audit_frame("dup_high", "shared evidence", 0.80, "sha256:dup");
     let cheap = audit_frame("cheap", "abcd", 0.95, "sha256:cheap");
     let huge = audit_frame("huge", &"x".repeat(400), 0.70, "sha256:huge");
+    // A budget that seats exactly the cheapest frame and nothing more. Derived
+    // from `rendered_token_cost` — what the packer charges, chrome included —
+    // rather than a literal keyed to the frames' content cost, which is only the
+    // inner part of the block. A hand-tuned constant here silently re-tunes the
+    // whole scenario the next time the fence changes shape, and the check would
+    // go on passing while testing something else.
+    let budget = rendered_token_cost("alpha", &cheap);
 
     // dup_low and dup_high are the *same evidence* (shared digest) from two
     // providers; huge is honestly costed but far over the budget.

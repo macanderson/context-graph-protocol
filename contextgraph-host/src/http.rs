@@ -28,6 +28,11 @@ use crate::wire::{
 /// Total per-request budget for an HTTP exchange (handshake or query).
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Largest response body the host will buffer from a remote provider, matching
+/// the stdio transport's `MAX_LINE_BYTES`. See [`read_bounded_body`] for why the
+/// remote transport needs the bound at least as much as the local one does.
+const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
+
 /// A bearer credential a host uses to authenticate to a remote provider.
 ///
 /// The secret is **never** rendered: both [`Debug`](fmt::Debug) and
@@ -183,6 +188,18 @@ impl HttpProvider {
         refuse_insecure_transport(&id, &url)?;
         let client = reqwest::Client::builder()
             .timeout(HTTP_TIMEOUT)
+            // Follow no redirects (C2/C4/C7). `refuse_insecure_transport` above
+            // classifies the *configured* URL, once, before any bytes move — but
+            // a redirect is chosen by the peer afterwards, so a client that
+            // followed one would let a provider route the query payload to a
+            // destination the pre-flight check structurally cannot see. A 307 or
+            // 308 preserves the method and the body, so the whole payload — goal,
+            // query text, anchors, embedding — would be re-POSTed to a `Location`
+            // of the provider's choosing: plaintext (C7), a different non-loopback
+            // peer than the one classified as egress (C4), and one named by no
+            // consent receipt (C2). A CGP endpoint is a single POST target; a 3xx
+            // from one is a misconfiguration to surface, not a route to take.
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|e| HostError::Transport {
                 id: id.clone(),
@@ -271,20 +288,111 @@ async fn post_envelope(
         return Err(HostError::Unauthorized { id: id.to_string() });
     }
 
-    if !response.status().is_success() {
+    // A redirect reaches here as a status rather than a followed hop, because
+    // the client is built with `Policy::none()`. Name it for what it is: an
+    // endpoint that answers a CGP POST with "go somewhere else" is misconfigured
+    // (or hostile), and reporting it as a generic transport failure would send an
+    // operator hunting a network fault instead of reading the `Location`.
+    if response.status().is_redirection() {
         let status = response.status();
-        let body = response.text().await.unwrap_or_default();
+        let location = response
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|value| value.to_str().ok())
+            .map(truncate_for_error)
+            .unwrap_or_else(|| "<none>".to_string());
         return Err(HostError::Transport {
             id: id.to_string(),
-            message: format!("HTTP {status}: {body}"),
+            message: format!(
+                "provider answered with HTTP {status} to {location}; redirects are not followed \
+                 (SPEC.md §4.2 C2/C4/C7 — a redirect would move the query payload to a peer the \
+                 transport never classified and consent never named). Configure the final URL."
+            ),
         });
     }
 
-    response.json::<Envelope>().await.map_err(|e| {
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = read_bounded_body(response, id).await.unwrap_or_default();
+        return Err(HostError::Transport {
+            id: id.to_string(),
+            message: format!(
+                "HTTP {status}: {}",
+                truncate_for_error(&String::from_utf8_lossy(&body))
+            ),
+        });
+    }
+
+    let body = read_bounded_body(response, id).await?;
+    serde_json::from_slice::<Envelope>(&body).map_err(|e| {
         HostError::Wire(format!(
             "provider {id} returned a non-envelope HTTP body: {e}"
         ))
     })
+}
+
+/// Read a response body into memory, refusing one that exceeds
+/// [`MAX_RESPONSE_BYTES`].
+///
+/// The stdio transport has bounded a provider's output since it shipped
+/// ([`MAX_LINE_BYTES`](crate::stdio)); the HTTP transport did not, which had the
+/// hardening exactly backwards. A stdio provider is a child process the host
+/// spawned from a path the user configured; an HTTP provider is a remote peer
+/// across a network the host does not control — the one §4.2 already treats as
+/// adversarial. `Response::json` and `Response::text` both buffer the whole body
+/// with no cap, so a hostile or failing peer could stream until the host died.
+/// `HTTP_TIMEOUT` bounds the *duration* of that stream, not its size, and a fast
+/// link moves a great deal in 30 seconds.
+///
+/// The limit is enforced incrementally over the chunk stream, so an oversized
+/// body is abandoned as soon as it crosses the line rather than after it has
+/// already been allocated.
+async fn read_bounded_body(
+    response: reqwest::Response,
+    id: &str,
+) -> Result<Vec<u8>, HostError> {
+    // Refuse on the advertised length first, when there is one: it costs nothing
+    // and avoids reading a single chunk of a body already declared too large.
+    if let Some(len) = response.content_length()
+        && len > MAX_RESPONSE_BYTES as u64
+    {
+        return Err(HostError::Wire(format!(
+            "provider {id} advertised a {len}-byte response, over the {MAX_RESPONSE_BYTES}-byte limit"
+        )));
+    }
+    let mut response = response;
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|e| HostError::Transport {
+        id: id.to_string(),
+        message: e.to_string(),
+    })? {
+        if body.len() + chunk.len() > MAX_RESPONSE_BYTES {
+            return Err(HostError::Wire(format!(
+                "provider {id} exceeded the {MAX_RESPONSE_BYTES}-byte response limit"
+            )));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+/// Clamp provider-controlled text before it is interpolated into a host error.
+///
+/// An error body is written by the peer, and a `HostError` string is logged,
+/// surfaced, and sometimes shipped to an operator's aggregator. Embedding an
+/// unbounded remote string in one turns a failing provider into a log-flooding
+/// primitive.
+fn truncate_for_error(text: &str) -> String {
+    const LIMIT: usize = 512;
+    if text.len() <= LIMIT {
+        return text.to_string();
+    }
+    // Clamp to a char boundary so the truncation cannot split a UTF-8 sequence.
+    let mut end = LIMIT;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}… ({} bytes truncated)", &text[..end], text.len() - end)
 }
 
 #[async_trait]
@@ -744,5 +852,146 @@ mod tests {
         };
         assert!(!insecure.to_string().contains(SECRET));
         assert!(!unauthorized.to_string().contains(SECRET));
+    }
+
+    /// **C2/C4/C7 — a provider must not be able to redirect the query payload
+    /// to a destination the host never vetted.**
+    ///
+    /// [`refuse_insecure_transport`] classifies the *configured* URL, once,
+    /// before the client is built. A redirect is decided by the peer afterwards,
+    /// so an HTTP client that follows one hands the provider a way to move the
+    /// bytes somewhere the pre-flight check structurally cannot see: a 307/308
+    /// preserves the method and the body, so the whole `query` payload — goal,
+    /// query text, anchors, embedding: workspace content — is re-POSTed to a
+    /// `Location` of the provider's choosing.
+    ///
+    /// That defeats three rules at once. **C7**, because the new target may be
+    /// plaintext `http://` on a remote host. **C4**, because it is a different
+    /// non-loopback peer than the one the transport classified as egress.
+    /// **C2**, because the consent receipt the host checked names the configured
+    /// provider, not wherever it was redirected to — the payload reaches a
+    /// destination with no recorded consent at all.
+    ///
+    /// The fix is to follow no redirects: a CGP endpoint is a single POST
+    /// target, and a 3xx from one is a misconfiguration to surface, never a
+    /// route to take.
+    #[tokio::test]
+    async fn a_provider_cannot_redirect_the_query_payload_to_an_unvetted_host() {
+        // The exfiltration endpoint: a peer the host never configured, never
+        // classified, and never took consent for.
+        let attacker = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(frames_body()))
+            .mount(&attacker)
+            .await;
+
+        // The configured provider: handshakes honestly, then redirects the
+        // query. A 307 preserves both the POST method and the request body.
+        let provider_server = MockServer::start().await;
+        let attacker_uri = attacker.uri();
+        Mock::given(method("POST"))
+            .respond_with(move |req: &wiremock::Request| {
+                match serde_json::from_slice::<Envelope>(&req.body) {
+                    Ok(Envelope::Handshake { .. }) => {
+                        ResponseTemplate::new(200).set_body_json(ack_body(PROTOCOL_VERSION))
+                    }
+                    _ => ResponseTemplate::new(307)
+                        .insert_header("location", attacker_uri.as_str()),
+                }
+            })
+            .mount(&provider_server)
+            .await;
+
+        let provider = HttpProvider::connect("remote", provider_server.uri())
+            .await
+            .expect("handshake ok");
+
+        // Whether the query succeeds or errors is beside the point. What must
+        // never happen is the payload arriving at the attacker.
+        let _ = provider.query(&sample_query()).await;
+
+        let leaked = attacker.received_requests().await.unwrap_or_default();
+        assert!(
+            leaked.is_empty(),
+            "the query payload was re-POSTed to an unvetted host via a provider-chosen \
+             redirect: {} request(s) reached it, body: {}",
+            leaked.len(),
+            String::from_utf8_lossy(&leaked[0].body)
+        );
+    }
+
+    /// A refused redirect is reported as the misconfiguration it is, naming the
+    /// `Location` — not as a generic transport fault, which would send an
+    /// operator hunting a network problem that isn't there.
+    #[tokio::test]
+    async fn a_refused_redirect_names_itself_and_its_target() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(308).insert_header("location", "https://elsewhere.test/q"),
+            )
+            .mount(&server)
+            .await;
+
+        // `HttpProvider` deliberately has no `Debug` (it holds a credential), so
+        // the error is unwrapped by match rather than `expect_err`.
+        let Err(error) = HttpProvider::connect("remote", server.uri()).await else {
+            panic!("a redirect is not a handshake");
+        };
+        let rendered = error.to_string();
+        assert!(rendered.contains("308"), "names the status: {rendered}");
+        assert!(
+            rendered.contains("https://elsewhere.test/q"),
+            "names the target the provider wanted: {rendered}"
+        );
+        assert!(
+            rendered.contains("redirects are not followed"),
+            "says why: {rendered}"
+        );
+    }
+
+    /// An oversized response body is refused rather than buffered. The stdio
+    /// transport has bounded provider output since it shipped; until this test
+    /// the *remote* transport — the adversarial one — had no bound at all.
+    #[tokio::test]
+    async fn an_oversized_response_body_is_refused_rather_than_buffered() {
+        let server = MockServer::start().await;
+        // One byte over the limit is enough to prove the bound is the bound.
+        let oversized = vec![b'x'; MAX_RESPONSE_BYTES + 1];
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(oversized))
+            .mount(&server)
+            .await;
+
+        let Err(error) = HttpProvider::connect("remote", server.uri()).await else {
+            panic!("an oversized body must not be buffered");
+        };
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains(&MAX_RESPONSE_BYTES.to_string()),
+            "the refusal names the limit it enforced: {rendered}"
+        );
+    }
+
+    /// A provider-written error body is clamped before it is interpolated into a
+    /// host error — a failing peer must not be a log-flooding primitive.
+    #[test]
+    fn a_provider_error_body_is_clamped_before_it_reaches_a_host_error() {
+        let short = "upstream index unavailable";
+        assert_eq!(truncate_for_error(short), short, "short bodies pass through");
+
+        let flood = "E".repeat(100_000);
+        let clamped = truncate_for_error(&flood);
+        assert!(clamped.len() < 700, "clamped to {} bytes", clamped.len());
+        assert!(
+            clamped.contains("bytes truncated"),
+            "the clamp is disclosed, never silent: {clamped}"
+        );
+
+        // Multi-byte text is clamped on a char boundary, never mid-sequence.
+        let multibyte = "文".repeat(10_000);
+        let clamped = truncate_for_error(&multibyte);
+        assert!(clamped.contains("bytes truncated"));
+        assert!(clamped.is_char_boundary(0));
     }
 }
