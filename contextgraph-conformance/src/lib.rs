@@ -954,6 +954,31 @@ async fn attestation_stdio_probe(program: &str, args: &[String]) -> CheckResult 
 
         match verify_frame_attestation(&info.name, frame, &entry.attestation, &key_bytes) {
             AttestationVerdict::Valid => verified.push(entry.frame_id.clone()),
+            // The signature checks out over a preimage that binds identity and
+            // provenance but says nothing about the frame's bytes, because the
+            // frame declared no `content_digest` (#128). `SPEC.md` §6.5.2
+            // requires a provider that signs a frame to populate one, so this
+            // is a conformance failure of the *attester*, not an unverifiable
+            // attestation.
+            //
+            // It is a problem rather than a degradation for that reason. The
+            // frame is servable and the signature is real; what is wrong is the
+            // claim a reader would take from it — a provider offering this is
+            // publishing a signature that outlives the content it appears to
+            // cover, and can re-serve different bytes under the same id
+            // tomorrow without disturbing it. Saying that here is the only
+            // place a provider author finds out before a consumer does.
+            AttestationVerdict::ValidIdentityOnly => {
+                problems.push(format!(
+                    "frame `{}` is signed but declares no `content_digest`, so the \
+                     signature binds its identity and provenance and nothing about its \
+                     content — the same id can be re-served with different bytes and \
+                     this signature still verifies. SPEC.md §6.5.2 requires an attester \
+                     to populate `content_digest` on any frame it signs",
+                    entry.frame_id
+                ));
+                degraded.push(entry.frame_id.clone());
+            }
             AttestationVerdict::UnknownAlgorithm(algorithm) => {
                 uncheckable.push(format!("{} (algorithm `{algorithm}`)", entry.frame_id));
                 degraded.push(entry.frame_id.clone());
