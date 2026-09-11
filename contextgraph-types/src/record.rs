@@ -31,10 +31,81 @@
 //! the record, never inside its hash preimage (reconciliation row C5).
 
 use std::collections::BTreeMap;
+use std::fmt;
 
-use serde::{Deserialize, Serialize};
+use serde::de::{MapAccess, Visitor};
+use serde::ser::SerializeMap;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::extension::{ExtensionValue, take_or_ignore};
 use crate::validate::{is_protocol_timestamp, is_well_formed_digest};
+
+/// Every member name this crate's record types put on the wire: the envelope's
+/// own members, `record_kind`, and the union of the twelve
+/// [`RecordBody`] variants' members. Sorted, so membership is a binary search.
+///
+/// This is the complement of [`ContextRecord::extra`]: a member named here is
+/// *protocol vocabulary* that some reference field already carries, and a
+/// member not named here is an extension member `extra` preserves verbatim.
+///
+/// Splitting the two on a name list is exact rather than approximate, for a
+/// reason the spec supplies: `SPEC.md` §13 U3 reserves unprefixed names in
+/// these vocabularies to the protocol and requires every vendor member to be
+/// namespaced (`vendor:name`). No name below contains a `:`, so no conforming
+/// extension member can collide with one — `reserved_members_are_sorted_unique_and_unnamespaced`
+/// and `reserved_members_are_exactly_what_the_types_emit` hold that true as the
+/// types change.
+pub const RESERVED_RECORD_MEMBERS: &[&str] = &[
+    "assessment",
+    "cited",
+    "confidence",
+    "constraint_effect",
+    "context_use_ref",
+    "contract_name",
+    "contract_ref",
+    "directive_kind",
+    "enforcement",
+    "evidence_kind",
+    "evidence_links",
+    "extensions",
+    "feedback",
+    "from_status",
+    "knowledge_kind",
+    "lineage_id",
+    "observed_at",
+    "origin",
+    "outcome",
+    "procedure_steps",
+    "proposed_kind",
+    "provenance",
+    "rating",
+    "rationale",
+    "record_hash",
+    "record_id",
+    "record_kind",
+    "record_links",
+    "record_status",
+    "rendered",
+    "requirement_results",
+    "requirements",
+    "salience",
+    "schema_version",
+    "scope",
+    "selected",
+    "sensitivity",
+    "sharing_scope",
+    "statement",
+    "subject_ref",
+    "task_ref",
+    "to_status",
+    "used_record_ref",
+    "valid_from",
+];
+
+/// Whether `name` is protocol vocabulary rather than an extension member.
+pub fn is_reserved_record_member(name: &str) -> bool {
+    RESERVED_RECORD_MEMBERS.binary_search(&name).is_ok()
+}
 
 /// The profile version every `ContextRecord.schema_version` names. Distinct
 /// from the wire [`PROTOCOL_VERSION`](crate::PROTOCOL_VERSION)
@@ -503,13 +574,99 @@ pub struct ContextRecord {
     pub record_hash: String,
     /// Structured provenance (row C5).
     pub provenance: RecordProvenance,
-    /// Namespaced extension members (SPEC.md §13 U3). The reference type models
-    /// the common string-valued case; the wire schema permits an open object.
+    /// Namespaced extension members (SPEC.md §13 U3, profile LR7). An **open
+    /// object**, exactly as `schema/contextgraph-lifecycle-record.schema.json`
+    /// declares it: the value of a member is any JSON value, not only a string.
+    /// Modelling only the string-valued case made a schema-valid record with,
+    /// say, `{"acme:retries": 3}` fail to deserialize at all — a conforming
+    /// receiver could not so much as read it, let alone relay it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub extensions: Option<BTreeMap<String, String>>,
+    pub extensions: Option<BTreeMap<String, ExtensionValue>>,
     /// The flat, `record_kind`-discriminated body.
     #[serde(flatten)]
     pub body: RecordBody,
+    /// Every **other** top-level member of the wire record — anything this
+    /// crate's reference types do not model — preserved verbatim.
+    ///
+    /// `SPEC.md` §13 U1 tells a receiver to ignore members it does not
+    /// recognise. Ignoring is not discarding: a record is content-addressed
+    /// (profile LH1), so a host that parses an extended record, drops the
+    /// member it did not understand, and re-hashes computes a **different**
+    /// identity for the same record. Keeping the member here is what makes
+    /// [`record_hash_of`](crate::record_attest::record_hash_of) of a parsed
+    /// record equal [`record_hash`](crate::record_attest::record_hash) of the
+    /// bytes it was parsed from, for every record the profile permits.
+    ///
+    /// Empty for the overwhelmingly common case, and an empty map flattens to
+    /// no members at all, so an ordinary record's bytes are untouched by this
+    /// field's existence.
+    ///
+    /// Members named in [`RESERVED_RECORD_MEMBERS`] never land here and are
+    /// never written from here — they belong to the envelope or the body, and
+    /// emitting one from both would put a duplicate name on the wire.
+    #[serde(
+        flatten,
+        default,
+        deserialize_with = "deserialize_extra",
+        serialize_with = "serialize_extra"
+    )]
+    pub extra: BTreeMap<String, ExtensionValue>,
+}
+
+/// Collect the record's unmodelled members, discarding the ones the envelope
+/// and the body already carry.
+///
+/// Both this and [`ContextRecord::body`] are `#[serde(flatten)]`, and serde
+/// hands *every* leftover member to *each* flattened field — a flattened
+/// internally-tagged enum does not mark the members it consumed as used. A
+/// plain `BTreeMap` catch-all therefore swallows the body's own members and
+/// re-emits them, putting duplicate names on the wire. Filtering on
+/// [`is_reserved_record_member`] is what keeps the two flattened fields
+/// disjoint.
+fn deserialize_extra<'de, D>(deserializer: D) -> Result<BTreeMap<String, ExtensionValue>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct ExtraVisitor;
+
+    impl<'de> Visitor<'de> for ExtraVisitor {
+        type Value = BTreeMap<String, ExtensionValue>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("the record's remaining members")
+        }
+
+        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+            let mut extra = BTreeMap::new();
+            while let Some(name) = map.next_key::<String>()? {
+                let keep = !is_reserved_record_member(&name);
+                if let Some(value) = take_or_ignore(&mut map, keep)? {
+                    extra.insert(name, value);
+                }
+            }
+            Ok(extra)
+        }
+    }
+
+    deserializer.deserialize_map(ExtraVisitor)
+}
+
+/// Write the unmodelled members back, skipping any name the envelope or the
+/// body also emits so a hand-built `extra` can never produce a duplicate.
+fn serialize_extra<S>(
+    extra: &BTreeMap<String, ExtensionValue>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let mut map = serializer.serialize_map(None)?;
+    for (name, value) in extra {
+        if !is_reserved_record_member(name) {
+            map.serialize_entry(name, value)?;
+        }
+    }
+    map.end()
 }
 
 impl ContextRecord {
@@ -618,6 +775,7 @@ mod tests {
             },
             extensions: None,
             body,
+            extra: BTreeMap::new(),
         }
     }
 

@@ -52,8 +52,8 @@ func docFrame(id, title, content, file, rng string, score float64, digest string
 		ID:            id,
 		Kind:          "doc",
 		Title:         title,
-		Content:       content,
-		ContentDigest: digest,
+		Content:       cg.Ptr(content),
+		ContentDigest: cg.Ptr(digest),
 		URI:           "file:///docs/" + file,
 		Score:         score,
 		// Honest cost: ceil(utf8_len(content)/4) (B3).
@@ -62,10 +62,10 @@ func docFrame(id, title, content, file, rng string, score float64, digest string
 		RecordedAt: "2026-07-20T18:00:00Z",
 		Provenance: []cg.Provenance{{
 			Type:   "file",
-			URI:    "file:///docs/" + file,
-			Range:  rng,
-			Digest: digest,
-			By:     "contextgraph-go-example-docs-http",
+			URI:    cg.Ptr("file:///docs/" + file),
+			Range:  cg.Ptr(rng),
+			Digest: cg.Ptr(digest),
+			By:     cg.Ptr("contextgraph-go-example-docs-http"),
 		}},
 		CitationLabel: file + " " + rng,
 		Relations: []cg.Relation{{
