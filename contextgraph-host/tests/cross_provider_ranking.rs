@@ -8,6 +8,7 @@
 use contextgraph_host::{
     ComposedPrompt, ExclusionReason, FrameDisposition, PerProviderQuota, RankingStrategy,
     RoundRobinByRank, ScoreDescending, compose_for_prompt_with, is_ranking_permutation, rank_with,
+    rendered_token_cost,
 };
 use contextgraph_types::{ContextFrame, FrameKind, budget_tokens};
 
@@ -104,9 +105,12 @@ fn starvation_shows_up_in_the_composed_prompt_under_a_real_budget() {
     // budget, one frame set, two policies, and the conservative provider
     // is either cited or it is not.
     //
-    // Four frames fit (each is one token of content under the canonical
-    // accounting), so `score` ordering spends the entire budget on `sem`.
-    let budget: u32 = 4;
+    // Four frames fit, so `score` ordering spends the entire budget on `sem`.
+    // The budget is derived from what the packer actually charges — the whole
+    // rendered block, chrome included — rather than from the frames' content
+    // cost, which is only part of it. Every frame here renders to the same size,
+    // so four of anything is four of everything.
+    let budget: u32 = 4 * rendered_token_cost("sem", &generous_and_conservative()[0].1);
     let providers_cited = |composed: &ComposedPrompt| -> Vec<String> {
         let mut seen: Vec<String> = composed
             .citations
@@ -427,7 +431,7 @@ fn no_strategy_can_select_a_set_that_exceeds_the_budget() {
             let resum: u32 = frames
                 .iter()
                 .filter(|(p, f)| included.contains(&f.identity(p)))
-                .map(|(_, f)| f.expected_inline_token_cost())
+                .map(|(p, f)| rendered_token_cost(p, f))
                 .sum();
             assert_eq!(audit.tokens_used, resum, "iter {iter}");
             // Nothing is excluded for a reason the packer did not record.

@@ -201,6 +201,22 @@ impl TrustStore {
         frame: &ContextFrame,
         attestation: &ProvenanceAttestation,
     ) -> AttestationState {
+        self.check_signed_as(provider_id, provider_id, frame, attestation)
+    }
+
+    /// [`check`](Self::check) with the trust-lookup id and the signing id told
+    /// apart. See [`check_result_signed_as`](Self::check_result_signed_as) for
+    /// why a host needs both: `local_id` decides *whose key may sign this*, and
+    /// `signing_id` — the handshake-declared `provider.name` — decides *what
+    /// bytes were signed* (`SPEC.md` §6.5.2).
+    pub fn check_signed_as(
+        &self,
+        local_id: &str,
+        signing_id: &str,
+        frame: &ContextFrame,
+        attestation: &ProvenanceAttestation,
+    ) -> AttestationState {
+        let provider_id = local_id;
         // F8, first: a scheme this build cannot check is *uncheckable*, which is
         // a different finding from invalid and is not improved by holding a key.
         if attestation.algorithm != ALGORITHM_ED25519 {
@@ -249,7 +265,10 @@ impl TrustStore {
         // written, and a single source of truth is what keeps them agreeing:
         // the rule for what a commitment binds lives in `frame_commitment`, and
         // this is downstream of it (#128).
-        match verify_frame_attestation(provider_id, frame, attestation, &public_key) {
+        // The commitment is recomputed with `signing_id`, never `local_id`: the
+        // preimage §6.5.2 defines contains the name the provider declared, which
+        // is the only provider identifier both ends of the wire observe.
+        match verify_frame_attestation(signing_id, frame, attestation, &public_key) {
             verdict @ (AttestationVerdict::Valid | AttestationVerdict::ValidIdentityOnly) => {
                 AttestationState::Attested {
                     key_id: attestation.key_id.clone(),
@@ -289,6 +308,58 @@ impl TrustStore {
         provider_id: &str,
         result: &ContextQueryResult,
     ) -> Vec<FrameAttestationOutcome> {
+        self.check_result_signed_as(provider_id, provider_id, result)
+    }
+
+    /// [`check_result`](Self::check_result) with the two provider identities
+    /// told apart: `local_id` is the host's own key for this provider, and
+    /// `signing_id` is the name the provider signs under.
+    ///
+    /// # Why there are two
+    ///
+    /// `SPEC.md` §6.5.2 puts the provider id inside the signed preimage, and is
+    /// explicit about *which* id: the handshake-declared `provider.name`, because
+    /// a host's local id "is not a string the provider ever sees — so it is not
+    /// one a provider could sign against". A host that recomputes the commitment
+    /// with its own local id gets a different preimage and therefore a different
+    /// digest, and reports [`AttestationVerdict::CommitmentMismatch`] — the
+    /// verdict §6.5.4 reserves for *a frame that changed after signing*. An
+    /// operator who merely named the provider something else in their config
+    /// would be handed a tampering incident over honest evidence.
+    ///
+    /// The two ids cannot be collapsed in the other direction either. Trust is
+    /// keyed on `local_id` because that is the id the *operator* chose, in the
+    /// same act as the consent grant; keying it on the declared name would let a
+    /// provider claim another's trusted key by declaring its name, which is the
+    /// substitution the identity binding exists to prevent. So the local id
+    /// answers "whose key may sign this?" and the declared name answers "what
+    /// bytes were signed?" — different questions with different right answers.
+    ///
+    /// # The same split decides matching, not only verifying
+    ///
+    /// A provider has no notion of this host's local routing id, so every
+    /// [`FrameAttestation::frame`] it puts on the wire is built from the same
+    /// name it signs under (the reference provider builds both from its one
+    /// `attestation_provider_id()`). Matching `offered` against
+    /// `frame.identity(local_id)` would therefore miss every entry whenever an
+    /// operator's config id differs from the provider's declared name — the
+    /// same false negative this split exists to close, one layer above the
+    /// signature check itself. The lookup key is `frame.identity(signing_id)`
+    /// for that reason.
+    ///
+    /// The **returned** [`FrameId`]s are keyed by `local_id`, not
+    /// `signing_id`: [`FrameId::provider_id`] is documented as "the same
+    /// routing/consent key the host registered it under", and it is the id
+    /// the rest of the composition path (`compose.rs`, `usage_report`) already
+    /// builds its own `FrameId`s from. Echoing `signing_id` here instead would
+    /// desynchronize this ledger from every other identity the host emits for
+    /// the same frame.
+    pub fn check_result_signed_as(
+        &self,
+        local_id: &str,
+        signing_id: &str,
+        result: &ContextQueryResult,
+    ) -> Vec<FrameAttestationOutcome> {
         let mut offered: HashMap<&FrameId, &FrameAttestation> = HashMap::new();
         for entry in result.frame_attestations.iter().take(result.frames.len()) {
             // First entry wins: a flood of duplicates for one frame cannot
@@ -304,11 +375,13 @@ impl TrustStore {
                 // alone: two frames sharing an id but not a digest are
                 // different bytes, and handing the first one's evidence to the
                 // second is the substitution the binding exists to prevent
-                // (`SPEC.md` §6.5.2).
-                let identity = frame.identity(provider_id);
-                let state = match offered.get(&identity) {
+                // (`SPEC.md` §6.5.2). Built from `signing_id` — see this
+                // method's doc comment for why.
+                let signing_identity = frame.identity(signing_id);
+                let state = match offered.get(&signing_identity) {
                     Some(entry) => self.check_entry(
-                        provider_id,
+                        local_id,
+                        signing_id,
                         frame,
                         entry,
                         result.result_attestation.as_ref(),
@@ -316,7 +389,9 @@ impl TrustStore {
                     None => AttestationState::Unattested,
                 };
                 FrameAttestationOutcome {
-                    frame: identity,
+                    // Built from `local_id`, deliberately different from the
+                    // lookup key above — see this method's doc comment.
+                    frame: frame.identity(local_id),
                     state,
                 }
             })
@@ -337,16 +412,19 @@ impl TrustStore {
     /// and checking it costs one verification rather than a walk plus one.
     fn check_entry(
         &self,
-        provider_id: &str,
+        local_id: &str,
+        signing_id: &str,
         frame: &ContextFrame,
         entry: &FrameAttestation,
         result_attestation: Option<&ProvenanceAttestation>,
     ) -> AttestationState {
         if let Some(attestation) = &entry.attestation {
-            return self.check(provider_id, frame, attestation);
+            return self.check_signed_as(local_id, signing_id, frame, attestation);
         }
         match (&entry.inclusion_proof, result_attestation) {
-            (Some(proof), Some(root)) => self.check_inclusion(provider_id, frame, proof, root),
+            (Some(proof), Some(root)) => {
+                self.check_inclusion(local_id, signing_id, frame, proof, root)
+            }
             // A proof of membership of a root the answer never carried, or an
             // entry naming a frame and asserting nothing about it. Neither can
             // be turned into a check, and F9 makes that a degradation to
@@ -364,9 +442,16 @@ impl TrustStore {
     /// untrusted peer from spending this host's CPU walking a Merkle path —
     /// reaching the walk at all requires an operator to have trusted a key
     /// under the root attestation's exact `key_id`.
+    /// [`check_inclusion`](Self::check_inclusion) — same two-id split as
+    /// [`check_signed_as`](Self::check_signed_as) and for the same reason:
+    /// `local_id` keys the trust lookup, `signing_id` recomputes the root
+    /// (`frame_commitment` inside [`verify_frame_inclusion`]), because the
+    /// root was built over commitments the provider signed under its own
+    /// declared name.
     fn check_inclusion(
         &self,
-        provider_id: &str,
+        local_id: &str,
+        signing_id: &str,
         frame: &ContextFrame,
         proof: &InclusionProof,
         root: &ProvenanceAttestation,
@@ -376,7 +461,7 @@ impl TrustStore {
                 algorithm: echoed(&root.algorithm),
             };
         }
-        let Some(key) = self.key(provider_id, &root.key_id) else {
+        let Some(key) = self.key(local_id, &root.key_id) else {
             return AttestationState::NoTrustedKey {
                 key_id: echoed(&root.key_id),
             };
@@ -401,7 +486,7 @@ impl TrustStore {
         // the reason `check` gives: the rule for what a commitment binds lives
         // in `frame_commitment`, and both call sites stay downstream of it
         // (#128).
-        match verify_frame_inclusion(provider_id, frame, proof, root, &public_key) {
+        match verify_frame_inclusion(signing_id, frame, proof, root, &public_key) {
             verdict @ (AttestationVerdict::Valid | AttestationVerdict::ValidIdentityOnly) => {
                 AttestationState::Attested {
                     key_id: root.key_id.clone(),
@@ -926,6 +1011,60 @@ mod tests {
         assert_eq!(outcomes[1].state, AttestationState::Unattested);
     }
 
+    /// **The result-level match survives the same split the single-attestation
+    /// check does.** A provider builds `FrameAttestation.frame` from its own
+    /// declared name — it has no other identity to build it from — so an
+    /// operator whose local config id differs from that name must still see
+    /// the evidence matched, not silently dropped to `Unattested`. This is
+    /// `check_result_signed_as`'s half of #161's fix; the single-attestation
+    /// half is
+    /// `a_local_id_that_differs_from_the_declared_name_still_verifies` above.
+    #[test]
+    fn a_result_matches_evidence_built_under_the_declared_name_even_when_the_local_id_differs() {
+        const DECLARED: &str = "acme-docs";
+        const LOCAL: &str = "docs-1";
+        let served = frame("frm_1");
+        let attestation = sign_frame_attestation(
+            DECLARED,
+            &served,
+            &SEED,
+            KEY_ID,
+            DECLARED,
+            "2026-08-29T00:00:00Z",
+        );
+        // The wire identity is built from `DECLARED`, exactly as the reference
+        // provider builds it — from its own `attestation_provider_id()`, which
+        // is the only identity it has for itself.
+        let result = ContextQueryResult {
+            frame_attestations: vec![FrameAttestation::signed(
+                served.identity(DECLARED),
+                attestation,
+            )],
+            ..ContextQueryResult::unattested(vec![served.clone()], false, None)
+        };
+
+        let mut store = TrustStore::new();
+        store.trust(
+            LOCAL,
+            TrustedKey::ed25519_bytes(KEY_ID, &public_key_for(&SEED)),
+        );
+
+        let outcomes = store.check_result_signed_as(LOCAL, DECLARED, &result);
+        assert_eq!(outcomes.len(), 1);
+        assert!(
+            outcomes[0].state.is_attested(),
+            "matching must key on the declared name the provider actually used \
+             on the wire, got {:?}",
+            outcomes[0].state
+        );
+        assert_eq!(
+            outcomes[0].frame,
+            served.identity(LOCAL),
+            "the returned FrameId is keyed by the operator's local id, matching \
+             the rest of the composition path"
+        );
+    }
+
     #[test]
     fn an_attestation_naming_a_frame_that_is_not_in_the_result_is_ignored() {
         let served = frame("frm_served");
@@ -1292,6 +1431,57 @@ mod tests {
         assert_eq!(
             ledger.state_for(&one.identity("elsewhere")),
             AttestationState::NotChecked
+        );
+    }
+
+    /// **An operator's choice of local name must not read as tampering.**
+    ///
+    /// The provider signs over its handshake-declared `provider.name` (§6.5.2 —
+    /// the only provider id it can possibly know). The operator registered it in
+    /// their host config under a different local id, and trusted its key there.
+    /// Recomputing the commitment with the *local* id yields a different
+    /// preimage and so `CommitmentMismatch` — the verdict §6.5.4 reserves for a
+    /// frame altered after signing. Every test in this module used one string
+    /// for both roles, so nothing distinguished them until now.
+    #[test]
+    fn a_local_id_that_differs_from_the_declared_name_still_verifies() {
+        const DECLARED: &str = "acme-docs";
+        const LOCAL: &str = "docs-1";
+        let frame = frame("frm");
+        let attestation = sign_frame_attestation(
+            DECLARED,
+            &frame,
+            &SEED,
+            KEY_ID,
+            DECLARED,
+            "2026-08-29T00:00:00Z",
+        );
+
+        // The operator trusts the key under the id they configured, which is the
+        // id they also granted consent under.
+        let mut store = TrustStore::new();
+        store.trust(
+            LOCAL,
+            TrustedKey::ed25519_bytes(KEY_ID, &public_key_for(&SEED)),
+        );
+
+        let state = store.check_signed_as(LOCAL, DECLARED, &frame, &attestation);
+        assert!(
+            state.is_attested(),
+            "an honest signature must verify regardless of what the operator \
+             named the provider locally, got {state:?}"
+        );
+        assert!(
+            state.covers_content(),
+            "the frame declares a content_digest"
+        );
+
+        // The trust lookup still keys on the local id: a provider cannot reach a
+        // key by *declaring* the name it was trusted under.
+        let impostor = store.check_signed_as(DECLARED, DECLARED, &frame, &attestation);
+        assert!(
+            matches!(impostor, AttestationState::NoTrustedKey { .. }),
+            "no key is trusted under the declared name, got {impostor:?}"
         );
     }
 }

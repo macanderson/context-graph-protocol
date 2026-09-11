@@ -29,7 +29,7 @@
 
 pub mod ranking;
 
-use contextgraph_types::{ContextFrame, FrameId, Provenance};
+use contextgraph_types::{ContextFrame, FrameId, Provenance, budget_tokens};
 
 use crate::provider::frame_kind_name;
 use crate::trust::{AttestationLedger, AttestationState};
@@ -87,6 +87,28 @@ fn render_frame(provider_id: &str, frame: &ContextFrame) -> String {
         // as empty rather than fabricating bytes.
         content = neutralize_fence_tokens(frame.content.as_deref().unwrap_or_default()),
     )
+}
+
+/// What composing a frame actually costs: the canonical token count of the
+/// whole block it renders as, chrome included.
+///
+/// This is the quantity [`compose_for_prompt`] budgets against, and it is
+/// deliberately *not* [`ContextFrame::expected_inline_token_cost`]. That one is
+/// the §B3 canonical cost of `content` — the right rule for auditing a
+/// provider's declared `token_cost`, because `content` is the one field whose
+/// exact bytes both sides observe. It is the wrong rule for packing a prompt:
+/// §F2 and §F3 oblige the host to render a `title` and a `citation_label`, both
+/// provider-controlled and neither counted by §B3, so a frame with empty content
+/// is honestly worth `token_cost: 0` and can still contribute an unbounded
+/// number of real tokens. §7.2 already assigns the chrome to the host ("the
+/// host's rendering chrome is the host's cost to budget"); this is the host
+/// paying it.
+///
+/// Public because a host that packs frames itself needs the same number the
+/// reference packer uses — deriving it independently is how two hosts end up
+/// disagreeing about whether a frame fits.
+pub fn rendered_token_cost(provider_id: &str, frame: &ContextFrame) -> u32 {
+    budget_tokens(&render_frame(provider_id, frame))
 }
 
 /// Neutralize any `<frame …>` / `</frame>` token *inside* frame content, so
@@ -727,7 +749,25 @@ where
     for (provider_id, frame) in ranked {
         let id = frame.identity(&provider_id);
         let attestation = attestations.state_for(&id);
-        let cost = frame.expected_inline_token_cost();
+        // Charge the cost of the block this frame will actually render as, not
+        // the cost of its `content` alone.
+        //
+        // §B3 anchors a provider's declared `token_cost` to `content` — the one
+        // field whose exact bytes both sides observe — and §7.2 says plainly that
+        // the host's rendering chrome is "the host's cost to budget". The packer
+        // was not paying it. But `title` and `citation_label` are
+        // *provider*-controlled bytes that §F2/§F3 oblige the host to render, so
+        // a frame with empty content declared an honest `token_cost: 0` and then
+        // contributed an unbounded number of real tokens to the prompt: 40 KiB of
+        // citation label cost 10,359 budget tokens against a budget of 64, with
+        // the audit reporting 0 spent. Every §7 rule held; the budget did not.
+        //
+        // Charging the rendered block closes it for every representation at once
+        // — including a `reference` frame, whose §P4 `token_cost: 0` is honest
+        // about its (absent) content and silent about its fence and attributes.
+        // The render is pure, so this stays deterministic: the same frame set
+        // still packs and composes to the same bytes.
+        let cost = rendered_token_cost(&provider_id, &frame);
         let remaining = global_budget.saturating_sub(tokens_used);
         if cost <= remaining {
             tokens_used += cost;
@@ -1008,6 +1048,14 @@ mod compose_module_tests {
         frame
     }
 
+    /// What the packer charges for a frame: the cost of the block it renders as,
+    /// chrome included. Not `expected_inline_token_cost`, which counts `content`
+    /// alone and so let a provider put unbudgeted bytes in `title`/`citation_label`
+    /// (see the packing loop in [`compose_for_prompt_with`]).
+    fn rendered_cost(provider_id: &str, frame: &ContextFrame) -> u32 {
+        rendered_token_cost(provider_id, frame)
+    }
+
     fn file_prov(uri: &str, range: Option<&str>) -> Provenance {
         Provenance {
             kind: "file".into(),
@@ -1210,9 +1258,14 @@ mod compose_module_tests {
         // the host-conformance check drives.
         let dup_low = mk("d1", "shared big evidence block", 0.30, Some("sha256:dup"));
         let dup_high = mk("d2", "shared big evidence block", 0.80, Some("sha256:dup"));
-        let cheap = mk("c", "abcd", 0.90, Some("sha256:c")); // 1 token
-        let huge = mk("h", &"x".repeat(400), 0.70, Some("sha256:h")); // 100 tokens
-        let budget = 5;
+        let cheap = mk("c", "abcd", 0.90, Some("sha256:c"));
+        let huge = mk("h", &"x".repeat(400), 0.70, Some("sha256:h"));
+        // Budget exactly the cheapest frame's *rendered* block, so the ranking
+        // admits it and nothing else fits. Derived rather than a literal: the
+        // packer charges the rendered cost (chrome included), and a hand-tuned
+        // constant here would silently re-tune the scenario the next time the
+        // fence changes shape.
+        let budget = rendered_cost("alpha", &cheap);
         let composed = compose_for_prompt(
             [
                 ("alpha", &dup_low),
@@ -1277,16 +1330,17 @@ mod compose_module_tests {
                     ))
         );
 
-        // tokens_used equals an independent re-sum of the included canonical costs.
+        // tokens_used equals an independent re-sum of the included frames'
+        // rendered costs — the same quantity the packer charged.
         let independent: u32 = composed
             .citations
             .iter()
             .map(|c| {
                 // Recover each included frame by identity to re-sum its cost.
                 if c.frame == cheap.identity("alpha") {
-                    cheap.expected_inline_token_cost()
+                    rendered_cost("alpha", &cheap)
                 } else if c.frame == dup_high.identity("beta") {
-                    dup_high.expected_inline_token_cost()
+                    rendered_cost("beta", &dup_high)
                 } else {
                     0
                 }
@@ -1380,7 +1434,7 @@ mod compose_module_tests {
             let mut resum = 0u32;
             for (provider, frame) in &frames {
                 if included.contains(&&frame.identity(provider)) {
-                    resum += frame.expected_inline_token_cost();
+                    resum += rendered_cost(provider, frame);
                 }
             }
             assert_eq!(

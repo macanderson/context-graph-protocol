@@ -229,7 +229,7 @@ content it explicitly excluded.
 Q1 is a filter, not a ranking rule: it says which frames are *eligible*, and
 leaves ordering provider-private like the rest of §5.
 
-### 5.1 Embedding space (E1)
+### 5.2 Embedding space (E1)
 
 | # | Requirement |
 | - | ----------- |
@@ -838,6 +838,18 @@ content is what goes into a prompt.
 | **G3** | A provider declaring `capabilities.graph` **SHOULD** boost frames within a small number of relation hops of a query `anchor`. | `anchor-relevance` |
 | **G4** | A frame is **anchored** by an anchor URI when its own `uri` equals that anchor (zero hops), or any of its `relations[].target_uri` does (one hop). A provider declaring `capabilities.graph` and given a non-empty `anchors` **MUST** return at least one anchored frame when it has one to serve, and **SHOULD** rank anchored frames above unanchored ones. | `anchor-relevance` |
 
+### 8.1 Relation vocabulary (SHOULD)
+
+The `rel` vocabulary is **open** — a host **MUST NOT** reject an unknown value.
+These names are published so independent providers converge instead of each
+inventing `calls` / `call` / `code.call`:
+
+`code.calls` · `code.imports` · `code.defines` · `code.references` ·
+`doc.documents` · `episode.follows`
+
+Provider-specific edges belong under their own namespace (`myindex.owns`), which
+keeps the shared namespace meaningful.
+
 ### 8.2 Why anchoring needed a definition (G4)
 
 G3 said providers should "boost frames within a small number of relation hops of
@@ -853,18 +865,6 @@ G4 gives "anchored" a decidable predicate — string equality on URIs, at zero o
 one hop — so the SHOULD in G3 becomes something a suite can actually witness.
 Deeper traversal stays provider-private: G4 is a floor on what must be *found*,
 not a ceiling on how hard a provider may look.
-
-### 8.1 Relation vocabulary (SHOULD)
-
-The `rel` vocabulary is **open** — a host **MUST NOT** reject an unknown value.
-These names are published so independent providers converge instead of each
-inventing `calls` / `call` / `code.call`:
-
-`code.calls` · `code.imports` · `code.defines` · `code.references` ·
-`doc.documents` · `episode.follows`
-
-Provider-specific edges belong under their own namespace (`myindex.owns`), which
-keeps the shared namespace meaningful.
 
 ### 8.3 Multi-hop traversal is deferred
 

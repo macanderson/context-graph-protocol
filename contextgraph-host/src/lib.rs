@@ -86,7 +86,7 @@ pub use compose::{
     AuditEntry, Citation, ComposedPrompt, CompositionAudit, DedupDrop, Deduped, ExclusionReason,
     FrameDisposition, VerificationState, budget_split, compose_context, compose_for_prompt,
     compose_for_prompt_attested, compose_for_prompt_with, dedup_cross_provider, fold_to_edges,
-    order_by, order_by_value,
+    order_by, order_by_value, rendered_token_cost,
 };
 pub use consent::{ConsentDecision, ConsentRecord, ConsentStore};
 /// The one `FrameAttestation` (`SPEC.md` §6.5.5). It is defined in

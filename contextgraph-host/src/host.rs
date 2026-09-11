@@ -344,7 +344,16 @@ impl Host {
                 }
             };
 
-        let outcomes = self.trust.check_result(id, &result);
+        // Two ids, deliberately. Trust is keyed on `id`, the host's own key for
+        // this provider — the string the *operator* chose, in the same act as the
+        // consent grant. The commitment is recomputed with the provider's
+        // handshake-declared name, because that is the id §6.5.2 puts in the
+        // signed preimage, and the only one the provider could have signed
+        // against. Collapsing them made an honest signature read as
+        // `CommitmentMismatch` — a tampering finding — for every operator whose
+        // config id differed from the provider's declared name.
+        let signing_id = provider.info().name.clone();
+        let outcomes = self.trust.check_result_signed_as(id, &signing_id, &result);
         Ok((result, outcomes))
     }
 
@@ -503,7 +512,14 @@ impl Host {
         // runs on a set the `max_frames` audit above has already bounded — and
         // it can only *annotate* that set. F9: whatever it finds, these frames
         // are served.
-        let attestations = self.trust.check_result(&id, &result);
+        //
+        // Two ids again, as in `query_provider_attested`: `id` is the operator's
+        // local routing key, `signing_id` is the name this provider declared at
+        // handshake and signed under (§6.5.2). Matching evidence on `id` alone
+        // would silently read every attested frame as unattested whenever the
+        // two differ.
+        let signing_id = provider.info().name.clone();
+        let attestations = self.trust.check_result_signed_as(&id, &signing_id, &result);
 
         ProviderOutcome {
             provider_id: id,
