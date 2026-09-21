@@ -96,3 +96,16 @@ sign-off. No CLA, no copyright assignment.
 This project follows the [Code of Conduct](./CODE_OF_CONDUCT.md). By
 participating you are expected to uphold it.
 
+
+## Shared workflow updates
+
+Dependabot checks GitHub Actions weekly. The Oxagen reusable workflows in
+`.github/workflows/` are excluded because their pins are maintained together
+across Stella, ArenaBench, cgp-website, and context-graph-protocol. When a shared
+workflow changes, open the caller updates together and verify Oxagen's
+`scr-corpus-check` after they merge. Other action updates stay automatic.
+
+The parity check compares the workflow files at the pinned commits. Different
+pins that resolve to identical files pass. See
+[Oxagen ADR-045](https://github.com/macanderson/oxagen/blob/main/docs/adr/ADR-045-pin-cross-repo-reusable-workflows.md)
+and [issue #2989](https://github.com/macanderson/oxagen/issues/2989).
