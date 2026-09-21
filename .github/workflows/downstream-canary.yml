@@ -58,12 +58,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout context-graph-protocol (this repo, HEAD)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           path: cgp
 
       - name: Checkout stella (public)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: macanderson/stella
           path: stella
@@ -128,7 +128,7 @@ jobs:
 
       - name: Checkout oxagen-platform (private, cross-org)
         if: steps.gate.outputs.has_token == 'true'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: macanderson/oxagen-platform
           token: ${{ secrets.OXAGEN_PLATFORM_TOKEN }}

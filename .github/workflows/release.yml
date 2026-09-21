@@ -48,7 +48,7 @@ jobs:
     name: preflight (dry-run, no credentials, no approval needed)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust
       # `--locked` matches what the publish job below runs. Without it the dry
       # run is allowed to update Cargo.lock and a lockfile out of sync with
@@ -63,7 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: crates-io
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: ./.github/actions/rust
 
