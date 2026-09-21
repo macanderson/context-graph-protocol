@@ -212,7 +212,7 @@ jobs:
       - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Python example provider passes the conformance suite
@@ -281,7 +281,7 @@ jobs:
       - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Python HTTP example passes the conformance suite
@@ -364,7 +364,7 @@ jobs:
     # promise to its callers and not to itself.
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       # Pinned: an unpinned strict typechecker turns each of its releases into
@@ -389,7 +389,7 @@ jobs:
     # guard is a separate one. Offline, stdlib only, reads no registry.
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: python3 .github/scripts/check-sdk-version-pins.py
@@ -407,7 +407,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: "Build the TypeScript SDK (for the file: dependency)"
@@ -429,7 +429,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: pip install jsonschema
@@ -450,7 +450,7 @@ jobs:
     # gate (#160).
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: python3 .github/scripts/check-toolchain-pin.py
@@ -468,7 +468,7 @@ jobs:
     # told providers to paste into their READMEs 404ed (#57).
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: python3 .github/scripts/check-deploy-hygiene.py
@@ -488,7 +488,7 @@ jobs:
     # remembering to make it true.
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: python3 .github/scripts/check-conformance-counts.py
@@ -510,7 +510,7 @@ jobs:
     # remembering to make them true.
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: python3 .github/scripts/check-doc-types.py
