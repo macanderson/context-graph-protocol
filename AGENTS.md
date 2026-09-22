@@ -53,3 +53,6 @@ macanderson org repos.
   and what must be applied. Where a repo has no automation to apply the label
   from the diff, apply it by hand. Do not add an automatic apply to a deploy
   pipeline under this record; that is a separate decision, made per repo.
+  The record's two exceptions apply: an edit to a schema file that leaves no
+  stored shape changed needs no label, and a repo with no persistent store
+  has nothing to label.
