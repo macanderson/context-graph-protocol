@@ -1,7 +1,8 @@
 # ADR 0009: Adopt org standing decisions as a Steering Context Record corpus
 
-- Status: accepted
+- Status: superseded
 - Date: 2026-08-26
+- Superseded: 2026-09-22 by [oxagen ADR-137](https://github.com/macanderson/oxagen/blob/main/docs/adr/ADR-137-standing-decisions-are-workspace-context-records.md). Standing decisions are workspace context records in oxagen `.oxagen/rules/`. This repository is linked to that workspace and does not keep a `docs/scr/` copy. The decision below is the record of what was true on 2026-08-26.
 
 ## Context
 
