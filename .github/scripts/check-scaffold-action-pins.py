@@ -3,7 +3,11 @@
 Hold the scaffold templates' action pins to the majors this repository runs.
 
 Usage:
-    python3 .github/scripts/check-scaffold-action-pins.py
+    python3 .github/scripts/check-scaffold-action-pins.py [--root DIR]
+
+`--root` points the guard at another checkout. Its self-tests
+(.github/scripts/tests/test_check_scaffold_action_pins.py) use it to run the
+script against fixture trees.
 
 Exits 0 if every `uses: owner/action@ref` in a scaffold template's workflow
 names the same major that this repository's own workflows and composite
@@ -38,7 +42,7 @@ The rule:
 
   These are skipped and reported, because there is nothing to compare:
   a ref with no major (`@master`, `@stable`), an action only the template
-  uses, a local `./` action, and a reusable workflow
+  uses, a local `./` action, a `docker://` image, and a reusable workflow
   (`owner/repo/.github/workflows/x.yml@ref`).
 
   Any line whose `uses:` value this guard cannot parse fails. A pin the
@@ -50,11 +54,19 @@ The rule:
   the same release line. A major is where an action's inputs and its Node
   runtime change, which is what a scaffolded provider cannot survive.
 """
+import argparse
 import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent.parent
+_args = argparse.ArgumentParser(description=__doc__.split("\n\n")[0].strip())
+_args.add_argument(
+    "--root",
+    type=Path,
+    default=Path(__file__).resolve().parent.parent.parent,
+    help="repository root to check (default: this checkout)",
+)
+ROOT = _args.parse_args().root.resolve()
 REPO_WORKFLOWS = sorted(
     list((ROOT / ".github" / "workflows").glob("*.yml"))
     + list((ROOT / ".github" / "workflows").glob("*.yaml"))
@@ -84,7 +96,8 @@ USES = re.compile(
     r"""^\s*(?:-\s*)?uses:\s*(?P<q>['"]?)(?P<action>[^@\s'"#]+)@(?P<ref>[^\s'"#]+)(?P=q)"""
     r"""\s*(?:#\s*(?P<comment>.*))?$"""
 )
-LOCAL = re.compile(r"""^\s*(?:-\s*)?uses:\s*['"]?\./""")
+# Nothing to compare: a local action, or a container image run directly.
+LOCAL = re.compile(r"""^\s*(?:-\s*)?uses:\s*['"]?(?:\./|docker://)""")
 MAJOR_TAG = re.compile(r"^v(\d+)(?:\.\d+)*$")
 SHA = re.compile(r"^[0-9a-f]{40}$")
 
@@ -120,7 +133,7 @@ def relative(path: Path) -> str:
 def pins(path: Path) -> list[tuple[int, str, str, int | None]]:
     """Every action `uses:` in `path` as `(line, action, ref, major)`.
 
-    Local actions and reusable workflows are left out. A `uses:` line that
+    Local actions, `docker://` images, and reusable workflows are left out. A `uses:` line that
     does not parse is a failure, never a silent skip.
     """
     found = []

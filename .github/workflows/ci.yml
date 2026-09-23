@@ -412,6 +412,21 @@ jobs:
           python-version: "3.12"
       - run: python3 .github/scripts/check-scaffold-action-pins.py
 
+  guard-self-tests:
+    name: CI guard scripts go red on the drift they name
+    runs-on: ubuntu-latest
+    # A guard that only ever passes proves nothing, and each guard above is
+    # judged by the one tree it runs on, where it is green by construction.
+    # These tests run the guards against fixture trees built to be wrong —
+    # a quoted or SHA-commented stale pin, an unparsed `uses:` line — and
+    # hold that each goes red (#207). Offline, stdlib only.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python3 -m unittest discover -s .github/scripts/tests -v
+
   sdk-scaffold:
     name: create-contextgraph-provider scaffolds a conformant project
     runs-on: ubuntu-latest
