@@ -20,6 +20,81 @@ text lands without a human merge.
 ## [Unreleased]
 
 ### Added
+- **CI guard scripts are tested against inputs built to be wrong** (#207) — a
+  new `guard-self-tests` job runs `.github/scripts/tests/`. It holds that the
+  scaffold action-pin guard goes red on a quoted or SHA-commented stale pin, an
+  unparsed `uses:` line, and a repository split across majors, and that the
+  triage and changelog guards go red on the labels and headings they name. The action-pin guard gains
+  `--root` and now skips `docker://` images instead of failing on them ([ADR
+  0012](./docs/adr/0012-sdk-version-pins-share-a-major.md)).
+- **A `rustdoc (-D warnings)` CI job** (#122) builds the workspace docs with
+  `--all-features` on every pull request, so a broken link fails a check instead
+  of reaching docs.rs.
+- **The Python SDK is tested on the interpreters it claims to support** (#107) —
+  a new `sdk-python-interpreters` job runs its tests on the declared floor (3.9)
+  and on the newest CPython release, and the typecheck job adds a `mypy
+  --strict` pass against the floor.
+- **An `adr-numbers` CI job** (#123) fails when two ADRs share a number in the
+  result of merging a pull request into the current base, and when an ADR is
+  missing from `docs/GUIDE.md`'s decision log. A self-test drives two real
+  branches into the collision.
+- **A `dco` CI job** (#141) requires every commit a pull request adds to be
+  signed off by its author; a bot's commit needs a sign-off from the person
+  behind it. The DCO the license grant rests on is now enforced, from this
+  change forward ([ADR
+  0025](./docs/adr/0025-the-dco-is-enforced-not-requested.md)).
+- **`doc-links` CI job** (#153): every `docs/` path the tree names, and every
+  link into this repository's own tree, must resolve to a tracked file.
+- **`adr-log` CI job** (#129): the GUIDE's decision log must have exactly one
+  row per `docs/adr/*.md`, in order, with labels matching their files.
+- **`published-crates` CI job** (#143): `SECURITY.md` must name every crate
+  whose manifest sets `publish = true`.
+- **`schema/validate-examples.py` holds the examples README's walkthrough to
+  equality with the transcript** (#144), and its other JSON blocks to the
+  schema.
+- **The Python gates have self-tests** (#110) — each suite in
+  `.github/scripts/tests/` copies the real, unmodified gate into a throwaway
+  tree and proves it fails in every direction it should, such as a versioned
+  `/schema/v1/` URL, a longest-prefix resolution, an exempt ADR citation, a
+  wrong `$id`, or a changed fence style. A gate that stops seeing its subject
+  now goes red instead of printing PASS.
+- **`protocol-surface.md` mirrors every SPEC.md requirement, and CI holds it
+  there** (#158) — the conformance index restated 23 of the spec's requirements.
+  Every id now has a row naming what enforces it; the D/V rows that used
+  `context-reuse.md`'s older numbering now use SPEC.md's ids.
+  `check-protocol-surface-mirror.py` fails when an id is in one file and not the
+  other.
+- **SDK metadata parity gate** (#112) — `check-sdk-metadata.py` requires every
+  `sdk/*/` package to declare `Cargo.toml`'s homepage and repository, in CI and
+  before each SDK publish.
+- **`SPEC.md` §6.2.1 and F17: the `file`-provenance `range` grammar** (#183) —
+  `L<start>[-<end>]` is 1-indexed with an inclusive end. Each line includes its
+  LF and CR is content. An end past the last line clamps; a start past it is
+  unverifiable. Every other spelling is reserved and reported unverifiable,
+  never as a whole-resource digest and never as a mismatch.
+  `contextgraph_types::LineRange` is the single implementation the host verifier
+  and `frame-validity` share, and `tests/vectors/range-vectors.json` publishes
+  the addressed bytes and digest for every rule ([ADR
+  0020](./docs/adr/0020-provenance-range-grammar.md)).
+- **`--misbehave unrecognised-range`** on `contextgraph-example-docs`, the
+  negative test for F17 — `frame-validity` now fails a `file` range outside the
+  grammar, which previously passed every check because the host reported it
+  unreadable and the byte check skipped it.
+- **`SPEC.md` F18: attestation metadata is outside the signature** (#185) —
+  §6.5.2 now tabulates what a signature covers. `attester_id` and `issued_at`
+  can be rewritten in transit and the attestation still verifies, so a verifier
+  must not present them as signed. `AttestationState::unverified_attester_id`
+  exposes the echoed claim under a name that says so ([ADR
+  0021](./docs/adr/0021-attestation-metadata-outside-the-signature.md)).
+- **`contextgraph-example-docs --misbehave unknown-algorithm`** (#159) — signs
+  every frame honestly and labels each attestation `dilithium3`, giving F8, the
+  one attestation rule that had no adversarial mode, a witness that
+  `attestation` catches it.
+- **Fixture modes `crash-on-missing-payload` and `ignore-missing-payload`**
+  (#146) witness the new `malformed-input-tolerance` probes.
+- **The TypeScript and Python attestation suites assert the published
+  `empty_uri` / `absent_uri` link encodings and chain heads** (#125), so a port
+  that collapses `""` to absent fails a named test in all four languages.
 - **CI catches a scaffold workflow whose action pin has drifted from the
   repository's own** ([ADR 0012](./docs/adr/0012-sdk-version-pins-share-a-major.md)).
   `.github/scripts/check-scaffold-action-pins.py` holds every action a
@@ -250,6 +325,47 @@ text lands without a human merge.
   could never have seen it (#98).
 
 ### Changed
+- **`/triage-sweep` quotes the SCR-005 record's own statement** (#210) — both
+  Stella command files now quote the record verbatim, next to the sentence they
+  attribute to the retired markdown record.
+- **The reference vectors are published under `/schema/v1/`** as well as
+  `/schema/` (#111, ADR 0013 amendment) — the publish step checks that each path
+  serves the committed bytes as `application/x-ndjson`, and
+  `check-deploy-hygiene.py` now checks `.ndjson` URLs.
+- **Versions written in prose are held to their manifests** (#108, [ADR
+  0026](./docs/adr/0026-versions-in-prose-and-the-go-sdk-tag.md)) —
+  `check-sdk-version-pins.py` now reads install commands and dependency lines in
+  tracked Markdown, and refuses a concrete Go SDK version there. The Go SDK has
+  its own version line because Go ties a module's major version to its import
+  path. `sdk/PUBLISHING.md`'s table is now a record of each SDK's first publish.
+- **`contextgraph-host`'s range verifier rejects zero-padded (`L05`) and signed
+  (`L+5`) line numbers** (#183), which it had accepted only because of Rust's
+  number parsing, and clamps an end too large for `usize` instead of rejecting
+  it (§6.2.1).
+- **`as_of` now has a stated rule** (#184; SPEC.md Q2, §5.3; [ADR
+  0022](./docs/adr/0022-as-of-is-a-point-in-window-predicate.md)) — a query
+  pinned with `as_of` gets only frames whose half-open window `[valid_from,
+  valid_to)` contains the pin, compared as instants. `recorded_at` is not
+  pinned. There is no capability flag and no error code: a provider with nothing
+  valid at the pin returns zero frames. `as-of-temporal` now checks both halves
+  at two pins, and the new `ignore-valid-to` misbehave mode trips it. refprov
+  and the TypeScript/Python example providers apply the full rule.
+- **C3 is now a MUST, and the consent guarantee is stated per transport** (#187;
+  SPEC.md §4.3; [ADR
+  0024](./docs/adr/0024-consent-binds-what-the-transport-can-see.md)) — a
+  provider that declares egress, and every provider reached over HTTP whatever
+  it declares, is never queried without consent. Over stdio a provider's
+  `egress: false` is trusted and cannot be observed; confining a stdio child's
+  network is left to the deployment. The reference host's forcing of egress for
+  loopback HTTP is documented as deliberate.
+- **`attestation` fails instead of skipping when an attestation names a scheme
+  this build cannot check** (#159, [ADR
+  0027](./docs/adr/0027-an-attestation-the-suite-cannot-check-is-not-certified.md))
+  — the evidence reports it as uncheckable (`UnknownAlgorithm`), never as
+  forged. A skip always means "does not apply", never "could not decide",
+  because `ConformanceReport::passed()` counts a skip as a pass.
+  `conformance-red.sh` counts a misbehaviour mode as caught only when a check it
+  names fails.
 - **One `FrameAttestation`, and one place on the wire for a signature (issue
   #161; [ADR 0019](./docs/adr/0019-one-home-for-an-attestation.md)).** Three
   types of that name existed at once — one in `contextgraph-types`, two in
@@ -405,6 +521,82 @@ text lands without a human merge.
   `contextgraph/1.0` and the crates shipped `1.0.0`.
 
 ### Fixed
+- **The triage guard strips every label family SCR-005 reserves** (#137) —
+  `triage-guard.yml` now removes a creator-applied size label (`size/*`) as well
+  as any priority (`P<n>`). It re-queues the issue as `triage` only when no
+  priority is left, so a triage-set `P2` is never left beside `triage`. The
+  decision lives in `.github/scripts/triage-guard.cjs`, which matches label
+  families rather than a tier list, so a new tier is guarded the moment its
+  label exists. CONTRIBUTING.md now lists only labels this repository has.
+- **The changelog bot writes drafted entries once, and fails when they cannot
+  land** (#149) — the `perl -p` one-liner in `changelog.yml` put the drafted
+  block under every `## [Unreleased]` heading, and the check after it stayed
+  green when the heading was missing. `.github/scripts/changelog-insert.py`
+  inserts under the first heading only and fails naming the heading when there
+  is none. Degrade-open still covers the AI call.
+- **The downstream canary's oxagen half now checks something** (#104, #139) — it
+  used to check out a repository that does not exist (`oxagen-platform`) behind
+  a secret nobody had created, and reported success having checked nothing. It
+  now checks out the public `macanderson/oxagen`, finds the CGP fixture sets
+  oxagen vendors, and runs them through this repository's own `golden_fixtures`
+  and `fixture_suite` tests at HEAD. It fails on the scheduled run and is
+  advisory on a pull request, like the stella half.
+- **`cargo doc` builds clean under `-D warnings` again** (#122) — redundant link
+  targets, links to private items, and three links that pointed at nothing are
+  fixed across `contextgraph-types`, `-host`, `-conformance`, `-refprov`,
+  `-treesitter`, `-mcp-bridge` and `-mcp-server`.
+- **`CHANGELOG.md` carries exactly one `## [Unreleased]` heading** (#157) — a
+  second, empty one sat between the shipped 0.1.2 and 1.0.0 sections, so the
+  changelog workflow's insertion wrote every drafted entry twice (#149).
+- **Ten pointers into the deleted `docs/sketches/` resolve again** (#153) —
+  including the crates.io description of the published `contextgraph-trace`
+  crate and a docs.rs link that 404ed. `docs/host-trace.md` now specifies the
+  trace journal and its oracles. The other pointers lead to the ADR 0004
+  sections, ADR 0002 and SPEC.md §14.1 that absorbed them, and the downstream
+  canary no longer cites the removed reconciliation doc.
+- **The GUIDE's in-page ADR links work** (#129) — `#adr-0003` and four others
+  pointed at an anchor line an unrelated edit had deleted. Each now links its
+  ADR file directly.
+- **The examples README's annotated session quotes the transcript verbatim**
+  (#144) — it had lost the correlation `id`s, `content_digest`, the right
+  `token_cost`, and the `verify` step. It now quotes all nine lines of
+  `full-stdio-session.ndjson`.
+- **`SECURITY.md` covers every published crate and the post-freeze policy**
+  (#143) — it left out `contextgraph-trace`, called the project "pre-1.0", and
+  ended support at the 2026-08-11 freeze. Fixes now land on the latest `2.x`;
+  `0.1.x` receives none. `docs/stability.md` no longer claims a `1.x` release
+  exists on crates.io.
+- **`MIGRATION.md` §2 no longer tells downstreams to pin a tag that was never
+  cut** (#105) — it points at crates.io (`contextgraph-types = "2"`) and names
+  the real `contextgraph-vX.Y.Z` release tags for git pins.
+- **`validate-examples.py` no longer validates every JSON file in
+  `tests/fixtures/` as a record** (#126) — a fixture is a record only if its
+  filename stem is a declared `record_kind`; any other file fails with a message
+  naming that convention. A record kind with no fixture, or a fixture filed
+  under the wrong kind, is also caught.
+- **Published SDK packages link back to the project** (#112) — both npm packages
+  gained `homepage`, `repository` (with `directory`) and `bugs`; the Python
+  package's homepage is now https://contextgraphprotocol.org, matching the
+  crates, with Repository and Issues URLs.
+- **Stale SDK versions in prose** (#108) — the `@v0.1.0` Go install pins, a
+  `contextgraph-types = "=0.1.0"` example, and `sdk/README.md` calling the
+  published Python and Go SDKs unpublished.
+- **`Host::verify_frames` sends the provider's declared name on the wire**
+  (#186; [ADR 0023](./docs/adr/0023-frame-identity-names-two-provider-ids.md)) —
+  it used to send the host's local routing id, a string the provider had never
+  seen. SPEC.md D5 (§6.3) says which provider id a frame identity carries where,
+  and V5 (§9) lets a provider answer `unknown` for an id that isn't its own.
+  `verify-honesty` now catches a host that leaks its local id.
+- **The stdio egress hole is listed in SPEC.md §11.1 and witnessed** (#187) —
+  the new `stdio_egress_gap` test shows that a stdio provider declaring `egress:
+  false` can send the query payload out while the host notices nothing.
+- **`malformed-input-tolerance` probes the shapes that crashed the Python SDK**
+  (#146) — a JSON scalar (`42`) and a `query` envelope with its payload missing,
+  not only an unparseable line. The evidence names the input that broke the
+  provider, and a payload-less request that goes unanswered fails.
+- **Go SDK: a `query` or `verify` envelope with its payload missing is answered
+  `bad_request` with the id echoed** (#146). Before, stdio stayed silent and
+  HTTP answered 204, leaving a correlated host waiting.
 - **A scaffolded TypeScript provider's workflow pins `actions/setup-node@v7`.**
   #197 moved every workflow under `.github/` to v7 and left
   `sdk/create-contextgraph-provider/templates/typescript/_github/workflows/conformance.yml`
