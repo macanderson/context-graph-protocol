@@ -598,6 +598,34 @@ jobs:
           python-version: "3.12"
       - run: python3 .github/scripts/check-deploy-hygiene.py
 
+  adr-numbers:
+    name: ADR numbers are unique in the merge result
+    runs-on: ubuntu-latest
+    # Two pull requests each added a differently named `0012-*.md`; git merged
+    # both cleanly and every check was green on each, because each branch was
+    # valid on its own (#123). A branch-local check cannot see the other pull
+    # request, so on a pull request this checks the tree HEAD would produce if
+    # merged into the base as the base is *now*, fetched at run time rather
+    # than frozen in the merge ref, so a re-run after a colliding ADR lands
+    # goes red. On a push to main it checks the tree itself, so a collision
+    # that slips past a stale green check reddens the merge that made it.
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # `merge-tree` needs the history back to the merge base.
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: ADRs in the merge with the current base are one number each
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags origin "+refs/heads/${GITHUB_BASE_REF}:refs/remotes/origin/${GITHUB_BASE_REF}"
+          python3 .github/scripts/check-adr-numbers.py --against "origin/${GITHUB_BASE_REF}"
+      - name: ADRs in this tree are one number each
+        if: github.event_name != 'pull_request'
+        run: python3 .github/scripts/check-adr-numbers.py
+
   conformance-counts:
     name: docs state the real number of conformance checks
     runs-on: ubuntu-latest

@@ -202,6 +202,10 @@ code, start here.
 Full text lives in [`docs/adr/`](./adr/). Every entry below is **Accepted**
 unless the row says it was superseded.
 Read the full ADR before changing anything it covers.
+A new ADR takes the next free number as `docs/adr/NNNN-slug.md` and a row in
+this table. `python3 .github/scripts/check-adr-numbers.py --against origin/main`
+checks both against the merge with the current base, because two open pull
+requests can pick the same number and each look fine on its own (#123).
 
 | # | Title | One-line takeaway |
 |---|---|---|
