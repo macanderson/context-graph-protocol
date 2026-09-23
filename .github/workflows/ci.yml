@@ -525,12 +525,15 @@ jobs:
     # that each goes red: a quoted or SHA-commented stale pin and an unparsed
     # `uses:` line (#207), a creator-applied `P4` or `size/M` (#137), and a
     # changelog with two `## [Unreleased]` headings or none (#149). Offline,
-    # stdlib only. Everything in .github/scripts/tests runs here.
+    # stdlib plus jsonschema. Everything in .github/scripts/tests runs here.
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+      # validate-examples.py's self-test runs the real gate, which needs
+      # jsonschema; its suite fails rather than skips without it.
+      - run: pip install jsonschema
       - run: python3 -m unittest discover -s .github/scripts/tests -v
       - uses: actions/setup-node@v7
         with:

@@ -108,6 +108,11 @@ class ValidateExamplesTest(GateTestCase):
             '{ "title": "…" }\n'
             "```\n"
         )
+        # The walkthrough section must quote the transcript line for line (#144).
+        self.readme = (
+            "# Examples\n\n## A complete stdio session (annotated)\n\n```json\n"
+            + json.dumps(HANDSHAKE) + "\n```\n"
+        )
         self.records = {
             kind: {"record_kind": kind, "statement": f"a {kind}"} for kind in RECORD_KINDS
         }
@@ -119,6 +124,7 @@ class ValidateExamplesTest(GateTestCase):
         self.write("schema/reference-vectors.ndjson", json.dumps(HANDSHAKE) + "\n")
         self.write("examples/full-stdio-session.ndjson", json.dumps(HANDSHAKE) + "\n")
         self.write("examples/reference-messages.json", json.dumps([HANDSHAKE]))
+        self.write("examples/README.md", self.readme)
         self.write("SPEC.md", self.spec)
 
         vectors = []
@@ -150,6 +156,13 @@ class ValidateExamplesTest(GateTestCase):
 
     def test_a_consistent_world_passes(self):
         self.assertPasses(self.gate())
+
+    # --- the examples README walkthrough (#144) ------------------------------
+
+    def test_a_walkthrough_that_drifts_from_the_transcript_fails(self):
+        drifted = {**HANDSHAKE, "protocol_version": "contextgraph/0.9"}
+        self.readme = self.readme.replace(json.dumps(HANDSHAKE), json.dumps(drifted))
+        self.assertFailsWith(self.gate(), "FAIL  README.md:5 is transcript line 1")
 
     # --- `$id` --------------------------------------------------------------
 
