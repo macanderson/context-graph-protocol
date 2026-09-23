@@ -89,7 +89,7 @@ jobs:
       # Pinned to a commit SHA rather than a tag, unlike the rest of this
       # repository's workflows. A tag is mutable, and this is the one job here
       # that holds credentials able to write to a production bucket.
-      - uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           # No stored AWS key. The role trusts exactly one subject —
           # `repo:macanderson/context-graph-protocol:environment:production` —
