@@ -683,6 +683,23 @@ jobs:
           python-version: "3.12"
       - run: python3 .github/scripts/check-published-crates.py
 
+  protocol-surface-mirror:
+    name: protocol-surface mirrors every SPEC.md requirement
+    runs-on: ubuntu-latest
+    # GOVERNANCE.md names docs/protocol-surface.md's conformance index as the
+    # mirror of SPEC.md's requirement tables. When #158 was filed it restated
+    # 23 of 57 requirements, and every one it missed was enforced by a
+    # conformance check that would fail a provider whose author read only that
+    # page. The guard compares the two id sets, in both directions, for any id
+    # family. It does not compare wording: the mirror is a summary on purpose,
+    # and SPEC.md wins any disagreement.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python3 .github/scripts/check-protocol-surface-mirror.py
+
   conformance-counts:
     name: docs state the real number of conformance checks
     runs-on: ubuntu-latest
