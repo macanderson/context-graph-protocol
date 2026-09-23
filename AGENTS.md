@@ -15,7 +15,7 @@ Each bullet below is the compiled summary that every agent — Claude Code
 directly) — loads at session start. This repository is linked to that
 workspace and does not carry a copy. Oxagen
 [ADR-137](https://github.com/macanderson/oxagen/blob/main/docs/adr/ADR-137-standing-decisions-are-workspace-context-records.md)
-removed `docs/scr/` from all five repositories.
+retires `docs/scr/` in all five repositories.
 
 - **[SCR-001](https://github.com/macanderson/oxagen/blob/main/.oxagen/rules/ctx.scr.001-no-full-suite-builds.toml) — Tests/builds
   (inner loop):** Never compile or run the full test suite while developing.
