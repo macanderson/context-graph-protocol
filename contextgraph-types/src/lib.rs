@@ -19,6 +19,7 @@ pub mod extension;
 pub mod frame;
 pub mod identity;
 pub mod query;
+pub mod range;
 pub mod record;
 pub mod record_attest;
 pub mod scope;
@@ -51,6 +52,7 @@ pub use frame::{
 };
 pub use identity::{FrameId, canonical_order};
 pub use query::{ContextQuery, ContextQueryResult};
+pub use range::{LineRange, LineRangeError, is_well_formed_line_range};
 pub use record::{
     ConstraintEffect, ContextRecord, ContractRequirement, DirectiveKind, Enforcement,
     KnowledgeKind, LIFECYCLE_SCHEMA_VERSION, OriginClass, RESERVED_RECORD_MEMBERS,

@@ -79,6 +79,15 @@ enum Misbehave {
     /// is self-consistent over the wire, so only a host re-reading the bytes the
     /// digest claims to cover catches it (`SPEC.md` §6.2).
     StaleDigest,
+    /// Emit file provenance whose `range` is `1-40` — a line span without the
+    /// `L` prefix the §6.2.1 grammar requires, so no conforming verifier can
+    /// locate the bytes its digest covers (trips `frame-validity` §F17).
+    ///
+    /// Before F17 this passed every check: the host reported the link
+    /// unreadable, `provenance-fixture-consistency` skipped it as a file it
+    /// could not see, and a provider whose digests nobody could check was
+    /// conformant.
+    UnrecognisedRange,
     /// Return far more frames than the query's `max_frames` allows, each
     /// individually cheap so the token budget is respected (trips
     /// `budget-honesty` §B4).
@@ -904,7 +913,12 @@ fn doc_frame(
         provenance: vec![Provenance {
             kind: "file".into(),
             uri: Some(fixture_uri(file)),
-            range: Some(range.into()),
+            range: Some(match misbehave {
+                // `L1-40` without its prefix: every other part of the link is
+                // honest, so the grammar is the only thing wrong (§F17).
+                Some(Misbehave::UnrecognisedRange) => range.trim_start_matches('L').into(),
+                _ => range.into(),
+            }),
             // The same declared digest as `content_digest`, so a host that
             // re-reads `uri` over `range` and re-hashes gets a match for an
             // honest frame — and a `Mismatch` under `stale-digest` (§6.2).

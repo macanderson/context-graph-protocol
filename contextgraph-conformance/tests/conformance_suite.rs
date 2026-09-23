@@ -88,6 +88,31 @@ async fn a_stale_provenance_digest_fails_provenance_fixture_consistency() {
 }
 
 #[tokio::test]
+async fn a_range_outside_the_line_grammar_fails_frame_validity() {
+    // §F17 / §6.2.1. `1-40` instead of `L1-40`, with an honest digest. Before
+    // the grammar was published, the host reported the link unreadable and
+    // `provenance-fixture-consistency` skipped it, so this provider passed the
+    // whole suite while serving digests no conforming verifier could check.
+    let report = run_conformance(target(&["--misbehave", "unrecognised-range"])).await;
+    assert!(!report.passed());
+    let frame_validity = report
+        .checks
+        .iter()
+        .find(|check| check.name == CHECK_FRAME_VALIDITY)
+        .expect("frame-validity ran");
+    assert_eq!(frame_validity.status, CheckStatus::Fail);
+    assert!(
+        frame_validity.evidence.contains("§F17"),
+        "the failure names the rule: {}",
+        frame_validity.evidence
+    );
+    // Nothing else about the frames is wrong.
+    for name in [CHECK_HANDSHAKE, CHECK_VERIFY_HONESTY, CHECK_BUDGET_HONESTY] {
+        assert_eq!(status_of(&report, name), CheckStatus::Pass, "{name}");
+    }
+}
+
+#[tokio::test]
 async fn dropping_the_correlation_id_fails_the_correlation_check() {
     // §H4 had no check of its own: the `drop-correlation-id` mode only ever
     // went red because losing the id desynchronizes everything downstream, so

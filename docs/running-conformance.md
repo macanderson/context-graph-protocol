@@ -16,7 +16,7 @@ check name here stops matching the code.
 |---|---|---|
 | `handshake` | the provider completes the handshake and reports a non-empty identity and capabilities | never — a failed handshake skips the checks that depend on it |
 | `consent-scope` | declared egress scopes are well-formed and consistent with the `egress` flag | never |
-| `frame-validity` | every returned frame is citable and scored honestly: `score` in `[0, 1]`, non-empty `title` and `citation_label` | never |
+| `frame-validity` | every returned frame is citable and scored honestly: `score` in `[0, 1]`, non-empty `title` and `citation_label`, and every `file` provenance `range` in the §6.2.1 line grammar (§F17) | never |
 | `verify-honesty` | a provider advertising `verify` answers about digests it actually served | the provider does not advertise `verify`, or served no frame carrying a `content_digest` |
 | `budget-honesty` | returned frames' summed `token_cost` never exceeds the query's `max_tokens` | never |
 | `as-of-temporal` | no returned frame is dated after the `as_of` pin — content that was not yet true | never |
@@ -166,4 +166,8 @@ emits an ungrammatical stub that `frame-validity` (§F5 grammar) rejects before
 any bytes are read, while `stale-digest` emits a *well-formed* `sha256:` digest
 that simply does not match the backing file's bytes — caught only by
 `provenance-fixture-consistency`, which re-reads the fixture's own files and
-re-hashes them (§6.2).
+re-hashes them (§6.2). A third mode, `unrecognised-range`, keeps the digest
+honest and writes the range as `1-40` instead of `L1-40`: no conforming
+verifier can locate those bytes, so `frame-validity` fails it on the §6.2.1
+grammar (§F17) — before that rule existed, the host reported the link
+unreadable, the byte check skipped it, and the provider passed.

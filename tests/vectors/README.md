@@ -1,4 +1,10 @@
-# Cross-language attestation vectors
+# Cross-language reference vectors
+
+Two fixtures live here: the provenance-attestation vectors and the
+provenance `range` vectors. Both are data a port reads, never a transcription
+it copies.
+
+## Attestation vectors
 
 `attestation-vectors.json` is the single copy of the provenance-attestation
 reference vectors (`SPEC.md` §6.5). Four test suites read it:
@@ -30,7 +36,7 @@ This directory is deliberately not `tests/fixtures/`, which
 [`schema/validate-examples.py`](../../schema/validate-examples.py) globs and
 validates against the lifecycle **record** schema. These are not records.
 
-## Regenerating
+### Regenerating
 
 There is no regeneration command, on purpose. The values are fixtures rather
 than an assertion about the current code — recomputing them would let an
@@ -42,3 +48,28 @@ cargo test -p contextgraph-types --features attestation --test attestation_vecto
 ```
 
 read the value out of the failure, and write it into both files.
+
+## Range vectors
+
+`range-vectors.json` pins which bytes a `file` provenance `range` addresses
+(`SPEC.md` §6.2.1, F17). Each case names a resource, a `range` (absent means
+the whole resource), and either the exact addressed `bytes` with their
+`sha256:` `digest`, or the reason the range is `unverifiable`. Resources and
+bytes are JSON strings, so CR, LF and non-ASCII are exact; hash the UTF-8
+encoding of the string with no normalization.
+
+| Suite | File | Checks |
+| --- | --- | --- |
+| Rust (addressing) | [`contextgraph-types/tests/range_vectors.rs`](../../contextgraph-types/tests/range_vectors.rs) | `LineRange` selects exactly the published bytes and refuses exactly the unverifiable cases, for the stated reason |
+| Rust (digest, end to end) | [`contextgraph-host/tests/range_vectors.rs`](../../contextgraph-host/tests/range_vectors.rs) | the host re-reads a real file and verifies every published digest, and reports every unverifiable case `Unreadable` even when handed the whole-resource digest |
+
+The values were computed from the §6.2.1 prose by a script independent of the
+Rust code, so the Rust suites reconcile against a second opinion rather than a
+snapshot of their own output. As with the attestation vectors, **a diff to any
+published value changes which bytes a digest covers** and is wire-breaking;
+adding a case is not.
+
+The `range` strings inside `attestation-vectors.json` (`L10-L20`, `L1-L2`) are
+not examples of this grammar. §6.5.1 encodes `range` as opaque bytes and never
+parses it, so those values are encoding inputs, not digest claims — and they
+stay as published, because changing a published vector is itself a wire break.

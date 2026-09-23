@@ -416,6 +416,7 @@ SPEC.md §6, including provenance attestation (§6.5) and what `score` means
 | F14 | A provider that signs a frame **MUST** populate that frame's `content_digest`. | `attestation` suite |
 | F15 | A verifier **MUST** distinguish an attestation that binds content from one that does not, and **MUST NOT** report the second as the first. | `attestation` suite; `AttestationVerdict::ValidIdentityOnly` |
 | F16 | A host **SHOULD** surface that distinction to whoever reads the frame. | host composition |
+| F17 | A `range` on `file` provenance **MUST** be a `line-range` (`L<start>` or `L<start>-<end>`, SPEC.md §6.2.1) whose end is not before its start, and its digest **MUST** cover exactly the bytes §6.2.1 addresses. A verifier **MUST** report any other `range`, or one starting past the resource's last line, as unverifiable — never as the whole resource, never as a mismatch. | `frame-validity` conformance check (grammar); `provenance-fixture-consistency` (bytes); `contextgraph_types::LineRange`; [`tests/vectors/range-vectors.json`](../tests/vectors/range-vectors.json) |
 
 ### Representations
 

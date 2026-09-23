@@ -1,0 +1,227 @@
+{
+  "$comment": [
+    "Reference vectors for the file-provenance range grammar (SPEC.md 6.2.1, F17).",
+    "Each case names a resource, a range (absent = the whole resource), and either",
+    "the exact bytes the range addresses with their sha256 digest, or the reason",
+    "the range addresses nothing a verifier can digest ('unverifiable').",
+    "Resources and bytes are JSON strings: CR, LF and non-ASCII are exact, and a",
+    "reader must hash the UTF-8 encoding of the string with no normalization.",
+    "A diff to any value here changes which bytes a digest covers: wire-breaking (SPEC.md 15)."
+  ],
+  "unverifiable_reasons": {
+    "unrecognised": "Not a line-range in the grammar: reserved, never a whole-resource fallback.",
+    "inverted": "A line-range whose end precedes its start.",
+    "start_past_end": "The range starts past the resource's last line."
+  },
+  "resources": {
+    "lf": "alpha\nbeta\ngamma\n",
+    "no_final_newline": "one\ntwo",
+    "crlf_mixed": "first\r\nsecond\nthird\r\n",
+    "cr_only": "a\rb\rc",
+    "blank_lines": "\n\nx\n",
+    "utf8": "naïve\n日本語\n",
+    "empty": ""
+  },
+  "cases": [
+    {
+      "resource": "lf",
+      "bytes": "alpha\nbeta\ngamma\n",
+      "digest": "sha256:4fdbc441ea7b546100e086ac1e4fc5ae6749b7314311c99db05be450eca12996",
+      "note": "No range digests the whole resource (§6.2)."
+    },
+    {
+      "resource": "lf",
+      "range": "L1",
+      "bytes": "alpha\n",
+      "digest": "sha256:b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060",
+      "note": "A single line includes its terminating LF."
+    },
+    {
+      "resource": "lf",
+      "range": "L2-3",
+      "bytes": "beta\ngamma\n",
+      "digest": "sha256:aa5989aacb57830a365b63654addd2b3e7427ce3e8869f52e261ac98cc318734",
+      "note": "The end is inclusive: two lines."
+    },
+    {
+      "resource": "lf",
+      "range": "L2-2",
+      "bytes": "beta\n",
+      "digest": "sha256:f2c82decdd7181cf98945929a62598db7e6b477e11f6e0eb0ae97020eff151ad",
+      "note": "L2-2 addresses the same bytes as L2."
+    },
+    {
+      "resource": "lf",
+      "range": "L1-3",
+      "bytes": "alpha\nbeta\ngamma\n",
+      "digest": "sha256:4fdbc441ea7b546100e086ac1e4fc5ae6749b7314311c99db05be450eca12996",
+      "note": "Every line: the whole resource."
+    },
+    {
+      "resource": "lf",
+      "range": "L3-9999",
+      "bytes": "gamma\n",
+      "digest": "sha256:ae9a6306a205417afddd14316cc1d0d5e04a98f1be10865dce643925ee070ce2",
+      "note": "An end past the last line clamps to it."
+    },
+    {
+      "resource": "lf",
+      "range": "L2-99999999999999999999999999",
+      "bytes": "beta\ngamma\n",
+      "digest": "sha256:aa5989aacb57830a365b63654addd2b3e7427ce3e8869f52e261ac98cc318734",
+      "note": "An end beyond any machine integer clamps too; the meaning does not depend on the verifier's integer width."
+    },
+    {
+      "resource": "lf",
+      "range": "L4",
+      "unverifiable": "start_past_end",
+      "note": "A start past the last line addresses nothing: unverifiable, not an empty digest."
+    },
+    {
+      "resource": "lf",
+      "range": "L3-2",
+      "unverifiable": "inverted",
+      "note": "An end before the start: unverifiable."
+    },
+    {
+      "resource": "lf",
+      "range": "L0",
+      "unverifiable": "unrecognised",
+      "note": "Lines are 1-indexed; 0 is not a line-number."
+    },
+    {
+      "resource": "lf",
+      "range": "L01",
+      "unverifiable": "unrecognised",
+      "note": "No leading zero: one spelling per line number."
+    },
+    {
+      "resource": "lf",
+      "range": "L+1",
+      "unverifiable": "unrecognised",
+      "note": "No sign."
+    },
+    {
+      "resource": "lf",
+      "range": "2-3",
+      "unverifiable": "unrecognised",
+      "note": "The L prefix is required."
+    },
+    {
+      "resource": "lf",
+      "range": "l2-3",
+      "unverifiable": "unrecognised",
+      "note": "The L prefix is uppercase only."
+    },
+    {
+      "resource": "lf",
+      "range": "L2-L3",
+      "unverifiable": "unrecognised",
+      "note": "GitHub's L2-L3 is not this grammar."
+    },
+    {
+      "resource": "lf",
+      "range": "L2-",
+      "unverifiable": "unrecognised",
+      "note": "A dash needs an end."
+    },
+    {
+      "resource": "lf",
+      "range": " L2",
+      "unverifiable": "unrecognised",
+      "note": "No surrounding whitespace."
+    },
+    {
+      "resource": "lf",
+      "range": "B0-5",
+      "unverifiable": "unrecognised",
+      "note": "Byte, character and column ranges are reserved, not defined."
+    },
+    {
+      "resource": "lf",
+      "range": "",
+      "unverifiable": "unrecognised",
+      "note": "An empty range is not the absent range; absent means the whole resource."
+    },
+    {
+      "resource": "no_final_newline",
+      "range": "L2",
+      "bytes": "two",
+      "digest": "sha256:3fc4ccfe745870e2c0d99f71f30ff0656c8dedd41cc1d7d3d376b0dbe685e2f3",
+      "note": "A final unterminated line runs to the end of the resource."
+    },
+    {
+      "resource": "no_final_newline",
+      "range": "L1-40",
+      "bytes": "one\ntwo",
+      "digest": "sha256:21066d108d5319ecb5a1fc4454f42ef22fc5f1c7df49c31d90294950e0ea8b2c",
+      "note": "The reference fixtures' shape: an end past EOF over a short file."
+    },
+    {
+      "resource": "crlf_mixed",
+      "range": "L1",
+      "bytes": "first\r\n",
+      "digest": "sha256:cdbe2f91977a7ed7200542a41072651f70af2673cea4e9a9f68692284c073ed7",
+      "note": "CR is content: a CRLF line keeps both bytes."
+    },
+    {
+      "resource": "crlf_mixed",
+      "range": "L2-3",
+      "bytes": "second\nthird\r\n",
+      "digest": "sha256:afc88dcb529f1fc815a056e2d4358560e611302b19a1ece42deac390aaf88e6c",
+      "note": "Mixed endings are digested exactly as stored."
+    },
+    {
+      "resource": "crlf_mixed",
+      "range": "L4",
+      "unverifiable": "start_past_end",
+      "note": "A final LF does not open an empty fourth line."
+    },
+    {
+      "resource": "cr_only",
+      "range": "L1",
+      "bytes": "a\rb\rc",
+      "digest": "sha256:d6979e20541ecf0014f4ed8464eeaac3413a1c0e03b34ac1b08afd89eb09abcd",
+      "note": "A bare CR is not a line terminator: the resource is one line."
+    },
+    {
+      "resource": "cr_only",
+      "range": "L2",
+      "unverifiable": "start_past_end",
+      "note": "So there is no line 2."
+    },
+    {
+      "resource": "blank_lines",
+      "range": "L2",
+      "bytes": "\n",
+      "digest": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "note": "An empty line is a line: its bytes are its LF."
+    },
+    {
+      "resource": "blank_lines",
+      "range": "L2-3",
+      "bytes": "\nx\n",
+      "digest": "sha256:d23f9b4076f55f1e650c593f80f451f2094dc59cce470c063eb22aea63e4cb39",
+      "note": "Blank and non-blank lines together."
+    },
+    {
+      "resource": "utf8",
+      "range": "L2",
+      "bytes": "日本語\n",
+      "digest": "sha256:a43d56ae90ff2daebd847bf06f9c0a7b416f48f89b6e9dbefe7886540c94b550",
+      "note": "Lines split on bytes; multi-byte UTF-8 is carried whole."
+    },
+    {
+      "resource": "empty",
+      "bytes": "",
+      "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "note": "The whole of an empty resource is zero bytes."
+    },
+    {
+      "resource": "empty",
+      "range": "L1",
+      "unverifiable": "start_past_end",
+      "note": "An empty resource has zero lines."
+    }
+  ]
+}

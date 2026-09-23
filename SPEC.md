@@ -288,6 +288,7 @@ loud.
 | **F14** | A provider that signs a frame **MUST** populate that frame's `content_digest`. A frame carrying none remains conformant; *signing* one is not — the commitment would bind the frame's identity and provenance and nothing about its bytes (§6.5.2). | `attestation` suite |
 | **F15** | A verifier **MUST** distinguish an attestation that binds content from one that does not, and **MUST NOT** report the second as though it were the first. | `attestation` suite; `contextgraph_types::attest::AttestationVerdict::ValidIdentityOnly` |
 | **F16** | A host **SHOULD** surface that distinction to whoever reads the frame. A reader deciding whether to rely on a citation is asking about the bytes in front of them. | host composition |
+| **F17** | A `range` on `file` provenance **MUST** be a `line-range` (§6.2.1) whose end is not before its start, and its digest **MUST** cover exactly the bytes §6.2.1 addresses. A verifier **MUST** report any other `range`, and one whose start lies past the resource's last line, as unverifiable — **never** as the whole resource and **never** as a mismatch. | `frame-validity` (grammar); `provenance-fixture-consistency` (bytes); `tests/vectors/range-vectors.json` |
 
 ### 6.1 Temporal profile (F4)
 
@@ -311,10 +312,81 @@ from tampering.
 **Digested bytes:** the exact UTF-8 source bytes addressed by `uri` + `range` at
 retrieval time, with **no normalization** (no line-ending translation, no
 trailing-newline adjustment). Provenance without a `range` digests the whole
-resource.
+resource; provenance with one digests exactly the span §6.2.1 addresses.
 
 Only `file` provenance is held to F5: a `derivation` or `episode` link has no
 addressable bytes, so requiring a digest of it would be theatre.
+
+#### 6.2.1 Line ranges (F17)
+
+A digest is compared byte for byte, so two implementations that disagree about
+which bytes `L120-160` names compute different digests over an identical file —
+and a verifier reports that as a **mismatch**, the signal §6.5.4 treats as
+tampering. The failure mode of an unstated range grammar is a false accusation,
+not a parse error. The grammar is therefore normative:
+
+```abnf
+line-range  = %x4C line-number [ "-" line-number ]  ; "L", uppercase only
+line-number = %x31-39 *DIGIT                         ; decimal, >= 1, no leading zero
+```
+
+`%x4C` rather than `"L"` because ABNF string literals are case-insensitive, and
+`l120` is not a line range. A range addresses bytes as follows:
+
+1. **Lines split on LF (`0x0A`) only.** A line is the bytes from the start of the
+   resource, or from just after an LF, through **and including** the next LF —
+   or through the end of the resource when no LF follows. A final LF does not
+   begin an additional empty line; an empty resource has zero lines. Splitting is
+   over bytes, with no decoding (UTF-8 never encodes `0x0A` inside a multi-byte
+   sequence, so this agrees with splitting on U+000A for valid input).
+2. **CR (`0x0D`) is content.** It is never stripped and never a terminator: a
+   CRLF line carries both bytes, and a resource that uses bare CR is one line.
+   This is §6.2's no-normalization clause, applied to ranges.
+3. **1-indexed, end inclusive.** `L2-3` is lines two and three. `L5` addresses
+   exactly what `L5-5` does.
+4. **The addressed bytes** run from the first byte of line *start* through the
+   last byte — its LF included — of line *end*, contiguous and exactly as stored.
+5. **An end past the last line clamps** to the last line. **A start past the last
+   line addresses nothing**, and a verifier reports it unverifiable: an empty span
+   is not something a range can mean.
+6. **An end before the start** addresses nothing. A producer **MUST NOT** emit
+   one; a verifier reports it unverifiable.
+7. **Line numbers are unbounded.** A verifier whose integers cannot hold a line
+   number treats it as larger than any line count: such an end clamps, such a
+   start lies past the last line. The meaning of a range never depends on the
+   verifier's integer width.
+
+**Every other spelling is reserved.** `contextgraph/1` defines no byte,
+character, or column range, and GitHub's `L10-L20` is not this grammar. A later
+revision may define further forms; the reservation is what makes that safe,
+because a verifier built before it reports such a range unverifiable, which
+degrades the digest check rather than faking it — the stance F8 takes toward an
+unknown signature algorithm. A verifier **MUST NOT** fall back to digesting the
+whole resource, which would confirm bytes the range never named, and **MUST NOT**
+report a mismatch, which would call a grammar disagreement tampering.
+
+**Why the end clamps.** The digest, not the range, is the integrity check: a
+clamped span still has to hash to the declared digest, so clamping can never make
+altered bytes verify. What it decides is only how a file that shrank beneath a
+range is reported — as a mismatch, which is true (the bytes changed), rather than
+as unverifiable. The rest of the ecosystem already depends on it: the reference
+fixture and all four SDK examples declare `L1-40` over a four-line file. A
+producer **SHOULD** nonetheless emit an end within the resource, and **SHOULD**
+write a single line as `L<n>` rather than `L<n>-<n>`: the two address the same
+bytes, but `range` is compared as a string by hosts deduplicating citations and is
+signed as a string inside the attestation preimage (§6.5.1).
+
+That preimage never parses `range`. §6.5.1 encodes it as opaque bytes, so an
+attestation over a link whose `range` is outside this grammar is still well
+defined — the `range` values in `tests/vectors/attestation-vectors.json` are
+encoding inputs, not digest claims.
+
+The reference implementation is `contextgraph_types::LineRange` (addressing) and
+`contextgraph_host::verify`'s `extract_line_range` (the re-read); an unrecognised
+range surfaces there as `DigestVerification::Unreadable` carrying an
+`unsupported_range` reason. `tests/vectors/range-vectors.json` publishes the
+addressed bytes and digest for every rule above, including each unverifiable
+case, so a second implementation can check itself.
 
 ### 6.3 Frame identity (D1–D4)
 

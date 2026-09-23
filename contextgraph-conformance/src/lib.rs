@@ -17,7 +17,8 @@
 //!   namespaced.
 //! - **frame-validity** — queried frames pass `contextgraph-types` validation: score
 //!   in `[0, 1]`, a non-empty title, a non-empty `citation_label` (SPEC.md §6 —
-//!   "NEVER a bare uuid").
+//!   "NEVER a bare uuid"), well-formed temporal fields and digests (§F4, §F5),
+//!   and every `file` provenance `range` in the §6.2.1 line grammar (§F17).
 //! - **verify-honesty** — a provider advertising `verify` answers `valid` for
 //!   frames it just served and `stale` when their digests are mutated
 //!   (`docs/context-reuse.md` §4). Skipped when `verify` is not advertised —
@@ -1544,6 +1545,17 @@ pub fn check_frames(result: &ContextQueryResult) -> (bool, String) {
         for index in frame.provenance_with_unusable_digests() {
             problems.push(format!(
                 "frame[{i}] provenance[{index}] addresses a file but its digest is missing or not `sha256:<64 lowercase hex>` (§F5)"
+            ));
+        }
+        // §F17: a file range must be a §6.2.1 line range, or no conforming
+        // verifier can locate the bytes its digest covers. Before this, a host
+        // re-reading `range: "120-160"` reported the link unreadable and
+        // `provenance-fixture-consistency` skipped it — so a provider whose
+        // digests nobody could check passed every check in the suite.
+        for index in frame.provenance_with_unrecognised_ranges() {
+            let range = frame.provenance[index].range.as_deref().unwrap_or_default();
+            problems.push(format!(
+                "frame[{i}] provenance[{index}] range `{range}` is not a line range `L<start>` or `L<start>-<end>` with start <= end (§F17, §6.2.1)"
             ));
         }
         // §G1/§G2: a graph edge must be citable by a human label, and must

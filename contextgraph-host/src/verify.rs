@@ -20,16 +20,21 @@
 //! resource. Only `file` provenance is held to F5 — a `derivation` or `episode`
 //! link has no addressable bytes.
 //!
-//! ## Range grammar
+//! ## Range grammar (§6.2.1, F17)
 //!
-//! `SPEC.md` §6.2 does not fix a `range` grammar; the only convention in this
-//! codebase is line ranges, `L<start>` or `L<start>-<end>` (1-indexed,
-//! inclusive), which this verifier supports. A line's bytes **include** its
-//! terminating `\n` as it appears on disk (host-defined, since the spec is
-//! silent on terminator inclusion); no `\r` is ever stripped, honoring the
-//! "no line-ending translation" clause. An unrecognized range grammar is an
-//! honest [`Unreadable`](DigestVerification::Unreadable), never a silent
-//! whole-file fallback that would digest the wrong bytes.
+//! `range` is a line range, `L<start>` or `L<start>-<end>`: 1-indexed, end
+//! inclusive, each line **including** its terminating `\n` as it sits on disk,
+//! no `\r` ever stripped (the "no line-ending translation" clause applied to
+//! ranges). An end past the last line clamps to it; a start past the last line
+//! addresses nothing and is unverifiable. The grammar and those rules are
+//! normative in `SPEC.md` §6.2.1 and implemented once, in
+//! [`contextgraph_types::LineRange`], which this verifier and the
+//! `frame-validity` conformance check share — so the host cannot drift from the
+//! rule it is checking providers against. Every other spelling is reserved,
+//! and one is an honest [`Unreadable`](DigestVerification::Unreadable): never a
+//! silent whole-file fallback that would digest bytes the range never named,
+//! and never a [`Mismatch`](DigestVerification::Mismatch), which is the
+//! tampering signal. `tests/vectors/range-vectors.json` pins the digests.
 //!
 //! ## Scope and safety
 //!
@@ -47,7 +52,7 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use contextgraph_types::{ContextFrame, Provenance};
+use contextgraph_types::{ContextFrame, LineRange, LineRangeError, Provenance};
 
 /// The outcome of verifying one `file`-provenance digest against the bytes it
 /// addresses (`SPEC.md` §6.2). Evidence-carrying rather than a bare bool, so a
@@ -164,61 +169,29 @@ fn addressed_bytes(path: &Path, range: Option<&str>) -> Result<Vec<u8>, String> 
     }
 }
 
-/// Extract the byte span of an `L<start>[-<end>]` line range (1-indexed,
-/// inclusive; each line's trailing `\n` included). An unrecognized grammar is an
-/// error, not a whole-file fallback — digesting bytes the range never named is
-/// exactly the silent wrongness this check exists to prevent.
+/// Extract the bytes an `L<start>[-<end>]` line range addresses (`SPEC.md`
+/// §6.2.1): 1-indexed, inclusive, each line's trailing `\n` included, the end
+/// clamped to the last line. The addressing itself is
+/// [`LineRange::byte_span`], shared with the provider-facing grammar check.
+///
+/// An unrecognised grammar is an error, not a whole-file fallback — digesting
+/// bytes the range never named is exactly the silent wrongness this check
+/// exists to prevent.
 fn extract_line_range(bytes: &[u8], spec: &str) -> Result<Vec<u8>, String> {
-    let digits = spec
-        .strip_prefix('L')
-        .ok_or_else(|| unsupported_range(spec))?;
-    let (start, end) = match digits.split_once('-') {
-        Some((first, last)) => (parse_line(first, spec)?, parse_line(last, spec)?),
-        None => {
-            let single = parse_line(digits, spec)?;
-            (single, single)
-        }
-    };
-    if start == 0 || end < start {
-        return Err(format!("range `{spec}` is empty or inverted"));
-    }
-
-    // Per-line byte spans, each including its terminating `\n`. A trailing `\n`
-    // does not open an extra empty line (matches `str::lines()` line counting),
-    // and no `\r` is stripped (no line-ending translation, §6.2).
-    let mut line_spans: Vec<(usize, usize)> = Vec::new();
-    let mut line_start = 0usize;
-    for (i, &byte) in bytes.iter().enumerate() {
-        if byte == b'\n' {
-            line_spans.push((line_start, i + 1));
-            line_start = i + 1;
-        }
-    }
-    if line_start < bytes.len() {
-        line_spans.push((line_start, bytes.len()));
-    }
-
-    let count = line_spans.len();
-    if start > count {
-        return Err(format!(
-            "range `{spec}` starts at line {start} but the resource has {count} line(s)"
-        ));
-    }
-    // Clamp the end to EOF: a range that reaches past the last line addresses
-    // through the end of the resource.
-    let end = end.min(count);
-    let from = line_spans[start - 1].0;
-    let to = line_spans[end - 1].1;
-    Ok(bytes[from..to].to_vec())
-}
-
-fn parse_line(field: &str, spec: &str) -> Result<usize, String> {
-    field.parse::<usize>().map_err(|_| unsupported_range(spec))
+    let range = LineRange::parse(spec).map_err(|error| match error {
+        LineRangeError::Unrecognised => unsupported_range(spec),
+        LineRangeError::Inverted => format!("range `{spec}` is empty or inverted (§6.2.1)"),
+        other => format!("range `{spec}`: {other}"),
+    })?;
+    let span = range
+        .byte_span(bytes)
+        .map_err(|error| format!("range `{spec}`: {error}"))?;
+    Ok(bytes[span].to_vec())
 }
 
 fn unsupported_range(spec: &str) -> String {
     format!(
-        "unsupported range `{spec}`; expected a line range `L<start>` or `L<start>-<end>` (§6.2)"
+        "unsupported range `{spec}`; expected a line range `L<start>` or `L<start>-<end>` (§6.2.1, F17)"
     )
 }
 
