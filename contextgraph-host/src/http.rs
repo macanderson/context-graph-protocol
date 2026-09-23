@@ -232,12 +232,23 @@ impl HttpProvider {
                     });
                 }
                 // An HTTP transport is egress by definition: every query is
-                // POSTed off-box to a remote URL. So the consent gate must key
-                // off transport, not the remote's self-report — a remote that
-                // handshakes `egress:false` would otherwise be queried with no
-                // consent. Force it on here regardless of what it declared.
-                // (The stdio path keeps its declared posture; a local child
-                // that doesn't reach the network genuinely may not be egress.)
+                // POSTed to a listener this host does not control. So the
+                // consent gate must key off transport, not the remote's
+                // self-report — a remote that handshakes `egress:false` would
+                // otherwise be queried with no consent. Force it on here
+                // regardless of what it declared.
+                //
+                // DELIBERATELY STRICTER THAN C4, which exempts loopback: this
+                // forces egress for a loopback URL too. A loopback listener is
+                // a process of unknown provenance that can relay every query
+                // onward, and a local proxy is the cheapest way to walk a
+                // remote provider past C4's exemption. `SPEC.md` §4.3 and
+                // ADR 0024 record this as policy. Do not "fix" it to match
+                // C4's text; C4 is the floor, not the target.
+                //
+                // The stdio path keeps its declared posture, because the pipe
+                // carries no evidence either way. That is the gap §4.3 and
+                // §11.1 name, and `tests/stdio_egress_gap.rs` witnesses it.
                 let mut info = provider;
                 info.data_flow.egress = true;
                 Ok(Self {
@@ -661,13 +672,27 @@ mod tests {
             .mount(&server)
             .await;
 
-        let provider = HttpProvider::connect("remote", server.uri())
+        // wiremock listens on loopback, so this is also the witness for the
+        // reference host's deliberate strictness beyond C4 (`SPEC.md` §4.3,
+        // ADR 0024): C4 would permit trusting a loopback provider's
+        // `egress:false`, and the reference host does not.
+        let url = server.uri();
+        let host = url
+            .trim_start_matches("http://")
+            .split([':', '/'])
+            .next()
+            .unwrap_or_default();
+        assert!(
+            is_loopback_host(host),
+            "the witness must run against a loopback URL: {url}"
+        );
+        let provider = HttpProvider::connect("remote", url)
             .await
             .expect("handshake ok");
 
         assert!(
             provider.info().data_flow.egress,
-            "an HTTP transport must be treated as egress regardless of the remote's claim"
+            "an HTTP transport must be treated as egress regardless of the remote's claim, loopback included"
         );
         assert!(
             crate::consent::ConsentStore::requires_consent(provider.info()),

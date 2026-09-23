@@ -135,7 +135,7 @@ install/consent time.
 | - | ----------- | ----------- |
 | **C1** | A host **MUST NOT** auto-enable a provider declaring `egress: true`. It **MUST** gate it behind explicit, named, revocable consent. | `ConsentStore` |
 | **C2** | A host **MUST NOT** transmit a query payload to an egress provider before consent is recorded. | `Host::query_provider` |
-| **C3** | A provider **SHOULD** declare `egress: true` honestly if data leaves the machine, directly or indirectly. | advisory — see C4 |
+| **C3** | A provider **MUST** declare `egress: true` if data leaves the machine, directly or indirectly — including through a process, service, or proxy it relays to. | unverifiable over stdio (§4.3, §11.1); overridden over HTTP by C4 |
 | **C4** | A host's HTTP transport **MUST** treat every non-loopback provider as egress regardless of its handshake claim. | HTTP transport |
 | **C5** | A provider **MUST NOT** declare an off-machine `egress_scope` alongside `egress: false` — a local posture that names a destination content leaves is a contradiction a host rejects at the handshake. | `DataFlow::scopes_consistent` |
 | **C6** | A host **MUST** refuse a query, with a typed error naming the scopes, when a provider declares off-machine egress scopes and any such scope has no recorded consent receipt; the payload **MUST NOT** be transmitted. | `ConsentStore::evaluate`; `scope-lie` witness |
@@ -144,7 +144,8 @@ install/consent time.
 
 C4 is the load-bearing one: C3 is a claim, and a protocol that trusted claims
 about egress would have no security story at all. The transport overrides the
-declaration because the transport *knows*.
+declaration because the transport *knows*. Over stdio it does not, and §4.3
+states what the consent guarantee is worth there.
 
 ### 4.1 Egress scopes and consent receipts
 
@@ -178,6 +179,53 @@ a host that would send workspace content to a remote provider in cleartext, or
 spill its bearer token into a log, has no egress-security story at all. A
 provider **MAY** require a bearer credential; how a host obtains and stores one
 is host machinery and outside this revision.
+
+### 4.3 What the transport cannot see (C3 over stdio)
+
+C4's argument has a converse. Over HTTP the transport knows that a query leaves
+the host, so it overrides the provider's claim. Over stdio it knows nothing of
+the kind: a stdio provider is a child process with its own sockets, and nothing
+on the NDJSON pipe reveals whether it opens one. There, `egress: false` is C3 and
+only C3, a declaration the host acts on and cannot check. So the consent
+guarantee (C1, C2) holds as follows:
+
+- **An HTTP provider** is never queried without recorded consent, whatever it
+  declares (C4).
+- **A stdio or in-process provider declaring `egress: true`** is never queried
+  without recorded consent (C1, C2).
+- **A stdio provider declaring `egress: false`** is queried without consent,
+  because it has said nothing leaves. If that is a lie, it breaks C3, and nothing
+  in the protocol, the reference host, or the conformance suite detects it
+  (§11.1).
+
+**C3 is a MUST even though nobody can check it.** Strength and checkability are
+separate properties. A dishonest `egress: false` is a conformance violation a
+deployment can act on, by contract, by delisting, or in a registry. That is how
+every unverifiable but load-bearing declaration is handled, and A2's `cited` is
+the precedent inside this specification. Leaving it a SHOULD would have made
+exfiltration behind an honest-looking handshake merely *discouraged*.
+
+**Confining a child's network belongs to the deployment.** The reference host
+does not sandbox stdio providers. Network confinement is platform-specific
+(network namespaces or seccomp on Linux, a sandbox profile on macOS,
+AppContainer on Windows), and a partial implementation would state a guarantee
+that holds on some platforms and silently not on others, which is the gap this
+section exists to close. What the reference host provides is a seam that
+composes with every such mechanism. `Host::add_stdio` spawns whatever program it
+is given, with the scrubbed environment `stdio.rs` already applies, so an
+operator who cannot trust a provider's declaration passes a confining wrapper as
+the program: `bwrap --unshare-net`, `unshare -n`, `sandbox-exec -p`, or a
+container with no network. A host that confines a stdio provider's network has
+made C4's argument true for stdio again, because the transport knows.
+
+**The reference host is stricter than C4 on loopback, deliberately.** C4 exempts
+loopback. `HttpProvider` in `http.rs` does not: it forces `egress: true` for
+every HTTP provider, loopback included. A loopback listener is a process of
+unknown provenance that can relay every query onward, and a local proxy is the
+cheapest way to walk a remote provider past C4. C4 stays the floor a conformant
+host must meet. The reference host's stricter behaviour is policy, recorded in
+[ADR 0024](./docs/adr/0024-consent-binds-what-the-transport-can-see.md), and is
+not a divergence to relax.
 
 ---
 
@@ -1263,6 +1311,20 @@ What remains genuinely unchecked:
   against a real non-loopback TLS peer — and witnessing C4's treat-as-egress
   override over that same peer — needs a network peer the in-process harness
   cannot stand up, and stays the host-side harness's next increment.
+- **C3 over stdio — a stdio provider's `egress: false` is unverifiable.** This
+  is a larger hole than the HTTP rules above. A child process can open a
+  socket and send the query payload anywhere while declaring `egress: false`,
+  and the host queries it without asking for consent, because C3 is the only
+  thing that says otherwise and the pipe carries no evidence either way (§4.3). No provider
+  check can observe it from the wire, and no host scenario can observe it from
+  the transport. The `contextgraph-host` test
+  `a_stdio_provider_declaring_no_egress_exfiltrates_undetected`
+  (`tests/stdio_egress_gap.rs`) witnesses that the gap exists today: a child
+  declaring `egress: false` connects out carrying the query's goal, and the
+  query succeeds with no consent recorded and no error raised. That test is
+  the fail→pass case for any later fix, whether confinement in the reference
+  host or a detection hook. Until then, closing the gap is the deployment's
+  confinement choice (§4.3).
 - **R3 breakout-resistance is escaping, not an unguessable fence — a design
   choice, no longer a gap.** The reference `compose_context` neutralizes a
   content-embedded `<frame`/`</frame>` token and escapes fence attributes, so

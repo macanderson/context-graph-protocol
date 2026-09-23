@@ -39,8 +39,13 @@ style guide.
    don't match, the frames get dropped. See [ADR 0003](./adr/0003-canonical-token-accounting.md).
 
 3. **Data doesn't leave the machine without a human saying yes.** A provider that
-   sends data somewhere else (a cloud API, a third-party index) cannot be used
-   until a person explicitly consents. That consent is recorded, not assumed.
+   says it sends data somewhere else (a cloud API, a third-party index), and any
+   provider reached over HTTP, cannot be used until a person explicitly
+   consents. That consent is recorded, not assumed. The one thing a host cannot
+   see is a local (stdio) provider quietly opening its own network connection,
+   so for those the provider's word is all there is. Lying breaks the spec, and
+   operators confine providers they don't trust (see
+   [ADR 0024](./adr/0024-consent-binds-what-the-transport-can-see.md)).
 
 4. **"Conformant" is a test you run, not a claim you make.** We ship a test suite
    (`contextgraph-inspect`) that actively tries to break each rule above. A
@@ -237,6 +242,7 @@ row, a row names no file, or two ADRs share a number.
 | [0021](./adr/0021-attestation-metadata-outside-the-signature.md) | Attestation metadata stays outside the signature, and says so | An attestation's `attester_id` and `issued_at` can be rewritten in transit and the signature still verifies. The spec now says so and forbids presenting them as signed; whether a future major family should sign `issued_at` depends on first deciding what a verifier does with it. |
 | [0022](./adr/0022-as-of-is-a-point-in-window-predicate.md) | `as_of` is a point-in-window predicate | A query pinned to an instant gets only frames whose `[valid_from, valid_to)` window contains it — nothing not yet true, nothing no longer true. The conformance suite used to enforce half of that without the spec saying any of it; now the spec says all of it and the suite checks both halves. |
 | [0023](./adr/0023-frame-identity-names-two-provider-ids.md) | A frame identity names two provider ids | Every host knows a provider by the name the operator gave it and the name the provider gave itself. On the wire an identity carries the provider's own name, which is the only one it knows. Inside the host it carries the operator's, because anyone can claim any name. The host translates at the connection. |
+| [0024](./adr/0024-consent-binds-what-the-transport-can-see.md) | Consent binds what the transport can see | Over HTTP the host knows a query leaves the machine. Over stdio it sees a pipe, not the child's sockets. The README now claims only what is enforced, lying about egress is a MUST-level violation even though no one can detect it, confining a stdio child is left to the deployment, and the reference host's treatment of loopback HTTP as egress is policy rather than a bug. |
 | [0025](./adr/0025-the-dco-is-enforced-not-requested.md) | The DCO is enforced, not requested | Contributors were told their sign-off is what licenses their contribution, and nothing checked it, so most commits had none. A CI check now requires every commit a pull request adds to be signed off by its author (a bot's by the person behind it), from this change forward, without rewriting history. |
 | [0026](./adr/0026-versions-in-prose-and-the-go-sdk-tag.md) | Versions in prose, and the Go SDK's tag | A version written in a README could go stale where no manifest check could see it. Now it is held to its manifest like any other pin. The Go SDK has its own version line, because Go ties a module's major to its import path, so prose never pins a Go version nothing offline can check. |
 

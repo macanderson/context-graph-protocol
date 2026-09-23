@@ -377,8 +377,8 @@ SPEC.md §4.
 | - | ----------- | ---------------------- |
 | C1 | A conforming host **MUST NOT** auto-enable a provider that declares `data_flow.egress: true`. It **MUST** gate that provider behind explicit, named, revocable consent. | `ConsentStore` gate in `contextgraph-host` |
 | C2 | The host **MUST NOT** transmit a query payload to an `egress` provider before consent is recorded. | `Host::query_provider` gate |
-| C3 | A provider **SHOULD** declare `egress: true` honestly if it sends data off the local machine, directly or indirectly. | advisory; the host cannot rely solely on the claim — see C4 |
-| C4 | `contextgraph-host`'s HTTP transport **MUST** treat every remote provider as `egress` regardless of its handshake claim. | `contextgraph-host` HTTP transport |
+| C3 | A provider **MUST** declare `egress: true` if it sends data off the local machine, directly or indirectly — including through a process, service, or proxy it relays to. | unverifiable over stdio, where the host sees a pipe and not the child's sockets (SPEC.md §4.3, §11.1; witnessed by `contextgraph-host`'s `stdio_egress_gap` test); overridden over HTTP by C4 |
+| C4 | A host's HTTP transport **MUST** treat every non-loopback provider as `egress` regardless of its handshake claim. | `contextgraph-host` HTTP transport, which is deliberately stricter and forces egress for loopback too (SPEC.md §4.3, ADR 0024) |
 | C5 | A provider **MUST NOT** declare an off-machine `egress_scope` alongside `egress: false`; a host rejects that contradiction at the handshake. | `DataFlow::scopes_consistent` |
 | C6 | A host **MUST** refuse a query, with a typed error naming the scopes, when a provider declares an off-machine egress scope that has no recorded [consent receipt](./context-reuse.md#3-consent-scopes-and-receipts). The payload **MUST NOT** be transmitted. | `ConsentStore::evaluate`; `--misbehave scope-lie` witness |
 | C7 | The host's HTTP transport **MUST** use TLS for every non-loopback provider, and **MUST** refuse to send a query payload over an unencrypted connection to one. | `contextgraph-host` HTTP transport (`HostError::InsecureTransport`) |
@@ -391,14 +391,8 @@ SPEC.md §5.
 | # | Requirement | Enforced / verified by |
 | - | ----------- | ---------------------- |
 | Q1 | When `kinds` is non-empty, a provider **MUST NOT** return a frame whose `kind` is outside it. Empty `kinds` means any kind. A provider serving none of the requested kinds returns zero frames or replies `unsupported_kind`. | `kinds-filter` conformance check |
-| E1 | A host **MUST NOT** populate `query.embedding` unless its embedding fingerprint is **exactly equal** to the provider's `capabilities.embeddings_fingerprint`. A provider given a vector whose length contradicts its declared dimension **SHOULD** reply `bad_request`. | host contract; the reference host never populates `query.embedding` |
-
-### Query
-
-| # | Requirement | Enforced / verified by |
-| - | ----------- | ---------------------- |
-| Q1 | When `kinds` is non-empty, a provider **MUST NOT** return a frame whose `kind` is outside it; one serving none of the requested kinds returns zero frames, or replies `unsupported_kind`. | `kinds-filter` conformance check |
 | Q2 | When `as_of` is present, a provider **MUST NOT** return a frame whose half-open valid-time window `[valid_from, valid_to)` excludes it (an absent bound is unbounded; a frame with neither bound is eligible). A provider with nothing valid at the pin returns zero frames. `recorded_at` is not constrained. | `as-of-temporal` conformance check; `ignore-as-of`, `ignore-valid-to` witnesses |
+| E1 | A host **MUST NOT** populate `query.embedding` unless its embedding fingerprint is **exactly equal** to the provider's `capabilities.embeddings_fingerprint`. A provider given a vector whose length contradicts its declared dimension **SHOULD** reply `bad_request`. | host contract; the reference host never populates `query.embedding` |
 
 ### Frame validity
 

@@ -27,6 +27,13 @@
 //! query payload and whatever it indexed through its own declared inputs,
 //! nothing the host holds. On Unix the child leads its own process group so
 //! the whole subtree is signalled at once and can never outlive the host.
+//!
+//! Environment scrubbing is **not** network confinement. The child can open
+//! sockets, and nothing on the pipe reveals whether it does, so the stdio
+//! transport, unlike HTTP (C4), cannot override a provider's `egress: false`
+//! (`SPEC.md` §4.3; ADR 0024). Confining the child is left to the deployment,
+//! which passes a wrapper such as `bwrap --unshare-net` as `program`. The
+//! scrubbed `PATH` still resolves it.
 
 use std::collections::HashMap;
 use std::process::Stdio;

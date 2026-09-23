@@ -161,15 +161,18 @@ do:
   you changes state somewhere.
 - `egress: true` — **anything you do sends data off the local machine.**
 
-**Declare `egress: true` honestly if your provider calls out to a remote
-service, even indirectly.** A conforming host (`contextgraph-host::consent`) refuses
-to query an `egress` provider until the user has recorded explicit, one-time
-consent naming what leaves — the query payload is never transmitted before
-that. This is enforced host-side and cannot be opted out of by a provider
-that under-declares its own egress; note that `contextgraph-host`'s own HTTP transport
-goes further and treats *every* remote provider as egress regardless of what
-it claims in the handshake, precisely so a remote can't lie its way out of
-the consent gate.
+**Declare `egress: true` if your provider calls out to a remote service, even
+indirectly.** That is a **MUST** (`SPEC.md` C3). A conforming host
+(`contextgraph-host::consent`) refuses to query an `egress` provider until the
+user has recorded explicit, one-time consent naming what leaves — the query
+payload is never transmitted before that. `contextgraph-host`'s HTTP transport
+goes further and treats *every* HTTP provider as egress, loopback included,
+whatever it claims in the handshake, so a remote can't lie its way out of the
+gate. Over stdio nothing can check you: the host sees a pipe, not your sockets,
+so an under-declared stdio provider is queried without consent and nobody
+notices. That is why C3 is a MUST rather than advice, and why operators are told
+to confine stdio providers they do not trust
+([`SPEC.md` §4.3](../SPEC.md#43-what-the-transport-cannot-see-c3-over-stdio)).
 
 ### The budget-honesty contract
 
