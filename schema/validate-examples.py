@@ -34,6 +34,10 @@ The four example surfaces are deliberately different in kind:
     to the spec's own schema.
   * each schema's `$id` is its public identity — pinned because a schema that
     resolves to the wrong document is worse than one that 404s.
+
+`examples/README.md` is held to more than the schema: its annotated session
+must quote the transcript line for line (section 8), because a walkthrough a
+provider author diffs against is wrong in ways a schema cannot see (#144).
 """
 import hashlib
 import json
@@ -382,6 +386,72 @@ check(f"{ATTESTATION_KEY_FIXTURE}: signed_message_hex is the domain tag then the
 check(f"{ATTESTATION_KEY_FIXTURE}: the key signs the record it names",
       attestation["signed_record_hash"]
       == json.loads((fixtures_dir / key_fixture["signs"]).read_text())["record_hash"])
+
+# 8. examples/README.md's quoted blocks.
+#
+#    The README invites provider authors to diff their output against it, and
+#    its annotated session was hand-copied from the transcript and then left
+#    behind as the transcript grew: quoted `query`/`frames` lines with no `id`
+#    (so the walkthrough failed to demonstrate correlation, H4), frames missing
+#    `content_digest`, `token_cost` values the file no longer carried, and no
+#    step at all for `verify`/`verified` (#144). Schema validation alone cannot
+#    see that — every stale block was a well-formed envelope.
+#
+#    So the walkthrough is held to EQUALITY, not just validity: its fenced
+#    blocks, in order, must be exactly the transcript's lines as parsed JSON —
+#    same count, same members, same values. Whitespace is free so the README
+#    can print compact JSON. Every other ```json block in the README (the
+#    egress variant, the error reply) is not in the transcript, and is held to
+#    the schema instead.
+print("\nChecking examples/README.md against the transcript and the schema\n")
+
+readme_path = ROOT / "examples" / "README.md"
+WALKTHROUGH_HEADING = "## A complete stdio session (annotated)"
+readme_blocks, current, start, in_walkthrough, section = [], None, 0, False, None
+for number, line in enumerate(readme_path.read_text().splitlines(), 1):
+    if current is None and line.startswith("## "):
+        section = line.rstrip()
+    if current is None:
+        if line.rstrip() == "```json":
+            current, start = [], number
+    elif line.rstrip() == "```":
+        readme_blocks.append((start, section == WALKTHROUGH_HEADING, "\n".join(current)))
+        current = None
+    else:
+        current.append(line)
+
+walkthrough = []
+for start, is_walkthrough, block in readme_blocks:
+    try:
+        value = json.loads(block)
+    except json.JSONDecodeError as e:
+        check(f"README.md:{start} parses as one JSON value", False)
+        print(f"        {e}")
+        continue
+    if is_walkthrough:
+        walkthrough.append((start, value))
+        continue
+    try:
+        jsonschema.validate(value, SCHEMA)
+        check(f"README.md:{start} ({value.get('type')})", True)
+    except jsonschema.ValidationError as e:
+        check(f"README.md:{start} ({value.get('type') if isinstance(value, dict) else '?'})", False)
+        print(f"        {e.message}")
+
+transcript = [json.loads(l) for l in ndjson_path.read_text().splitlines() if l.strip()]
+check(
+    f"README.md walkthrough quotes all {len(transcript)} transcript lines "
+    f"(found {len(walkthrough)} blocks under '{WALKTHROUGH_HEADING}')",
+    len(walkthrough) == len(transcript),
+)
+for index, ((start, quoted), expected) in enumerate(zip(walkthrough, transcript), 1):
+    same = quoted == expected
+    check(f"README.md:{start} is transcript line {index} ({expected.get('type')})", same)
+    if not same and isinstance(quoted, dict):
+        differing = sorted(
+            key for key in set(quoted) | set(expected) if quoted.get(key) != expected.get(key)
+        )
+        print(f"        top-level members that differ: {', '.join(differing)}")
 
 print(f"\n{'OK — all examples validate' if failures == 0 else f'{failures} failure(s)'}")
 sys.exit(1 if failures else 0)
