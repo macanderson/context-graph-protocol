@@ -53,9 +53,12 @@ Flags:
 
 ## The separation-of-duties question — read this first
 
-Several repos in this org carry **SCR-005**
-([`ctx.scr.005-triage-separation.toml`](https://github.com/macanderson/oxagen/blob/main/.oxagen/rules/ctx.scr.005-triage-separation.toml)), which says the triage agent
-*"never implements anything and never closes issues — it only sizes and orders."*
+Several repos in this org are steered by **SCR-005**
+([`ctx.scr.005-triage-separation.toml`](https://github.com/macanderson/oxagen/blob/main/.oxagen/rules/ctx.scr.005-triage-separation.toml)).
+The record says issue creators apply only `triage`, and the triage identity
+assigns the priority and size. The retired markdown record of SCR-005 also said
+the triage agent *"never implements anything and never closes issues — it only
+sizes and orders."*
 
 **This command extends that role, at the maintainer's explicit request** for vet +
 fix + label in one pass. Resolve the tension this way; do not resolve it by
