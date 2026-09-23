@@ -651,6 +651,23 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python3 .github/scripts/check-dco.py --range "${BASE_SHA}..${HEAD_SHA}"
 
+  adr-log:
+    name: the GUIDE's ADR log indexes every ADR, and ADR numbers are unique
+    runs-on: ubuntu-latest
+    # docs/GUIDE.md §3 is a shared cell every ADR-adding PR must write, so each
+    # PR's tree is fine on its own and a missing row exists only relative to a
+    # directory listing nobody compared it against. Three ADRs sat unindexed
+    # that way (#129), and two open PRs once each added an ADR 0012, which git
+    # would have merged cleanly (#123). This derives the expected rows from
+    # docs/adr/*.md on every run, so there is no list here to forget. Its unit
+    # tests (tests/test_check_adr_log.py) run in guard-self-tests.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python3 .github/scripts/check-adr-log.py
+
   conformance-counts:
     name: docs state the real number of conformance checks
     runs-on: ubuntu-latest

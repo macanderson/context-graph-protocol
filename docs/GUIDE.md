@@ -36,7 +36,7 @@ style guide.
 2. **Budgets are checked, not trusted.** A provider says "this costs N tokens."
    The host recomputes that cost from the real bytes of content
    (`tokens = ceil(bytes / 4)`, exact match, no wiggle room). If the numbers
-   don't match, the frames get dropped. See [ADR 0003](#adr-0003).
+   don't match, the frames get dropped. See [ADR 0003](./adr/0003-canonical-token-accounting.md).
 
 3. **Data doesn't leave the machine without a human saying yes.** A provider that
    sends data somewhere else (a cloud API, a third-party index) cannot be used
@@ -71,8 +71,9 @@ style guide.
 
 10. **The protocol stays small.** CGP only does context retrieval. It does not
     grow into tool-calling, task orchestration, or app-specific features. See
-    [ADR 0007](#adr-0007) for why "the big app-specific bundle" and "the small
-    protocol frame" are kept strictly separate.
+    [ADR 0007](./adr/0007-protocol-product-boundary.md) for why "the big
+    app-specific bundle" and "the small protocol frame" are kept strictly
+    separate.
 
 ### Contribution conventions (the short version)
 
@@ -90,7 +91,7 @@ style guide.
   link to `raw.githubusercontent.com` or the prefixes this repo actually
   publishes to the public site (`/schema/`, `/schema/v1/`, `/spec/`).
   `.github/scripts/check-deploy-hygiene.py` enforces it. See
-  [ADR 0008](#adr-0008), amended by ADR 0013 for the schemas' `$id`.
+  [ADR 0008](./adr/0008-deploy-topology-and-advertised-urls.md), amended by [ADR 0013](./adr/0013-schema-identity-on-a-branded-versioned-url.md) for the schemas' `$id`.
 
 ---
 
@@ -135,7 +136,7 @@ A **frame** ("ContextFrame") is one piece of context. It always has:
 - **citation label** — human-readable, always present.
 - **relations** — optional graph edges to other frames.
 
-A frame can carry its content three ways (see [ADR 0005](#adr-0005)):
+A frame can carry its content three ways (see [ADR 0005](./adr/0005-frame-representations.md)):
 
 - **full** — the whole thing, inline.
 - **compact** — a shrunk/summarized version inline, plus a way to fetch the original.
@@ -185,7 +186,7 @@ code, start here.
 - `ContextUse`, `AttributionReport` (in `attribution.rs`) — did a frame get selected, actually shown to the model, and actually cited? Separate from cost — this answers "did it matter?"
 - `token.rs` — the token-cost formula (`ceil(bytes / 4)`).
 
-**The optional lifecycle-record profile** (durable memory, not part of frozen 1.0 core — see [ADR 0006](#adr-0006) and the [profile doc](./profiles/context-exchange-provider.md)):
+**The optional lifecycle-record profile** (durable memory, not part of frozen 1.0 core — see [ADR 0006](./adr/0006-prompt-ingestion-as-a-local-provider.md) and the [profile doc](./profiles/context-exchange-provider.md)):
 - `ContextRecord`, `RecordBody` — an immutable, hash-addressed note: one of 12 kinds
   (`observation`, `knowledge`, `memory`, `directive`, `record_proposal`,
   `evidence`, `artifact_contract`, `contract_validation`, `outcome_assessment`,
@@ -207,6 +208,10 @@ A new ADR takes the next free number as `docs/adr/NNNN-slug.md` and a row in
 this table. `python3 .github/scripts/check-adr-numbers.py --against origin/main`
 checks both against the merge with the current base, because two open pull
 requests can pick the same number and each look fine on its own (#123).
+
+Adding an ADR? Add its row here in the same PR, in number order.
+`.github/scripts/check-adr-log.py` fails CI when a file in `docs/adr/` has no
+row, a row names no file, or two ADRs share a number.
 
 | # | Title | One-line takeaway |
 |---|---|---|
