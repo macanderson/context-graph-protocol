@@ -45,7 +45,7 @@ removed `docs/scr/` from all five repositories.
   maintainability, innovation, efficiency, or performance. Apply ONLY the
   `triage` label.
 - **[SCR-005](https://github.com/macanderson/oxagen/blob/main/.oxagen/rules/ctx.scr.005-triage-separation.toml) — Triage
-  separation of duties:** Never apply priority (`P0`–`P3`) or size labels —
+  separation of duties:** Never apply priority (`P0`–`P4`) or size labels —
   a dedicated triage agent owns sizing and priority; a guard workflow
   strips creator-applied priorities.
 - **[SCR-006](https://github.com/macanderson/oxagen/blob/main/.oxagen/rules/ctx.scr.006-schema-change-labelled.toml) — Schema
