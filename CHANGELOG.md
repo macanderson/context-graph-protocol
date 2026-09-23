@@ -405,6 +405,14 @@ text lands without a human merge.
   `contextgraph/1.0` and the crates shipped `1.0.0`.
 
 ### Fixed
+- **A scaffolded TypeScript provider's workflow pins `actions/setup-node@v7`.**
+  #197 moved every workflow under `.github/` to v7 and left
+  `sdk/create-contextgraph-provider/templates/typescript/_github/workflows/conformance.yml`
+  on v4. Dependabot never sees that file (`_github/` becomes `.github/` only
+  at scaffold time), so the guard from #194 failed on `main` as soon as it
+  landed. The template now pins the major this repository runs. The workflow
+  still asks that action for Node 22, the same version the repository's own
+  TypeScript jobs use.
 - **The provider-authoring docs describe the wire contract we have (issue
   #151).** The pages someone reads before writing any provider code got four
   things wrong, two of which would have produced a **non-conformant** provider.
