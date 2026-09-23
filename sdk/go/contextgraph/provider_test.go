@@ -246,3 +246,46 @@ func TestHasEmbeddingDistinguishesAbsentFromEmpty(t *testing.T) {
 // Those fields are pointers so an absent value and an empty one stay
 // distinguishable, which the §6.5.2 frame commitment's enc_opt requires (#124).
 func ptrTo[T any](v T) *T { return &v }
+
+// A well-formed envelope with its payload missing, and a line that parses as
+// JSON but is not an object, are both the host's mistake. Each must get a
+// bad_request reply rather than silence (which strands a correlated host) or a
+// crash (SPEC.md §11 R1) — the shapes the malformed-input-tolerance probe sends.
+func TestAMalformedRequestIsAnsweredBadRequest(t *testing.T) {
+	provider := verifyingProvider{
+		queryFunc: func(ContextQuery) (ContextQueryResult, error) {
+			t.Fatal("the provider must not be called for a request with no payload")
+			return ContextQueryResult{}, nil
+		},
+		verify: func(VerifyRequest) VerifyResponse {
+			t.Fatal("the verifier must not be called for a request with no payload")
+			return VerifyResponse{}
+		},
+	}
+	for _, testCase := range []struct {
+		name, line string
+		wantID     *string
+	}{
+		{"query without payload", `{"type":"query","id":"q1"}`, ptrTo("q1")},
+		{"query with null payload", `{"type":"query","id":"q2","query":null}`, ptrTo("q2")},
+		{"verify without payload", `{"type":"verify"}`, nil},
+		{"bare scalar", `42`, nil},
+		{"bare array", `[]`, nil},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			var got errorReply
+			if err := json.Unmarshal([]byte(reply(t, provider, testCase.line)), &got); err != nil {
+				t.Fatalf("reply was not a JSON envelope: %v", err)
+			}
+			if got.Type != "error" || got.Code != "bad_request" {
+				t.Fatalf("reply = %+v, want an error with code bad_request", got)
+			}
+			switch {
+			case testCase.wantID == nil && got.ID != nil:
+				t.Fatalf("reply carried id %q, want none", *got.ID)
+			case testCase.wantID != nil && (got.ID == nil || *got.ID != *testCase.wantID):
+				t.Fatalf("reply did not echo the correlation id %q: %+v", *testCase.wantID, got.ID)
+			}
+		})
+	}
+}

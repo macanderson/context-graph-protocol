@@ -179,6 +179,58 @@ async fn crashing_on_garbage_fails_malformed_input_tolerance() {
 }
 
 #[tokio::test]
+async fn crashing_on_a_payloadless_envelope_fails_malformed_input_tolerance() {
+    // #146: a `query` envelope with no `query` member is valid JSON, so the
+    // probe's unparseable line never reached this crash, and the Python SDK
+    // passed the check while dying on it. The evidence must name the input,
+    // or the next SDK to repeat it cannot tell which shape killed it.
+    let report = run_conformance(target(&["--misbehave", "crash-on-missing-payload"])).await;
+    assert_eq!(status_of(&report, CHECK_MALFORMED), CheckStatus::Fail);
+    let evidence = evidence_of(&report, CHECK_MALFORMED);
+    assert!(
+        evidence.contains("crashed on a `query` envelope with its `query` payload missing"),
+        "{evidence}"
+    );
+    // The mode is attributable: it survives the other malformed inputs and
+    // serves an ordinary query, so nothing else goes red.
+    let others: Vec<&str> = report
+        .failures()
+        .map(|check| check.name.as_str())
+        .filter(|name| *name != CHECK_MALFORMED)
+        .collect();
+    assert!(others.is_empty(), "also tripped: {others:?}");
+}
+
+#[tokio::test]
+async fn ignoring_a_payloadless_request_fails_malformed_input_tolerance() {
+    // Silence is acceptable for garbage, which has no id to answer, and not
+    // for a request, whose host is still waiting on the id it sent.
+    let report = run_conformance(target(&["--misbehave", "ignore-missing-payload"])).await;
+    assert_eq!(status_of(&report, CHECK_MALFORMED), CheckStatus::Fail);
+    let evidence = evidence_of(&report, CHECK_MALFORMED);
+    assert!(evidence.contains("answered nothing to"), "{evidence}");
+}
+
+#[tokio::test]
+async fn a_conformant_provider_survives_every_malformed_input_shape() {
+    // The pass evidence enumerates each input and what the provider did with
+    // it, so a regression that silently dropped an input from the probe set
+    // shows up here rather than as a quieter green.
+    let report = run_conformance(target(&[])).await;
+    let evidence = evidence_of(&report, CHECK_MALFORMED);
+    for shape in [
+        "an unparseable line",
+        "a JSON scalar that is not an envelope object (`42`)",
+        "a `query` envelope with its `query` payload missing",
+    ] {
+        assert!(
+            evidence.contains(&format!("answered `bad_request` to {shape}")),
+            "missing `{shape}`: {evidence}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn mislabeling_malformed_input_fails_malformed_input_tolerance() {
     // #9: staying alive is the §R1 MUST, but a structured `bad_request` is the
     // SHOULD the check now inspects. A provider that answers a malformed line

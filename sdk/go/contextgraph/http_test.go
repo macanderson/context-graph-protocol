@@ -89,3 +89,23 @@ func TestHandlerServesEmptyFramesAsArray(t *testing.T) {
 		t.Fatalf("served body does not carry an empty frames array: %s", body)
 	}
 }
+
+// The HTTP mirror of TestAMalformedRequestIsAnsweredBadRequest: a payload-less
+// envelope used to get 204 No Content, so a host learned nothing about why its
+// request produced no answer.
+func TestRespondToBodyAnswersAPayloadlessEnvelopeBadRequest(t *testing.T) {
+	provider := queryFunc(func(ContextQuery) (ContextQueryResult, error) {
+		t.Fatal("the provider must not be called for a request with no payload")
+		return ContextQueryResult{}, nil
+	})
+	for _, body := range []string{`{"type":"query","id":"q1"}`, `{"type":"verify"}`} {
+		status, payload := RespondToBody(provider, []byte(body))
+		var got errorReply
+		if err := json.Unmarshal(payload, &got); err != nil {
+			t.Fatalf("%s: reply was not a JSON envelope (status %d): %v", body, status, err)
+		}
+		if got.Type != "error" || got.Code != "bad_request" {
+			t.Fatalf("%s: reply = %+v, want an error with code bad_request", body, got)
+		}
+	}
+}

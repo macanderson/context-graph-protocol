@@ -487,14 +487,57 @@ async fn check_verify_honesty(
     )
 }
 
-/// Wire-level probe: complete the handshake on a fresh connection, inject a
-/// malformed line, then send a valid query. A conforming provider either
-/// ignores the garbage and answers the query, or errors on it with code
-/// `bad_request` — and stays alive either way (SPEC.md §R1). A provider that
-/// dies on one bad line fails; so, now, does one that stays alive but reports an
-/// error *other* than `bad_request` — the code is read, not merely the fact of
-/// an error (#9), so the check can tell a well-formed rejection from an
-/// arbitrary failure.
+/// One malformed input the §R1 probe sends: what it is (for the evidence
+/// string), the exact line, and whether it is a *request* the provider owes an
+/// answer to.
+struct MalformedInput {
+    what: &'static str,
+    line: &'static str,
+    /// True for a well-formed envelope carrying a correlation id. Ignoring a
+    /// garbage line is acceptable — there is nothing to reply *to* — but
+    /// ignoring a request leaves the host waiting on an id that never comes
+    /// back, so silence fails here exactly as a wrong code does.
+    owes_a_reply: bool,
+}
+
+/// The inputs `malformed-input-tolerance` sends, in order, on one connection.
+///
+/// A line that fails to *parse* is only the first way to be malformed, and the
+/// only one this probe used to send. The Python SDK passed it while dying on
+/// the next two (#146): `json.loads("42")` succeeds and has no `.get`, and a
+/// `query` envelope with no `query` member is valid JSON with a missing
+/// payload. Each is the minimum witness for a class of crash: a line that
+/// parses to a non-object, and an envelope whose payload is absent.
+const MALFORMED_INPUTS: &[MalformedInput] = &[
+    MalformedInput {
+        what: "an unparseable line",
+        line: "this is not valid json {{{",
+        owes_a_reply: false,
+    },
+    MalformedInput {
+        what: "a JSON scalar that is not an envelope object (`42`)",
+        line: "42",
+        owes_a_reply: false,
+    },
+    MalformedInput {
+        what: "a `query` envelope with its `query` payload missing",
+        line: r#"{"type":"query","id":"cgp-r1-missing-payload"}"#,
+        owes_a_reply: true,
+    },
+];
+
+/// Wire-level probe for §R1: complete the handshake on a fresh connection,
+/// then for each of [`MALFORMED_INPUTS`] inject it and follow it with a valid
+/// query, on the same connection throughout.
+///
+/// A conforming provider either ignores a garbage line and answers the query,
+/// or errors on it with code `bad_request` — and stays alive either way. A
+/// provider that dies on any input fails, and the evidence names which one. So
+/// does one that stays alive but reports an error *other* than `bad_request`:
+/// the code is read, not merely the fact of an error (#9), so the check can
+/// tell a well-formed rejection from an arbitrary failure. A *request* with
+/// its payload missing must be answered, since it carried an id a host is
+/// waiting on.
 async fn malformed_stdio_probe(program: &str, args: &[String]) -> CheckResult {
     let mut conn = match RawStdioConnection::spawn(program, args).await {
         Ok(conn) => conn,
@@ -511,71 +554,97 @@ async fn malformed_stdio_probe(program: &str, args: &[String]) -> CheckResult {
             format!("handshake failed before the probe could run: {error}"),
         );
     }
-    if let Err(error) = conn.send_raw_line("this is not valid json {{{\n").await {
-        return CheckResult::fail(
-            CHECK_MALFORMED,
-            format!("provider closed its input on a malformed line: {error}"),
-        );
+
+    let mut outcomes = Vec::with_capacity(MALFORMED_INPUTS.len());
+    for input in MALFORMED_INPUTS {
+        match survive_one_malformed_input(&mut conn, input).await {
+            Ok(outcome) => outcomes.push(outcome),
+            Err(failure) => return CheckResult::fail(CHECK_MALFORMED, failure),
+        }
     }
-    if let Err(error) = conn
-        .send(&contextgraph_host::Envelope::Query {
-            id: None,
-            query: sample_query(),
-        })
-        .await
-    {
-        return CheckResult::fail(
-            CHECK_MALFORMED,
-            format!("provider died after a malformed line (before a valid query): {error}"),
-        );
-    }
-    match conn.recv().await {
-        Ok(contextgraph_host::Envelope::Frames { .. }) => CheckResult::pass(
-            CHECK_MALFORMED,
-            "provider ignored a malformed line and still answered a valid query",
+    CheckResult::pass(
+        CHECK_MALFORMED,
+        format!(
+            "provider survived {} malformed input(s) and answered a valid query after each: {}",
+            outcomes.len(),
+            outcomes.join("; ")
         ),
+    )
+}
+
+/// Send one malformed input, then a valid query, and read what comes back.
+///
+/// `Ok` carries how the provider handled it (for the pass evidence); `Err`
+/// carries the failure evidence, naming the input.
+async fn survive_one_malformed_input(
+    conn: &mut RawStdioConnection,
+    input: &MalformedInput,
+) -> Result<String, String> {
+    let what = input.what;
+    // A provider that dies on the input can surface as a broken pipe on the
+    // follow-up write just as easily as an EOF on the read — which one wins is
+    // a scheduling race — so every step reports through `died_on` and the
+    // evidence names the input either way.
+    conn.send_raw_line(input.line)
+        .await
+        .map_err(|error| died_on(what, error))?;
+    conn.send(&contextgraph_host::Envelope::Query {
+        id: None,
+        query: sample_query(),
+    })
+    .await
+    .map_err(|error| died_on(what, error))?;
+
+    let first = conn.recv().await.map_err(|error| died_on(what, error))?;
+    match first {
+        // Nothing came back for the malformed input: the reply in hand is the
+        // valid query's. Fine for garbage, which has no id to answer; not for
+        // a request, whose host is still waiting.
+        contextgraph_host::Envelope::Frames { .. } if input.owes_a_reply => Err(format!(
+            "provider stayed alive but answered nothing to {what} — the request carried an id a host is now waiting on forever; §R1 says to reply `bad_request`"
+        )),
+        contextgraph_host::Envelope::Frames { .. } => Ok(format!("ignored {what}")),
         // §R1's SHOULD: staying alive is the MUST, but a *structured*
         // `bad_request` is what lets a host tell "your line was malformed" from
         // an arbitrary failure. Inspecting the code (as the §E1 probe does) is
         // the whole point of #9 — passing on any error would leave the code
         // unread and the distinction unmade.
-        Ok(contextgraph_host::Envelope::Error {
+        contextgraph_host::Envelope::Error {
             code: Some(ErrorCode::BadRequest),
-            message,
             ..
-        }) => CheckResult::pass(
-            CHECK_MALFORMED,
-            format!(
-                "provider errored cleanly on malformed input with `bad_request` and stayed alive: {message}"
-            ),
-        ),
+        } => match conn.recv().await.map_err(|error| died_on(what, error))? {
+            contextgraph_host::Envelope::Frames { .. } => {
+                Ok(format!("answered `bad_request` to {what}"))
+            }
+            other => Err(format!(
+                "provider answered `bad_request` to {what}, then replied to a valid query with an unexpected `{}` envelope",
+                contextgraph_host::envelope_kind(&other)
+            )),
+        },
         // Alive, but the error is not the `bad_request` §R1 recommends (a
         // different code, or none at all). The MUST is met; the SHOULD is not,
         // and an unstructured failure is exactly what structured codes exist to
         // replace — so this is flagged.
-        Ok(contextgraph_host::Envelope::Error { code, message, .. }) => CheckResult::fail(
-            CHECK_MALFORMED,
-            format!(
-                "provider stayed alive but answered malformed input with `{}` rather than the `bad_request` §R1 recommends: {message}",
-                code.map(|c| c.to_string())
-                    .unwrap_or_else(|| "no code".to_string())
-            ),
-        ),
-        Ok(other) => CheckResult::fail(
-            CHECK_MALFORMED,
-            format!(
-                "provider replied to a valid query with an unexpected `{}` envelope",
-                contextgraph_host::envelope_kind(&other)
-            ),
-        ),
-        Err(HostError::ProviderCrashed { .. }) => CheckResult::fail(
-            CHECK_MALFORMED,
-            "provider crashed on a malformed line — it must error-or-ignore, not die",
-        ),
-        Err(error) => CheckResult::fail(
-            CHECK_MALFORMED,
-            format!("provider mishandled malformed input: {error}"),
-        ),
+        contextgraph_host::Envelope::Error { code, message, .. } => Err(format!(
+            "provider stayed alive but answered {what} with `{}` rather than the `bad_request` §R1 recommends: {message}",
+            code.map(|c| c.to_string())
+                .unwrap_or_else(|| "no code".to_string())
+        )),
+        other => Err(format!(
+            "provider replied after {what} with an unexpected `{}` envelope",
+            contextgraph_host::envelope_kind(&other)
+        )),
+    }
+}
+
+/// The failure evidence for a connection that ended while the probe was
+/// sending `what`, following it with a valid query, or reading the replies.
+fn died_on(what: &str, error: HostError) -> String {
+    match error {
+        HostError::ProviderCrashed { .. } => {
+            format!("provider crashed on {what} — it must error-or-ignore, not die")
+        }
+        error => format!("provider mishandled {what}: {error}"),
     }
 }
 

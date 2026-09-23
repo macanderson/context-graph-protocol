@@ -132,6 +132,13 @@ type errorReply struct {
 	ID      *string `json:"id,omitempty"`
 }
 
+// badRequest is the reply to a request the host got wrong — a well-formed
+// envelope whose payload is missing. It echoes the correlation id when the
+// request carried one, so the host's slot for it resolves instead of timing out.
+func badRequest(message string, id *string) errorReply {
+	return errorReply{Type: "error", Code: "bad_request", Message: message, ID: id}
+}
+
 func writeEnvelope(w *bufio.Writer, envelope any) {
 	data, err := json.Marshal(envelope)
 	if err != nil {
@@ -181,7 +188,13 @@ func handleLine(provider Provider, line string, w *bufio.Writer) {
 			Capabilities:    provider.Capabilities(),
 		})
 	case "query":
+		// A well-formed envelope with its payload missing is the host's
+		// mistake: answer bad_request and echo the id. Returning silently
+		// left a correlated host waiting on an id that would never come back
+		// (SPEC.md §11 R1: a bad request SHOULD get bad_request, and the
+		// malformed-input-tolerance check sends exactly this line).
 		if envelope.Query == nil {
+			writeEnvelope(w, badRequest("query envelope is missing its `query` payload", envelope.ID))
 			return
 		}
 		result, err := provider.Query(*envelope.Query)
@@ -200,6 +213,7 @@ func handleLine(provider Provider, line string, w *bufio.Writer) {
 		writeEnvelope(w, reply)
 	case "verify":
 		if envelope.Request == nil {
+			writeEnvelope(w, badRequest("verify envelope is missing its `request` payload", envelope.ID))
 			return
 		}
 		var response VerifyResponse

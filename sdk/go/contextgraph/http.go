@@ -62,8 +62,9 @@ func handleEnvelope(provider Provider, envelope incomingEnvelope) any {
 			Capabilities:    provider.Capabilities(),
 		}
 	case "query":
+		// Missing payload: the host's mistake, answered as stdio answers it.
 		if envelope.Query == nil {
-			return nil
+			return badRequest("query envelope is missing its `query` payload", envelope.ID)
 		}
 		result, err := provider.Query(*envelope.Query)
 		if err != nil {
@@ -82,7 +83,7 @@ func handleEnvelope(provider Provider, envelope incomingEnvelope) any {
 		return framesReply{Type: "frames", Result: withFrames(result), ID: envelope.ID}
 	case "verify":
 		if envelope.Request == nil {
-			return nil
+			return badRequest("verify envelope is missing its `request` payload", envelope.ID)
 		}
 		var response VerifyResponse
 		if verifier, ok := provider.(Verifier); ok {

@@ -53,6 +53,21 @@ enum Misbehave {
     /// Exit on receiving a malformed line (trips
     /// `malformed-input-tolerance`).
     CrashOnGarbage,
+    /// Exit on a well-formed `query` or `verify` envelope whose payload is
+    /// missing, as the Python SDK once did with a bare `envelope["query"]`
+    /// (trips `malformed-input-tolerance`).
+    ///
+    /// Such a line is valid JSON, so a probe that only ever sent unparseable
+    /// garbage could not reach this crash — which is how that SDK passed the
+    /// check while dying mid-session on an ordinary host mistake (#146).
+    CrashOnMissingPayload,
+    /// Stay alive on a `query` envelope whose payload is missing, but answer
+    /// it with nothing at all (trips `malformed-input-tolerance`).
+    ///
+    /// Ignoring an unparseable line is fine — it carries no id to answer. A
+    /// request does, and silence leaves the host waiting on that id until it
+    /// times out, so the check requires a reply.
+    IgnoreMissingPayload,
     /// Stay alive on a malformed line but answer it with `internal` instead of
     /// the `bad_request` §R1 recommends — a structured error that is not the
     /// right one (trips `malformed-input-tolerance`).
@@ -216,6 +231,17 @@ fn main() {
                 if args.misbehave == Some(Misbehave::CrashOnGarbage) {
                     std::process::exit(1);
                 }
+                // The two missing-payload modes act only on a line that is a
+                // well-formed request envelope in every respect but its
+                // payload; any other malformed line is answered honestly, so
+                // each mode trips the check on the input it claims to.
+                if is_payloadless_request(&line) {
+                    match args.misbehave {
+                        Some(Misbehave::CrashOnMissingPayload) => std::process::exit(1),
+                        Some(Misbehave::IgnoreMissingPayload) => continue,
+                        _ => {}
+                    }
+                }
                 // §R1 recommends `bad_request`; `mislabel-malformed` answers
                 // with `internal` instead, to prove the malformed-input check
                 // now inspects the *code* rather than passing on any error.
@@ -358,6 +384,21 @@ fn main() {
             _ => {}
         }
     }
+}
+
+/// Whether `line` is a `query` or `verify` envelope with its payload member
+/// (`query` / `request`) absent or `null` — the shape the two missing-payload
+/// misbehaviour modes act on.
+fn is_payloadless_request(line: &str) -> bool {
+    let Ok(serde_json::Value::Object(envelope)) = serde_json::from_str(line.trim_end()) else {
+        return false;
+    };
+    let payload = match envelope.get("type").and_then(serde_json::Value::as_str) {
+        Some("query") => "query",
+        Some("verify") => "request",
+        _ => return false,
+    };
+    envelope.get(payload).is_none_or(serde_json::Value::is_null)
 }
 
 fn write_envelope(stdout: &mut std::io::Stdout, envelope: &Envelope) {

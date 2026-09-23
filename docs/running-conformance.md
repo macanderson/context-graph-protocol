@@ -24,7 +24,7 @@ check name here stops matching the code.
 | `anchor-relevance` | a graph provider's frames anchor on a `uri` or a relation target (§G3/§G4) | the provider does not declare `capabilities.graph`, or served no anchorable frame |
 | `provenance-fixture-consistency` | `file` provenance digests match the bytes they name — catching a stale or forged digest that passes §F5's grammar | never |
 | `shutdown-clean` | the provider acknowledges shutdown and tears down without error | never |
-| `malformed-input-tolerance` | a garbage line on the wire does not crash the provider | **stdio only** — the probe is wire-level |
+| `malformed-input-tolerance` | malformed input does not crash the provider — an unparseable line, a JSON value that is not an envelope object (`42`), and a `query` envelope with its payload missing — and each is answered `bad_request` or, for garbage with no id to answer, ignored (§R1) | **stdio only** — the probe is wire-level |
 | `embedding-fingerprint` | a declared `embeddings_fingerprint` is not contradicted by a `bad_request` (§E1) | **stdio only**, and when the provider declares no fingerprint |
 | `correlation` | request ids are echoed back (§H4) | **stdio only**, and when the provider does not declare `capabilities.correlation` |
 | `attestation` | a provider offering attestations produces ones that verify (§6.5) | **stdio only**, and when the provider returned no frames to attest |
@@ -93,7 +93,7 @@ Sample colored output for a fully conformant provider:
   ✓ shutdown-clean
       provider acknowledged shutdown and tore down cleanly
   ✓ malformed-input-tolerance
-      provider ignored a malformed line and still answered a valid query
+      provider survived 3 malformed input(s) and answered a valid query after each: answered `bad_request` to an unparseable line; …
   – verify-honesty
       provider does not advertise `verify`; a host falls back to re-querying its frames (§4)
   – kinds-filter
@@ -156,7 +156,7 @@ building your own reporting on top.
 bundled reference provider, `contextgraph-example-docs`, including a `--misbehave
 <mode>` flag that deliberately trips one check at a time (`lying-costs`,
 `bad-score`, `empty-citation`, `bad-version`, `crash-on-query`,
-`crash-on-garbage`). Reading those tests is the fastest way to see exactly
+`crash-on-garbage`, `crash-on-missing-payload`). Reading those tests is the fastest way to see exactly
 what evidence string each failure mode produces, and doubles as proof that
 the suite genuinely catches a broken provider rather than rubber-stamping
 everything.
