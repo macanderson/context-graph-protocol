@@ -246,12 +246,37 @@ async fn a_frame_that_lies_about_its_representation_fails_frame_validity() {
 #[tokio::test]
 async fn returning_not_yet_valid_content_fails_as_of_temporal() {
     // A frame whose `valid_from` is after the `as_of` pin is content that was
-    // not yet true at the pinned instant (§6.1). The honest fixture omits it;
-    // `ignore-as-of` returns it anyway.
+    // not yet true at the pinned instant (§5.3 Q2). The honest fixture omits
+    // it; `ignore-as-of` returns it anyway.
     let report = run_conformance(target(&["--misbehave", "ignore-as-of"])).await;
     assert!(!report.passed());
     assert_eq!(status_of(&report, CHECK_AS_OF), CheckStatus::Fail);
     // The unpinned query is untouched, so frame-validity and budget still pass.
+    for name in [CHECK_HANDSHAKE, CHECK_FRAME_VALIDITY, CHECK_BUDGET_HONESTY] {
+        assert_eq!(status_of(&report, name), CheckStatus::Pass, "{name}");
+    }
+}
+
+#[tokio::test]
+async fn returning_no_longer_valid_content_fails_as_of_temporal() {
+    // The other half of Q2's window, and the half the probe used to skip: a
+    // frame whose `valid_to` is at or before the pin had stopped being true.
+    // `ignore-valid-to` applies only the `valid_from` half — the obvious first
+    // implementation of `as_of` — so it passes the mid-year pin and serves a
+    // stale fact at the autumn one.
+    let report = run_conformance(target(&["--misbehave", "ignore-valid-to"])).await;
+    assert!(!report.passed());
+    let check = report
+        .checks
+        .iter()
+        .find(|check| check.name == CHECK_AS_OF)
+        .expect("the as-of check ran");
+    assert_eq!(check.status, CheckStatus::Fail);
+    assert!(
+        check.evidence.contains("valid_to="),
+        "the failure must name the valid_to half: {}",
+        check.evidence
+    );
     for name in [CHECK_HANDSHAKE, CHECK_FRAME_VALIDITY, CHECK_BUDGET_HONESTY] {
         assert_eq!(status_of(&report, name), CheckStatus::Pass, "{name}");
     }

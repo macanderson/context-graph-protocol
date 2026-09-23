@@ -216,14 +216,18 @@ class ExampleDocsProvider:
         anchors = query.get("anchors") or []
         if anchors:
             frames.sort(key=lambda f: not _is_anchored(f, anchors))
-        # §F4/§6.1: honour an `as_of` pin -- content that was not yet true at the
-        # pinned instant is not returned. The timestamp profile admits one
-        # spelling per instant, so a lexicographic compare on the UTC strings is
-        # a chronological one.
+        # §5.3 Q2: honour an `as_of` pin -- return only frames whose half-open
+        # window [valid_from, valid_to) contains it: nothing not yet true, and
+        # nothing no longer true, at the pinned instant. Every timestamp this
+        # example emits is whole-second §F4, so a lexicographic compare on the
+        # UTC strings is a chronological one here.
         as_of = query.get("as_of")
         if as_of is not None:
             frames = [
-                frame for frame in frames if (frame.get("valid_from") or "") <= as_of
+                frame
+                for frame in frames
+                if (frame.get("valid_from") or "") <= as_of
+                and (frame.get("valid_to") is None or as_of < frame["valid_to"])
             ]
         # `truncated` stays False: these filters honour the host's own narrowing,
         # they are not this provider running out of budget (§B2).

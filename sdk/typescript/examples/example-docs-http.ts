@@ -182,13 +182,17 @@ const provider: Provider = {
         (a, b) => Number(isAnchored(b, anchors)) - Number(isAnchored(a, anchors)),
       );
     }
-    // §F4/§6.1: honour an `as_of` pin — content that was not yet true at the
-    // pinned instant is not returned. One spelling per instant means a
-    // lexicographic compare on the UTC strings is a chronological one.
+    // §5.3 Q2: honour an `as_of` pin — return only frames whose half-open
+    // window [valid_from, valid_to) contains it: nothing not yet true, and
+    // nothing no longer true, at the pinned instant. Every timestamp this
+    // example emits is whole-second §F4, so a lexicographic compare on the UTC
+    // strings is a chronological one here.
     const asOf = query.as_of;
     if (asOf !== undefined) {
       frames = frames.filter(
-        (frame) => frame.valid_from === undefined || frame.valid_from <= asOf,
+        (frame) =>
+          (frame.valid_from === undefined || frame.valid_from <= asOf) &&
+          (frame.valid_to === undefined || asOf < frame.valid_to),
       );
     }
     // `truncated` stays false: these filters honour the host's own narrowing,

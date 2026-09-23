@@ -393,6 +393,13 @@ SPEC.md §5.
 | Q1 | When `kinds` is non-empty, a provider **MUST NOT** return a frame whose `kind` is outside it. Empty `kinds` means any kind. A provider serving none of the requested kinds returns zero frames or replies `unsupported_kind`. | `kinds-filter` conformance check |
 | E1 | A host **MUST NOT** populate `query.embedding` unless its embedding fingerprint is **exactly equal** to the provider's `capabilities.embeddings_fingerprint`. A provider given a vector whose length contradicts its declared dimension **SHOULD** reply `bad_request`. | host contract; the reference host never populates `query.embedding` |
 
+### Query
+
+| # | Requirement | Enforced / verified by |
+| - | ----------- | ---------------------- |
+| Q1 | When `kinds` is non-empty, a provider **MUST NOT** return a frame whose `kind` is outside it; one serving none of the requested kinds returns zero frames, or replies `unsupported_kind`. | `kinds-filter` conformance check |
+| Q2 | When `as_of` is present, a provider **MUST NOT** return a frame whose half-open valid-time window `[valid_from, valid_to)` excludes it (an absent bound is unbounded; a frame with neither bound is eligible). A provider with nothing valid at the pin returns zero frames. `recorded_at` is not constrained. | `as-of-temporal` conformance check; `ignore-as-of`, `ignore-valid-to` witnesses |
+
 ### Frame validity
 
 SPEC.md §6, including provenance attestation (§6.5) and what `score` means

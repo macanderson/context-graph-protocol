@@ -65,7 +65,7 @@ not a line in a style guide.
 | **Conformance**         | "CGP conformant" is a checkable claim, not a self-attestation. The suite is adversarial and ships a mode that trips every failure on purpose  | `contextgraph-conformance`, 14 provider checks                            |
 | **Citation**            | Every frame has a non-empty title and citation label. Raw ids are never the on-screen identifier                                              | `frame-validity` conformance check                     |
 | **Version stability**   | The protocol evolves inside a major family. The draft-to-stable freeze needs no flag day and breaks no deployed provider                      | `versions_compatible` in `contextgraph-host`                    |
-| **Temporal validity**   | Facts carry `valid_from` and `valid_to` windows. A query can pin retrieval to a point in time with `as_of`                                    | `ContextFrame` temporal fields                         |
+| **Temporal validity**   | Facts carry `valid_from` and `valid_to` windows. A query pinned with `as_of` gets only frames whose window contains that instant: nothing not yet true, nothing no longer true | [`SPEC.md` Q2](../SPEC.md#53-what-as_of-pins-q2) + `as-of-temporal` conformance check |
 
 The properties compose, and the combination is the point. Provenance without
 budget honesty means you can trace a frame but not control its cost. Budget

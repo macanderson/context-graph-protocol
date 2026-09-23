@@ -94,7 +94,7 @@ runtime and verified by a public conformance suite.
 | **Conformance verification** | "CGP conformant" is a machine-checked claim, not a self-attestation; the conformance suite is adversarial | `contextgraph-conformance` — 14 provider checks that deliberately trip each failure mode |
 | **Citation guarantees** | Every frame has a non-empty `title` and `citation_label`; raw ids are never the primary identifier | `frame-validity` conformance check; platform-wide convention |
 | **Version stability** | The protocol evolves within a major family without breaking interop; the draft-to-freeze transition requires no flag day | `versions_compatible` (`contextgraph-host::wire`); major-family matching |
-| **Temporal validity** | Facts carry `valid_from` / `valid_to` windows; queries can pin retrieval to a point in time via `as_of` | `ContextFrame` temporal fields; `ContextQuery.as_of` (`contextgraph-types`) |
+| **Temporal validity** | Facts carry `valid_from` / `valid_to` windows; a query pinned with `as_of` gets only frames whose window contains that instant | [`SPEC.md` Q2](../SPEC.md#53-what-as_of-pins-q2); `as-of-temporal` conformance check |
 
 Each property is defined not by documentation but by a type in `contextgraph-types`
 and an enforcement path in `contextgraph-host` or `contextgraph-conformance`. The remainder of
@@ -328,7 +328,10 @@ And `ContextQuery` carries:
 
 Together, these enable **bi-temporal retrieval**: a query can ask "what was
 true about this function as of last Tuesday?" and receive only frames whose
-validity window includes that timestamp. This is the same discipline that
+validity window includes that timestamp. That is a requirement, not an
+aspiration: [`SPEC.md` Q2](../SPEC.md#53-what-as_of-pins-q2) makes it the
+half-open predicate `valid_from <= as_of < valid_to`, and the `as-of-temporal`
+conformance check probes both halves of it. This is the same discipline that
 bi-temporal databases (like Btrieve or Crux) apply to transactional data,
 applied here to the context that feeds an AI agent.
 

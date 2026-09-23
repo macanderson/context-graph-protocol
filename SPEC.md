@@ -195,7 +195,7 @@ is host machinery and outside this revision.
     "anchors": ["file:///repo/src/net.rs"],
     "max_frames": 8,
     "max_tokens": 2000,
-    "as_of": "2026-07-01T00:00:00Z"      // optional; see F4
+    "as_of": "2026-07-01T00:00:00Z"      // optional; see Q2, F4
   }
 }
 ```
@@ -208,6 +208,7 @@ is only that anchors bias relevance.
 | # | Requirement | Verified by |
 | - | ----------- | ----------- |
 | **Q1** | When `kinds` is non-empty, a provider **MUST NOT** return a frame whose `kind` is outside it. Empty `kinds` means any kind. A provider serving none of the requested kinds returns zero frames, or replies `unsupported_kind`. | `kinds-filter` |
+| **Q2** | When `as_of` is present, a provider **MUST NOT** return a frame whose valid-time window excludes it: a returned frame carrying `valid_from` satisfies `valid_from <= as_of`, and one carrying `valid_to` satisfies `as_of < valid_to`, compared as instants (§6.1). A frame carrying neither bound makes no temporal claim and is eligible. A provider with nothing valid at the pin returns zero frames. | `as-of-temporal`; `ignore-as-of`, `ignore-valid-to` witnesses |
 
 ### 5.1 Why `kinds` binds (Q1)
 
@@ -241,6 +242,56 @@ dimension and normalization both change what a vector *means*: a 384-dim
 unnormalized vector sent to an index of 384-dim L2-normalized vectors yields
 plausible-looking, meaningless scores — the silent wrongness CGP exists to make
 loud.
+
+### 5.3 What `as_of` pins (Q2)
+
+`as_of` shipped the way `kinds` did (§5.1): a request field with a format rule
+(F4) and no stated semantics. The conformance suite nevertheless enforced half
+of one — it failed a provider for returning a frame whose `valid_from` postdated
+the pin, citing a sentence of §6.1 that imposed nothing — and checked nothing
+about the other half, so a frame whose `valid_to` had passed years before the
+pin was returned and passed. Q2 states the rule the suite now checks, whole.
+
+**It is a point-in-window predicate on valid time.** A frame's `valid_from` and
+`valid_to` bound when its content was *true in the world* (§6.1), and `as_of`
+asks what was true at one instant, so the answer is the frames whose window
+contains that instant. The window is **half-open**, `[valid_from, valid_to)`: a
+fact is admitted at the instant it becomes true and excluded at the instant it
+stops, so two consecutive windows that share a boundary — a fact and the fact
+that superseded it — never both answer for the boundary instant. An absent bound
+is unbounded on that side. Instants are compared as instants, not as strings:
+under F4 an optional fractional part sorts `…:00.5Z` before `…:00Z`, and spells
+one instant as both `…:00Z` and `…:00.0Z`.
+
+**It does not pin `recorded_at`.** §6.1 separates when content was true from when
+the provider *learned* it, which is a bitemporal model, and `as_of` constrains
+the first axis only. A historical query wants what was true then *as best the
+provider knows now*, which a fact recorded after the pin can answer correctly. A
+pin on the transaction-time axis — "what did the provider believe at that
+instant" — is a different question with a different field, and is reserved for
+an additive `1.x` minor (§13).
+
+**An absent `as_of` imposes no temporal constraint this revision defines.**
+Whether an unpinned query answers with the provider's current view, its whole
+history, or something between is provider-private, like ranking (§5).
+
+**Every provider can honour it, so it is a MUST with no capability and no error
+code.** The predicate ranges over fields the provider itself emits, and is
+applied to the frames it was about to return. A provider with no temporal index
+serves frames that carry no window, which the predicate admits, and that absence
+is itself the signal a host reads: undated evidence makes no claim about the
+pinned instant, and a host that needs dated evidence filters on the fields'
+presence. So nothing needs a `capabilities` flag — which §8.3 and
+[ADR 0004](./docs/adr/0004-dead-capability-surface.md) would forbid in any case
+while nothing exercised it — and there is no `unsupported_as_of`: following Q1, a
+provider with nothing valid at the pin returns zero frames.
+
+The `as-of-temporal` check (`check_as_of`, named by `CHECK_AS_OF`) pins two
+instants on either side of the reference fixture's validity boundary, so each
+half of the window has observable work to do, and the fixture's `ignore-as-of`
+and `ignore-valid-to` modes each break one half. The decision and the
+alternatives are recorded in
+[ADR 0022](./docs/adr/0022-as-of-is-a-point-in-window-predicate.md).
 
 ---
 
@@ -302,7 +353,7 @@ deliberate accuracy.
 
 Semantics: `valid_from`/`valid_to` bound when the content was *true in the
 world*; `recorded_at` is when the provider *learned* it. `as_of` pins retrieval
-to an instant.
+to an instant on the first axis, under the predicate Q2 states (§5.3).
 
 ### 6.2 Digests (F5)
 
