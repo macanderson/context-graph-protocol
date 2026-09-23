@@ -394,6 +394,23 @@ jobs:
           python-version: "3.12"
       - run: python3 .github/scripts/check-sdk-version-pins.py
 
+  scaffold-action-pins:
+    name: scaffold workflows pin the action majors this repository runs
+    runs-on: ubuntu-latest
+    # The templates ship a conformance.yml under `_github/`, which the
+    # scaffolder renames to `.github/` only at scaffold time. Dependabot scans
+    # `.github/workflows` alone, so it bumped setup-python to v7 in every
+    # workflow here and never saw the template's v5 (#194). The scaffold job
+    # runs the conformance script directly and never executes that nested
+    # workflow, so nothing green covered it. Same failure mode as ADR 0012,
+    # same remedy: an offline guard that fails the commit which opens the gap.
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python3 .github/scripts/check-scaffold-action-pins.py
+
   sdk-scaffold:
     name: create-contextgraph-provider scaffolds a conformant project
     runs-on: ubuntu-latest

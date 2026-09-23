@@ -81,6 +81,27 @@ with a window in between.
   check there is possible and was left out as a separate judgement, not an
   oversight.
 
+### Action pins in the scaffold workflows
+
+The same drift happened on a second axis. Each template ships a
+`conformance.yml` under `_github/workflows/`, and the scaffolder renames
+`_github` to `.github` only at scaffold time. Dependabot scans
+`.github/workflows` alone, so #194 moved `actions/setup-python` to v7 in every
+workflow this repository runs while the Python template stayed on v5, and the
+scaffold job could not see it: it runs the conformance script directly and
+never executes the nested workflow.
+
+`.github/scripts/check-scaffold-action-pins.py`, run in CI as
+`scaffold workflows pin the action majors this repository runs`, holds every
+action a template pins to the one major this repository's own workflows pin
+for it. It reads a major from `@v<N>` or from a SHA pin's `# v<N>` comment,
+skips refs with no major (`@stable`, `@master`, local paths) and actions only
+a template uses, and fails when the repository itself is split across majors.
+Majors rather than exact refs, for the reason given above: a major is where
+an action's inputs and its Node runtime change, which is what a scaffolded
+provider cannot survive. A Dependabot PR that bumps an action the templates
+pin goes red until the template follows, which is the point.
+
 ## Consequences
 
 - A `DEFAULT_SDK` entry left behind by an SDK bump fails CI at the commit that
