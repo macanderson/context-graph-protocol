@@ -18,8 +18,12 @@ Please report it privately:
 Include as much of the following as you can:
 
 - A description of the issue and its security impact.
-- The Context Graph Protocol crate(s) and version(s) affected (`contextgraph-types`, `contextgraph-host`,
-  `contextgraph-conformance`).
+- The Context Graph Protocol crate(s) and version(s) affected. Every crate this
+  repository publishes to crates.io is covered: `contextgraph-types`,
+  `contextgraph-host`, `contextgraph-conformance`, and `contextgraph-trace`.
+  `contextgraph-trace`'s journal format is sketch stage
+  ([`docs/host-trace.md`](./docs/host-trace.md)); that changes what counts as a
+  breaking change to it, not whether a vulnerability in it is fixed.
 - The protocol version (e.g. `contextgraph/1.0`).
 - A minimal repro: a malformed envelope, a misbehaving provider, or a
   bypassed consent gate.
@@ -56,5 +60,22 @@ Advisory and, where applicable, a CVE.
 
 ## Supported versions
 
-Context Graph Protocol is pre-1.0 (`contextgraph/1.0`). Only the latest published crate release
-receives security fixes until the `contextgraph/1.0` freeze.
+The project has two version axes, and they are stated separately
+([`docs/stability.md`](./docs/stability.md) explains why they differ):
+
+- **Wire protocol:** `contextgraph/1.0`, frozen on 2026-08-11
+  ([`GOVERNANCE.md`](./GOVERNANCE.md)). Changes within the `contextgraph/1`
+  family are additive only. Every supported crate release speaks it.
+- **Crates:** the published crates share one version, currently `2.x`.
+
+Security fixes land as a patch release on the **latest published crate major
+line**, today `2.x`, and nowhere else:
+
+| Crate line | Receives security fixes |
+| --- | --- |
+| `2.x` | Yes — the latest `2.x` release. |
+| `0.1.x` | No. These predate the freeze; upgrade to `2.x` ([`MIGRATION.md`](./MIGRATION.md)). |
+
+No `1.x` crate was ever published to crates.io, so there is no `1.x` line to
+support. When a future crate major ships, fixes move to it; whether the
+previous major also receives them will be stated here at that time.

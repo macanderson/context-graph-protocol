@@ -668,6 +668,21 @@ jobs:
           python-version: "3.12"
       - run: python3 .github/scripts/check-adr-log.py
 
+  published-crates:
+    name: the security policy names every published crate
+    runs-on: ubuntu-latest
+    # contextgraph-trace was published and SECURITY.md went on listing three
+    # crates, so a reporter with a trace bug read a policy that did not mention
+    # it (#143). The `publish = true` manifests are the one list that cannot go
+    # stale; this holds the prose copies to them. Its unit tests
+    # (tests/test_check_published_crates.py) run in guard-self-tests.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python3 .github/scripts/check-published-crates.py
+
   conformance-counts:
     name: docs state the real number of conformance checks
     runs-on: ubuntu-latest
