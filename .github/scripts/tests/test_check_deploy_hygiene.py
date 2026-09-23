@@ -17,6 +17,11 @@ from _gate_harness import GateTestCase
 APEX = "https://contextgraphprotocol.org"
 RAW = "https://raw.githubusercontent.com/macanderson/context-graph-protocol/main"
 SCHEMA = "contextgraph-envelope.schema.json"
+VECTORS = "reference-vectors.ndjson"
+# A host this repository does not serve. Every URL in this file is assembled
+# from these constants rather than written out: the real hygiene gate scans
+# this file too, and a literal offender here would fail it.
+UNSERVED = "https://cgp.oxagen.sh"
 
 
 class DeployHygieneTest(GateTestCase):
@@ -56,7 +61,7 @@ class DeployHygieneTest(GateTestCase):
 
     def test_an_unserved_host_is_an_offender(self):
         result = self.gate_with(**{
-            "README.md": f"https://cgp.oxagen.sh/schema/{SCHEMA}\n",
+            "README.md": f"{UNSERVED}/schema/{SCHEMA}\n",
         })
         self.assertFailsWith(
             result, "FAIL  no artifact URL on a prefix this repo does not publish")
@@ -78,7 +83,7 @@ class DeployHygieneTest(GateTestCase):
     def test_a_versioned_url_is_seen_at_all(self):
         # On an unserved host, so the only way to pass is to not match it.
         result = self.gate_with(**{
-            "README.md": f"https://cgp.oxagen.sh/schema/v1/{SCHEMA}\n",
+            "README.md": f"{UNSERVED}/schema/v1/{SCHEMA}\n",
         })
         self.assertFailsWith(
             result,
@@ -103,6 +108,32 @@ class DeployHygieneTest(GateTestCase):
         self.assertPasses(self.gate_with(**{
             "README.md": f"{APEX}/schema/v1/{SCHEMA}\n",
         }))
+
+    # --- the reference vectors (#111) ---------------------------------------
+
+    def test_a_published_vectors_url_resolves_on_both_schema_paths(self):
+        self.write(f"schema/{VECTORS}", "{}\n")
+        self.assertPasses(self.gate_with(**{
+            "PUBLISHING.md": f"{APEX}/schema/v1/{VECTORS}\n"
+                             f"{APEX}/schema/{VECTORS}\n",
+        }))
+
+    def test_an_ndjson_url_is_seen_at_all(self):
+        result = self.gate_with(**{
+            "README.md": f"{UNSERVED}/schema/v1/{VECTORS}\n",
+        })
+        self.assertFailsWith(
+            result,
+            "FAIL  no artifact URL on a prefix this repo does not publish",
+            "reference-vectors.ndjson",
+        )
+
+    def test_an_ndjson_url_naming_a_missing_file_is_reported_missing(self):
+        result = self.gate_with(**{
+            "README.md": f"{APEX}/schema/v1/{VECTORS}\n",
+        })
+        self.assertFailsWith(
+            result, "FAIL  every advertised artifact exists at the path its URL names")
 
     # --- historical records are exempt -------------------------------------
 

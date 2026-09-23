@@ -87,12 +87,18 @@ EXEMPT = ("docs/adr/", "CHANGELOG.md")
 # URL in the repository it exists to police: no offender, no missing-artifact
 # check, and a silent PASS. A guard that quietly narrows its own subject is
 # worse than one that fails.
+#
+# `ndjson` is in the extension list for the same reason (#111). The reference
+# vectors are published beside the schemas, on both `/schema/` and
+# `/schema/v1/`, and an advertised vectors URL is as much a contract as a
+# schema URL. Before, `.ndjson` was not in the list, so such a URL was matched
+# by nothing and policed by nothing.
 ARTIFACT_URL = re.compile(
     r"https?://[A-Za-z0-9.\-]+"
     r"(?:/[A-Za-z0-9._\-]+)*?"
     r"/(?:schema|registry|badges)"
     r"(?:/[A-Za-z0-9._\-]+)*"
-    r"/[A-Za-z0-9._\-]+\.(?:json|svg|png)"
+    r"/[A-Za-z0-9._\-]+\.(?:json|ndjson|svg|png)"
 )
 
 failures = 0

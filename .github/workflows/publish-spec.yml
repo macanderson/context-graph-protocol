@@ -28,6 +28,12 @@ name: Publish spec
 #
 # One copy of each schema lives in the repository; the extra paths are made
 # here, so there is nothing to keep in sync.
+#
+# `reference-vectors.ndjson` follows the schemas onto both paths (#111). The
+# vectors are what the reference Rust types serialize for the `contextgraph/1`
+# wire, so they belong to that family's contract as much as the schemas do. A
+# reader who fetches the schema from /schema/v1/ finds the vectors beside it.
+# The unversioned /schema/ path stays as the alias it already was.
 on:
   pull_request:
     paths:
@@ -129,12 +135,20 @@ jobs:
             --cache-control 'public, max-age=300, must-revalidate' \
             --only-show-errors
 
-          aws s3 cp schema/reference-vectors.ndjson "s3://$BUCKET/schema/reference-vectors.ndjson" \
-            --content-type 'application/x-ndjson' \
-            --cache-control 'public, max-age=300, must-revalidate' \
-            --only-show-errors
+          # The reference vectors, on the same two paths as the schemas (#111,
+          # ADR 0013's amendment): /schema/v1/ because they are part of the
+          # `contextgraph/1` contract, /schema/ because that URL is already in
+          # the wild. A separate `cp` per path because the sync above admits
+          # only `*.json` under one content type, and `.ndjson` needs its own.
+          for prefix in schema schema/v1; do
+            aws s3 cp schema/reference-vectors.ndjson "s3://$BUCKET/$prefix/reference-vectors.ndjson" \
+              --content-type 'application/x-ndjson' \
+              --cache-control 'public, max-age=300, must-revalidate' \
+              --only-show-errors
+          done
 
           aws s3 ls "s3://$BUCKET/schema/"
+          aws s3 ls "s3://$BUCKET/schema/v1/"
 
       - name: publish the specification
         env:
@@ -218,6 +232,41 @@ jobs:
             assert_serves "$identity" "$identity"
             assert_serves "$base/$file" "$identity"
           done
+
+          # The reference vectors carry no `$id`, so the check is on the bytes
+          # and the type instead. They must be exactly the committed file, since
+          # a stale object at one path is the failure a 200 hides. They must
+          # also be served as `application/x-ndjson`, which S3 would not guess:
+          # as `application/octet-stream` a browser downloads them rather than
+          # showing them.
+          expected_sha=$(sha256sum schema/reference-vectors.ndjson | cut -d' ' -f1)
+          assert_vectors() {
+            local url=$1 type code=000 attempt served_sha
+            for attempt in $(seq 1 10); do
+              code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "$url" || echo 000)
+              [ "$code" = "200" ] && break
+              echo "attempt $attempt: $url -> $code"
+              sleep 6
+            done
+            if [ "$code" != "200" ]; then
+              echo "::error::$url did not return 200 after the publish (last status $code)"
+              exit 1
+            fi
+            type=$(curl -sS -o /dev/null -w '%{content_type}' --max-time 15 "$url")
+            if [ "${type%%;*}" != "application/x-ndjson" ]; then
+              echo "::error::$url is served as '$type' — expected application/x-ndjson"
+              exit 1
+            fi
+            served_sha=$(curl -sS --max-time 15 "$url" | sha256sum | cut -d' ' -f1)
+            if [ "$served_sha" != "$expected_sha" ]; then
+              echo "::error::$url serves bytes that are not schema/reference-vectors.ndjson at this commit"
+              exit 1
+            fi
+            echo "ok: $url serves the committed vectors as $type"
+          }
+
+          assert_vectors "$base/v1/reference-vectors.ndjson"
+          assert_vectors "$base/reference-vectors.ndjson"
 
       # The microsite renders documentation that quotes this specification, so
       # a protocol merge has to rebuild it or the two drift with nothing to say

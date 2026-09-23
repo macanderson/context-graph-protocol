@@ -186,7 +186,8 @@ puts them on the microsite's CDN.
 | --- | --- |
 | `schema/*.json` | `https://contextgraphprotocol.org/schema/v1/…` — **the identity** |
 | `schema/*.json` | `https://contextgraphprotocol.org/schema/…` — unversioned alias |
-| `schema/reference-vectors.ndjson` | `https://contextgraphprotocol.org/schema/reference-vectors.ndjson` |
+| `schema/reference-vectors.ndjson` | `https://contextgraphprotocol.org/schema/v1/reference-vectors.ndjson` — beside the identity |
+| `schema/reference-vectors.ndjson` | `https://contextgraphprotocol.org/schema/reference-vectors.ndjson` — unversioned alias |
 | `SPEC.md` | `https://contextgraphprotocol.org/spec/SPEC.md` |
 | `docs/**` | `https://contextgraphprotocol.org/spec/docs/…` |
 
@@ -221,6 +222,16 @@ Three paths serve the same two files, and all three must keep working:
 Only one copy of each schema exists in the repository. There is no `schema/v1/`
 directory; the publisher writes the same bytes to both prefixes, so there is
 nothing to keep in sync.
+
+The reference vectors follow the schemas onto both prefixes (#111). They are
+what the reference Rust types serialize for the `contextgraph/1` wire, so they
+are part of that family's contract. Someone who fetches the schema from
+`/schema/v1/` finds the vectors in the same place. They carry no `$id`, so
+the workflow checks them differently: each path must return the committed
+bytes as `application/x-ndjson`. That type is set explicitly, because S3
+would otherwise serve the file as `application/octet-stream` and browsers
+would download it. See the amendment to
+[ADR 0013](./docs/adr/0013-schema-identity-on-a-branded-versioned-url.md).
 
 ## How identity is checked, in two halves
 
