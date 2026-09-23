@@ -474,10 +474,12 @@ them, but it numbers its own tables differently. The ids here are SPEC.md's.
 | D2 | Two frames with the same *(provider id, frame id, `content_digest`)* **MUST** be treated as the same content. A host **MAY** dedup or reuse on that basis. | host composition; `contextgraph-host::compose_context` |
 | D3 | A frame with no `content_digest` **MUST NOT** be reused unchecked across queries. A host re-queries or re-verifies it. | host composition; `Host::verify_frames` fallback |
 | D4 | A `content_digest` is a claim about the *inline* bytes only. A host reusing a frame's body **SHOULD** confirm the identity still holds via `verify` first. | `verify-honesty` conformance check |
+| D5 | *Provider id* in a frame identity is the provider's handshake-declared `provider.name` on the wire (`verify`, `verified`, `frame_attestations`, the attestation commitment) and the host's local id inside a host (composition, dedup, reuse, usage reports, attribution). A host **MUST** translate at the connection boundary, resolving an echoed identity by the connection it arrived on, never by looking a declared name up across providers. | `Host::verify_frames`; `verify-honesty` conformance check (provider registered under a differing local id) |
 | V1 | A `verify` request **MUST** carry frame identities only, never bodies. A host **SHOULD** include only identities that carry a `content_digest`. | `VerifyRequest` shape; `verify_wire` no-bodies test |
 | V2 | A provider declaring `capabilities.verify` **MUST** answer a `verify` with a `verified` reply. An identity that comes back with no verdict **MUST** be treated as `unknown`. | `verify-honesty` conformance check; `--misbehave rubber-stamp-verify` and `hollow-verify` witnesses |
 | V3 | A verdict is `valid`, `stale`, `gone`, or `unknown`. A host **MUST** reuse a held frame body **only** on `valid`. | `Verdict::permits_reuse`; `Host::verify_frames` default-deny partition |
 | V4 | A `stale` verdict **MAY** carry a `replacement_digest`, never a body. A host **MUST NOT** keep serving its stored copy of a `stale` or `gone` frame. | `verify-honesty` conformance check; `VerifyResponse` shape |
+| V5 | A `verify` request **MUST** carry the recipient's declared `provider.name` as each identity's `provider_id`. A provider **MAY** answer `unknown` for an identity naming another provider id, and **MUST NOT** reject the whole request on that basis. | `Host::verify_frames`; `verify-honesty` conformance check |
 
 ### Errors
 

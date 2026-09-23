@@ -37,8 +37,9 @@ use crate::identity::FrameId;
 /// (`docs/context-reuse.md` §4).
 ///
 /// Carries identities only — never frame bodies. Every identity in one request
-/// belongs to the provider it is sent to; a host holding frames from several
-/// providers sends one request each.
+/// belongs to the provider it is sent to, and names it by its handshake-declared
+/// `provider.name` rather than the host's local id for it (`SPEC.md` §6.3 D5,
+/// §9 V5); a host holding frames from several providers sends one request each.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VerifyRequest {
     /// The frame identities to revalidate. A host **SHOULD** only include

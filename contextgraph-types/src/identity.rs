@@ -30,8 +30,16 @@ use serde::{Deserialize, Serialize};
 /// hosts (`docs/context-reuse.md` §1).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct FrameId {
-    /// The host-facing id of the provider that served the frame — the same
-    /// routing/consent key the host registered it under.
+    /// The id of the provider that served the frame (`SPEC.md` §6.3 D5).
+    ///
+    /// Inside a host this is the host's **local** id — the routing/consent key
+    /// the operator registered the provider under — and every host surface
+    /// (composition, dedup, usage reports, attribution) keys on it. On the
+    /// wire it is the provider's handshake-declared `provider.name` instead,
+    /// the only provider id the provider itself has seen: a host translates at
+    /// the connection boundary (`Host::verify_frames` does, for `verify`), and
+    /// a `FrameId` a provider emits or receives always carries its declared
+    /// name. The two need not agree, and nothing makes a declared name unique.
     pub provider_id: String,
     /// The provider-scoped frame id ([`ContextFrame::id`](crate::ContextFrame::id)),
     /// stable for dedup across queries.

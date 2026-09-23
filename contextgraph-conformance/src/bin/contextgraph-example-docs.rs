@@ -751,12 +751,23 @@ fn current_digest(frame_id: &str, misbehave: Option<Misbehave>) -> Option<String
 /// and opaque, so only the provider can say whether the bytes behind an
 /// identity still match. A digest that differs from the current one is exactly
 /// what a mutated source looks like from here.
+///
+/// An identity naming a provider id other than this provider's declared name is
+/// answered `unknown`, as `SPEC.md` V5 permits: it is not a frame this provider
+/// served, whatever its frame id. That makes this fixture the conformance
+/// witness for D5 — the suite registers it as `provider-under-test`, so a host
+/// that put its local id on the wire instead of the declared name would have
+/// every frame come back `unknown` and fail `verify-honesty`.
 fn verify_honestly(request: &VerifyRequest, misbehave: Option<Misbehave>) -> VerifyResponse {
+    let declared = provider_info(misbehave).name;
     VerifyResponse::new(
         request
             .frames
             .iter()
             .map(|frame| {
+                if frame.provider_id != declared {
+                    return FrameVerdict::new(frame.clone(), Verdict::Unknown);
+                }
                 let verdict = match current_digest(&frame.frame_id, misbehave) {
                     // Never served, or no longer served: nothing to revalidate.
                     None => Verdict::Gone,

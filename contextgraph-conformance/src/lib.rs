@@ -383,6 +383,13 @@ const MUTATED_SUFFIX: &str = "-contextgraph-conformance-mutated";
 /// Skipped — not failed — when the provider does not advertise `verify`: that
 /// is the declared capability-gated fallback (V3), and the host re-queries
 /// instead.
+///
+/// The identities are built with the host-local id the suite registered the
+/// provider under (`provider-under-test`), which never equals a provider's
+/// declared name, and go through [`Host::verify_frames`] — so the check also
+/// exercises the host's D5 translation to the declared name on the wire. The
+/// reference fixture answers `unknown` to a foreign provider id (V5), which is
+/// what makes a regression there visible here.
 async fn check_verify_honesty(
     host: &Host,
     id: &str,

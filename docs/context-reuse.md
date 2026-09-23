@@ -82,6 +82,15 @@ pub struct FrameId {
   [`ContextFrame::content_digest`](./protocol-surface.md#context-frame) absent).
   Such a frame is **not verifiable**: a host **MUST** treat it as un-revalidatable
   and re-query rather than reuse it unchecked (§4).
+- **`provider_id` is the host's local id inside a host, and the provider's
+  declared name on the wire** ([`SPEC.md` §6.3 D5](../SPEC.md#63-frame-identity-d1d5)).
+  The local id is the key the operator configured the provider under; the
+  declared name is the handshake's `provider.name`, the only id the provider
+  itself knows. A host translates at the connection boundary — a verify request
+  carries the declared name, and each verdict is resolved back to the local id
+  by the connection it arrived on. An identity keyed on a local id is therefore
+  host-scoped: canonical order below is byte-stable across hosts that configure
+  the same local ids.
 
 Two frames with the same identity **MUST** have the same content bytes;
 changing a frame's content **MUST** change its `content_digest` (else §4's

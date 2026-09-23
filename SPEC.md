@@ -440,7 +440,7 @@ range surfaces there as `DigestVerification::Unreadable` carrying an
 addressed bytes and digest for every rule above, including each unverifiable
 case, so a second implementation can check itself.
 
-### 6.3 Frame identity (D1–D4)
+### 6.3 Frame identity (D1–D5)
 
 A frame's stable identity is the triple *(provider id, frame id,
 `content_digest`)*. `content_digest` is the provider-declared SHA-256 over the
@@ -456,6 +456,46 @@ frame carries so a resolved rehydration can be checked (§6.4).
 | **D2** | Two frames with the same *(provider id, frame id, `content_digest`)* **MUST** be treated as the same content; a host **MAY** dedup or reuse across queries on that basis. | host composition |
 | **D3** | A frame whose `content_digest` is absent **MUST NOT** be reused unchecked across queries — a host re-queries or re-verifies it rather than trusting a stored copy. | host composition |
 | **D4** | A `content_digest` is a claim about the *inline* bytes only; a host that reuses a frame's body across queries **SHOULD** confirm the identity still holds via `verify` (§9) before trusting it. | `verify` |
+| **D5** | On the wire — a `verify` request, a `verified` verdict, a `frame_attestations` entry, and the §6.5.2 commitment — *provider id* is the provider's handshake-declared `provider.name` (§3). Inside a host — composition, dedup (D2), reuse (D3), usage reports (UR1), attribution (A1) — it is the host's local id for the provider. A host **MUST** translate at the connection boundary: it substitutes the declared name of the provider it is sending to, and resolves an echoed identity to the local id of the connection it arrived on, **never** by looking a declared name up across providers. | `Host::verify_frames`; `verify-honesty` (the suite registers the provider under a local id that differs from its declared name) |
+
+**Which provider id (D5).** A host knows every provider by two names. The
+*local id* is the key the operator configured it under (`Host::add_stdio(id, …)`),
+under which consent (§4) and attestation trust are recorded; the provider never
+sees it. The *declared name* is `provider.name` from the handshake, the only
+provider identifier both ends of the wire observe. They need not agree, and the
+reference conformance suite deliberately registers every provider under a local
+id that differs from it.
+
+Each is right for exactly one half of the triple's job, which is why D5 assigns
+both rather than choosing one:
+
+- **The wire needs the declared name**, because a provider can only answer about,
+  or sign over, an identifier it knows. §6.5.2 already puts it in the signed
+  preimage, and that preimage is frozen for the `contextgraph/1` family.
+- **The host needs the local id**, because a declared name is a claim, not a
+  credential: H2 requires only that it be non-empty. A provider declaring another
+  provider's name would otherwise mint identities that collide with that
+  provider's — and D2 says two frames sharing an identity are *the same content*,
+  so the collision would poison dedup, reuse, the usage-report join, and
+  attribution at once. The local id is chosen by the operator in the same act as
+  the consent grant, so it names the provider the operator actually configured.
+
+Because translation is per connection, two configured providers that declare the
+same name are not ambiguous: each is asked only about the frames held under its
+own local id, and each verdict is resolved through the connection it arrived on.
+A host **MAY** warn an operator about the duplicate; it need not refuse it.
+
+An identity keyed on a local id is **host-scoped**: meaningful together with that
+host's configuration and not beyond it, and canonical order (§6.3,
+[`docs/context-reuse.md` §1](./docs/context-reuse.md)) is byte-stable across hosts
+only where they configure the same local ids. A host that shares identities
+beyond itself — a fleet-wide cache, a usage warehouse spanning hosts — carries its
+local-id → declared-name binding with them. Matching identities across hosts on
+the declared name alone inherits H2's weakness, so a deployment that needs it
+pins each declared name to the attester key it trusts for that provider (§6.5,
+[ADR 0016](./docs/adr/0016-attestation-trust-roots.md)). The decision and the
+alternatives are recorded in
+[ADR 0023](./docs/adr/0023-frame-identity-names-two-provider-ids.md).
 
 The identity rules and the reuse discipline they enable are developed in full in
 [`docs/context-reuse.md` §1](./docs/context-reuse.md).
@@ -1083,7 +1123,9 @@ a notification-shaped 1.x addition (§13) and is not defined here.
 A verify request carries frame **identities** (§6.3), never bodies. Each verdict
 echoes the identity it answers *in full*, so a host correlates by matching rather
 than by position and a provider that reorders or omits entries cannot shift a
-`valid` onto the wrong frame.
+`valid` onto the wrong frame. The `provider_id` in those identities is the
+recipient's handshake-declared `provider.name`, never the host's local id for it
+(D5, V5).
 
 | # | Requirement | Verified by |
 | - | ----------- | ----------- |
@@ -1091,6 +1133,14 @@ than by position and a provider that reorders or omits entries cannot shift a
 | **V2** | A provider declaring `capabilities.verify` **MUST** answer a `verify` with a `verified` reply. A requested identity that comes back with no verdict **MUST** be treated by the host as `unknown`. | `verify-honesty`; `rubber-stamp-verify`, `hollow-verify` witnesses |
 | **V3** | A verdict is one of `valid`, `stale`, `gone`, `unknown`. A host **MUST** reuse a held frame body **only** on `valid`; `unknown` **MUST NOT** be read as validity. Reuse requires a positive answer, never the absence of a negative one. | `verify-honesty` |
 | **V4** | A `stale` verdict **MAY** carry a `replacement_digest` — the provider's current digest for the frame, a digest never a body. A host **MUST NOT** keep serving its stored copy of a `stale` or `gone` frame. | `verify-honesty` |
+| **V5** | Every identity in a `verify` request **MUST** carry the recipient provider's handshake-declared `provider.name` as its `provider_id` (D5). A provider **MAY** answer `unknown` for an identity naming any other provider id — it did not serve that frame, whatever its frame id — and **MUST NOT** reject the whole request on that basis. | `Host::verify_frames`; `verify-honesty` |
+
+V5 answers a foreign `provider_id` per entry rather than per request because V2
+and V3 already make `unknown` safe — a host never reads it as validity — while a
+whole-request error would let one misaddressed entry deny revalidation for every
+other frame in the batch. The reference fixture exercises the permission: it
+answers `unknown` to any identity not naming its own declared name, which is what
+makes a host that leaked its local id onto the wire fail `verify-honesty`.
 
 A provider that does not declare `capabilities.verify` is queried afresh each
 time and stays fully conformant — verification is an optimisation a host earns by
