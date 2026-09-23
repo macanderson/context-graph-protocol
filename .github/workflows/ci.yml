@@ -393,8 +393,76 @@ jobs:
         working-directory: sdk/python
         # `--python-version 3.10`, not the 3.9 floor `pyproject.toml` declares:
         # mypy 2.x refuses to target 3.9 at all, and 3.10 is the nearest target
-        # it accepts.
+        # it accepts. The step below covers the floor.
         run: mypy --strict --python-version 3.10 contextgraph_sdk examples
+      # The declared floor, typechecked as the floor (#107). mypy 1.20.2 is the
+      # last release line that still accepts a 3.9 target, so it gets its own
+      # venv rather than sharing one with the 2.x pin above. The target is read
+      # from `requires-python`, so raising the floor moves this check with it.
+      - name: Python SDK typechecks against its declared floor
+        working-directory: sdk/python
+        run: |
+          floor=$(sed -n 's/^requires-python = ">=\([0-9][0-9.]*\)"$/\1/p' pyproject.toml)
+          if [[ -z "$floor" ]]; then
+            echo "::error::could not read a '>=X.Y' floor from requires-python in sdk/python/pyproject.toml"
+            exit 1
+          fi
+          python3 -m venv "$RUNNER_TEMP/mypy-floor"
+          "$RUNNER_TEMP/mypy-floor/bin/pip" install "mypy==1.20.2"
+          "$RUNNER_TEMP/mypy-floor/bin/mypy" --strict --python-version "$floor" contextgraph_sdk examples
+
+  sdk-python-interpreters:
+    name: sdk (python) runs on ${{ matrix.role }} interpreter (${{ matrix.python }})
+    runs-on: ubuntu-latest
+    # `requires-python = ">=3.9"` is a promise to every pip resolver, and every
+    # other Python job here pins 3.12, so for a long time nothing ran the SDK
+    # on any interpreter but that one (#107). The floor and the newest release
+    # are where breakage lives: a 3.10-only syntax or stdlib call fails the
+    # first, a removal in a new release fails the second. `3.x` floats on
+    # purpose, because the claim has no upper bound and a new interpreter is
+    # covered by it the day it ships.
+    #
+    # No Rust, deliberately: the conformance jobs above each build the whole
+    # workspace, and a matrix over them would multiply that for a question the
+    # SDK's own unit tests (stdio and HTTP runtimes, attestation vectors)
+    # already answer. The TypeScript (`engines.node: ">=18"`) and Go
+    # (`go 1.21`) SDKs carry the same shape of claim and are not yet matrixed.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - role: floor
+            python: "3.9"
+          - role: newest
+            python: "3.x"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      # The matrix hardcodes the floor; `pyproject.toml` declares it. This
+      # step makes them one number: moving either without the other fails.
+      - name: the floor leg runs the floor pyproject.toml declares
+        if: matrix.role == 'floor'
+        run: |
+          python3 - <<'PY'
+          import re, sys
+          text = open("sdk/python/pyproject.toml", encoding="utf-8").read()
+          found = re.search(r'^requires-python = ">=(\d+)\.(\d+)"$', text, re.M)
+          if not found:
+              sys.exit("could not read a '>=X.Y' floor from requires-python")
+          floor = (int(found[1]), int(found[2]))
+          running = sys.version_info[:2]
+          if running != floor:
+              sys.exit(f"floor leg runs {running}, pyproject.toml declares {floor}")
+          print(f"floor leg runs {running}, matching requires-python")
+          PY
+      - name: SDK and examples compile
+        working-directory: sdk/python
+        run: python3 -m compileall -q contextgraph_sdk examples
+      - name: SDK unit tests pass
+        working-directory: sdk/python
+        run: python3 -m unittest discover -s tests -v
 
   sdk-version-pins:
     name: sdk version pins name a version their manifest ships
