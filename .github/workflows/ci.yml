@@ -229,7 +229,7 @@ jobs:
       - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.22"
       - name: Vet and build the Go SDK
@@ -306,7 +306,7 @@ jobs:
       - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.22"
       - name: Build the Go HTTP example
