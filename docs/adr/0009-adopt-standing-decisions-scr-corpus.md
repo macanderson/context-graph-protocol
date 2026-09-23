@@ -1,6 +1,6 @@
 # ADR 0009: Adopt org standing decisions as a Steering Context Record corpus
 
-- Status: accepted
+- Status: accepted; the replicated-corpus placement is superseded by [ADR 0020](0020-standing-decisions-are-workspace-records.md)
 - Date: 2026-08-26
 
 ## Context
