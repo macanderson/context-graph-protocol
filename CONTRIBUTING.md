@@ -87,6 +87,23 @@ locally before you push):
    `.github/scripts/check-deploy-hygiene.py` decides, and its
    `SERVED_PREFIXES` is the list.
 
+## The gates have self-tests
+
+The Python gates under `.github/scripts/` and `schema/validate-examples.py`
+decide merges, and a gate that stops seeing its subject still prints PASS. So
+each one gets a suite under `.github/scripts/tests/` that proves it goes red in
+every direction it should. A suite builds a throwaway tree and copies the real,
+unmodified gate into it, so it never reads or changes your checkout (#110).
+Run them with the standard library alone (plus `jsonschema`, which the schema
+gate itself needs):
+
+```bash
+python3 -m unittest discover -s .github/scripts/tests -v
+```
+
+If you change a gate, change its suite. Then break the gate on purpose and
+check that some test goes red. A suite that only ever passes proves nothing.
+
 ## Issues and labels
 
 - **[Bug report](https://github.com/macanderson/context-graph-protocol/issues/new?template=bug_report.yml)** — include the CGP crate name and version, OS, and a repro.
