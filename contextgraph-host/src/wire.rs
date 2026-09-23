@@ -33,7 +33,7 @@
 //! provider **MUST** echo the `id` of the request it is answering. An envelope
 //! with no `id` is a *notification*: it expects no reply, which is the shape a
 //! future push-invalidation extension needs
-//! (`docs/sketches/push-invalidation.md`).
+//! (`docs/adr/0004-dead-capability-surface.md` §3, and ADR 0002).
 //!
 //! `id` is optional so that a provider written against an earlier revision
 //! stays conformant: it is queried in lock-step and is fully conformant.

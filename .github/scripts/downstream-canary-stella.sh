@@ -10,9 +10,9 @@
 # Cargo's `[patch]` table, then builds and tests every stella crate that
 # actually depends on a contextgraph-* crate.
 #
-# This is the code-side half of the #27 boundary enforcement (see
-# docs/adaptive-context-reconciliation.md and docs/adr/0007-protocol-product-
-# boundary.md); the docs-side half is stella's own `normative-home` workflow
+# This is the code-side half of the #27 boundary enforcement (see the
+# Consequences of docs/adr/0007-protocol-product-boundary.md, which absorbed
+# the removed reconciliation doc); the docs-side half is stella's own `normative-home` workflow
 # (stella PR #500), which checks the *pointer* rather than the *build*.
 #
 # Usage (matches the .github/scripts/conformance-*.sh convention — env vars,

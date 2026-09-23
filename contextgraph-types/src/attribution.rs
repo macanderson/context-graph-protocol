@@ -31,7 +31,7 @@
 //! So the attribution *vocabulary* is specified now, because it is the half
 //! that has to be shared for scores to be comparable across implementations,
 //! and the wire hop that ships it back to a provider is deferred to a 1.x
-//! additive minor (`docs/sketches/attribution-feedback.md`). Hosts can score
+//! additive minor (`SPEC.md` §14.1, "Not on the wire"). Hosts can score
 //! retrieval locally today; when a provider exists that consumes the signal,
 //! the shape it consumes is already agreed.
 //!

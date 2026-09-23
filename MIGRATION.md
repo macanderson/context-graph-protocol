@@ -80,9 +80,9 @@ conformance check:
 
 | Removed | Replacement |
 | --- | --- |
-| `Capabilities.upsert` | none — see `docs/sketches/write-path.md` |
-| `Capabilities.subscribe` | pull-based revalidation; see `docs/sketches/push-invalidation.md` |
-| `QueryCapability.filters` | none — see `docs/sketches/query-filters.md` |
+| `Capabilities.upsert` | none — a write path waits for a working provider to drive its design; see [ADR 0004 §1](./docs/adr/0004-dead-capability-surface.md#1-capabilitiesupsert--removed) |
+| `Capabilities.subscribe` | pull-based revalidation with `context/verify`; push stays open as an additive 1.x notification (an envelope with no `id`); see [ADR 0004 §3](./docs/adr/0004-dead-capability-surface.md#3-capabilitiessubscribe--removed-freshness-is-answered-by-pull) and [ADR 0002](./docs/adr/0002-request-correlation-and-the-json-rpc-question.md) |
+| `QueryCapability.filters` | none — `kinds`, `anchors` and `query_text` cover the reference providers; see [ADR 0004 §4](./docs/adr/0004-dead-capability-surface.md#4-querycapabilityfilters--removed) |
 
 **The wire is unaffected.** These fields carried `#[serde(default)]`, and
 deserialization ignores unknown fields, so a provider still emitting them

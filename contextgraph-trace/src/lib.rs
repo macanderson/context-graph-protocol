@@ -1,15 +1,15 @@
 //! `contextgraph-trace` — the host execution trace (journal) and its replay
 //! oracles.
 //!
-//! **Sketch stage.** This crate implements
-//! [`docs/sketches/host-trace.md`]. It is published so downstream hosts can
-//! depend on the trace vocabulary by version instead of by git rev, but
-//! nothing here is part of the `contextgraph/1.0` surface: the journal wire
-//! format may change in any `0.x` release. Gate on [`TRACE_FORMAT`], not on
-//! the crate version. It exists so the shape can be exercised against real
-//! journals before any of it is proposed for the spec.
+//! **Sketch stage.** This crate implements [`docs/host-trace.md`], which
+//! specifies the journal wire format and the oracles. It is published so
+//! downstream hosts can depend on the trace vocabulary by version instead of
+//! by git rev, but nothing here is part of the `contextgraph/1.0` surface: the
+//! journal wire format may change in any `0.x` release. Gate on
+//! [`TRACE_FORMAT`], not on the crate version. It exists so the shape can be
+//! exercised against real journals before any of it is proposed for the spec.
 //!
-//! [`docs/sketches/host-trace.md`]: https://github.com/macanderson/context-graph-protocol/blob/main/docs/sketches/host-trace.md
+//! [`docs/host-trace.md`]: https://github.com/macanderson/context-graph-protocol/blob/main/docs/host-trace.md
 //!
 //! The conformance suite holds a *provider* honest; nothing holds the
 //! host-side agent loop honest. This crate is that missing half, split the

@@ -693,6 +693,23 @@ jobs:
           python-version: "3.12"
       - run: python3 .github/scripts/check-doc-types.py
 
+  doc-links:
+    name: every docs/ path the tree names resolves
+    runs-on: ubuntu-latest
+    # PR #80 deleted the design-sketch directory and ten citations of it
+    # survived — in Rust doc comments, MIGRATION.md, and the crates.io
+    # description of a published crate — because nothing reads a path out of
+    # prose (#153). The deploy-hygiene job checks absolute artifact URLs only.
+    # This reads every repo-relative docs/ path, and every link into this
+    # repository's own tree, and fails naming each one that does not exist. Its
+    # self-test (tests/test_check_doc_links.py) runs in guard-self-tests.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python3 .github/scripts/check-doc-links.py
+
   publish-dry-run:
     name: contextgraph-types packages cleanly (crates.io dry run)
     runs-on: ubuntu-latest
