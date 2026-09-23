@@ -417,11 +417,11 @@ jobs:
     runs-on: ubuntu-latest
     # A guard that only ever passes proves nothing, and each guard above is
     # judged by the one tree it runs on, where it is green by construction.
-    # These tests run the guards against fixture trees built to be wrong —
-    # a quoted or SHA-commented stale pin, an unparsed `uses:` line — and
-    # hold that each goes red (#207) — and run the triage guard's label
-    # decision over every label family SCR-005 reserves (#137). Offline,
-    # stdlib only.
+    # These tests run the guards against inputs built to be wrong and hold
+    # that each goes red: a quoted or SHA-commented stale pin and an unparsed
+    # `uses:` line (#207), a creator-applied `P4` or `size/M` (#137), and a
+    # changelog with two `## [Unreleased]` headings or none (#149). Offline,
+    # stdlib only. Everything in .github/scripts/tests runs here.
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
