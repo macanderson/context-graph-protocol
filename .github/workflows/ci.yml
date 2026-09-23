@@ -480,6 +480,21 @@ jobs:
           python-version: "3.12"
       - run: python3 .github/scripts/check-sdk-version-pins.py
 
+  sdk-metadata:
+    name: sdk packages name the crates' homepage and repository
+    runs-on: ubuntu-latest
+    # Both npm packages shipped with no `homepage` or `repository`, so their
+    # registry pages linked nowhere. The Python package's homepage was the
+    # GitHub repo while the crates named the protocol domain (#112). The guard
+    # finds manifests by walking sdk/*/ rather than listing them, so a new SDK
+    # is held to Cargo.toml's pair from its first commit. Offline, stdlib only.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python3 .github/scripts/check-sdk-metadata.py
+
   scaffold-action-pins:
     name: scaffold workflows pin the action majors this repository runs
     runs-on: ubuntu-latest

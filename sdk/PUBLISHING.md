@@ -20,6 +20,14 @@ checklist for every *subsequent* release, so a version bump is a checklist,
 not an improvisation — exactly the role
 [`../PUBLISHING.md`](../PUBLISHING.md) plays for the crates.
 
+Every package names the same project as the crates: `homepage`
+`https://contextgraphprotocol.org`, `repository` this GitHub repository (npm's
+object form, with `directory` set to the package's subpath), and the issue
+tracker. Nobody has to remember this. `.github/scripts/check-sdk-metadata.py`
+reads the values from `Cargo.toml`'s `[workspace.package]` and fails CI, and
+each `verify-*` job before a publish, on any package under `sdk/*/` that
+disagrees. That includes a new SDK directory nobody added to a list (#112).
+
 ## npm (already live — for the next bump)
 
 The TypeScript SDK's first publish already happened (PR #46), so this is the
