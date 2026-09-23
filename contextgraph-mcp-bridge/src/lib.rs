@@ -4,7 +4,7 @@
 //! An MCP **client** wrapped as a CGP **provider**: it speaks just enough of the
 //! Model Context Protocol (`initialize` + `resources/list` + `resources/read`)
 //! to a wrapped MCP server, maps each MCP resource to a
-//! [`ContextFrame`](contextgraph_types::ContextFrame), and answers CGP
+//! [`ContextFrame`], and answers CGP
 //! `context/query`/`context/verify` over stdio — so every MCP resource server
 //! becomes a **budgeted, cited, consent-gated** context source with zero changes
 //! to it.
@@ -20,13 +20,13 @@
 //!   real `sha256` digest a host can independently re-read and verify
 //!   (`SPEC.md` §6.2).
 //! - **honest token cost** — `token_cost` is the canonical byte count of the
-//!   served content ([`budget_tokens`](contextgraph_types::budget_tokens)), so a
+//!   served content ([`budget_tokens`]), so a
 //!   host budgets the resource truthfully rather than guessing.
 //! - **a relevance score** — a simple lexical overlap between the query and the
 //!   resource, normalized into `[0, 1]`.
 //! - **consent posture** — the transport-honesty rule applied transitively: a
 //!   bridge wrapping a **remote** MCP server declares `egress: true` with an
-//!   off-machine [`EgressScope`](contextgraph_types::EgressScope), so a host
+//!   off-machine [`EgressScope`], so a host
 //!   gates it behind consent exactly as it would any egress provider. A
 //!   local/filesystem MCP server stays `egress: false`.
 //!

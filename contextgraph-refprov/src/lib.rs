@@ -46,7 +46,7 @@ pub const EMBEDDING_FINGERPRINT: &str = "contextgraph-reference/8/none";
 
 /// Provider identity plus the frame kinds it serves. The rest of the capability
 /// set is identical across the reference providers, so the kit fills it in
-/// ([`capabilities`]).
+/// (`capabilities`).
 pub struct ProviderConfig {
     /// Stable provider name, surfaced at the handshake.
     pub name: &'static str,

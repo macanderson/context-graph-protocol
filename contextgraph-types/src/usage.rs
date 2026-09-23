@@ -16,7 +16,7 @@
 //! ([`FanOut::usage_report`](https://docs.rs/contextgraph-host/latest/contextgraph_host/host/struct.FanOut.html#method.usage_report)).
 //!
 //! Each served frame is recorded as a [`ServedFrame`]: its stable
-//! [`FrameId`](crate::FrameId) identity *and* the `token_cost` the provider
+//! [`FrameId`] identity *and* the `token_cost` the provider
 //! declared for it. Storing the pair is what lets an auditor walk from a billed
 //! total back to the exact frames behind it — and it makes the report
 //! **self-verifying**: the per-provider and request totals re-sum from these

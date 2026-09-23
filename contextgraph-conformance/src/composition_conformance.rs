@@ -23,7 +23,7 @@
 //! takes a [`ComposingHost`] — anything that can answer "given these providers
 //! and this query, what reaches the prompt, and what did you drop getting
 //! there?" — and holds it to the rules that bind that answer. The reference
-//! implementation is [`compose_for_prompt`](contextgraph_host::compose_for_prompt),
+//! implementation is [`compose_for_prompt`],
 //! which passes; a downstream host with its own merge (stella's `recall_via_host`
 //! is the known one) implements the trait and gets the same audit.
 //!
@@ -55,7 +55,7 @@
 //! # Honest residual
 //!
 //! This suite sees a host's composition as a black box over frames: it cannot
-//! check *rendering* (R3 fencing is [`host_conformance`]'s `host-content-quoting`,
+//! check *rendering* (R3 fencing is [`host_conformance`](crate::host_conformance)'s `host-content-quoting`,
 //! against the reference renderer), and it cannot check that a host's stated drop
 //! *reason* is the true one — only that a drop is reported at all. A host that
 //! reported every over-budget drop as a duplicate would pass. Reason fidelity

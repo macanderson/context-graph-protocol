@@ -9,7 +9,7 @@
 //! host can persist the user's decisions across runs (task deliverable 4).
 //!
 //! Scope-level consent is recorded as a
-//! [`ConsentReceipt`](contextgraph_types::ConsentReceipt) — a protocol-defined
+//! [`ConsentReceipt`] — a protocol-defined
 //! shape that lives in `contextgraph-types` alongside the usage report, since
 //! any host claiming the consent guarantee must produce it and any auditor must
 //! be able to read it. This module holds the host machinery that *consumes*

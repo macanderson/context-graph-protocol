@@ -39,7 +39,7 @@ const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 /// [`Display`](fmt::Display) print the fixed placeholder `Credential(<redacted>)`,
 /// so a credential that reaches a log line, an `{:?}`/`{}` interpolation, or a
 /// panic payload cannot spill its bytes (`SPEC.md` §4.2, **C8**). The only way
-/// to read the raw value is [`Credential::expose`], a crate-private method used
+/// to read the raw value is `Credential::expose`, a crate-private method used
 /// solely to attach the header on the wire — a leak is therefore greppable.
 #[derive(Clone)]
 pub struct Credential {

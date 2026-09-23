@@ -374,7 +374,7 @@ pub struct ContextFrame {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
     /// The provider-declared digest of this frame's **inline** content bytes —
-    /// the third component of its stable [`FrameId`](crate::FrameId) identity,
+    /// the third component of its stable [`FrameId`] identity,
     /// opaque to the protocol (e.g. `sha256:<hex>`). This is the spec's
     /// `content_hash` (SHA-256 over the exact inline UTF-8 content) under its
     /// established name; see [`canonical_content_hash`](Self::canonical_content_hash)
@@ -521,7 +521,7 @@ impl ContextFrame {
     }
 
     /// The token cost this frame's **inline** content is *required* to declare
-    /// (`SPEC.md` §B3) — see [`budget_tokens`](crate::budget_tokens). A
+    /// (`SPEC.md` §B3) — see [`budget_tokens`]. A
     /// `reference` frame carries no inline content, so its expected cost is 0.
     ///
     /// Distinct from the [`canonical_token_cost`](Self::canonical_token_cost)

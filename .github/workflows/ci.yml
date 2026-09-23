@@ -126,6 +126,24 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
 
+  rustdoc:
+    name: rustdoc (-D warnings)
+    runs-on: ubuntu-latest
+    # docs.rs is the surface a third-party implementer reads these crates
+    # through (`contextgraph-types` builds there with `all-features = true`),
+    # and until this job existed nothing ever built it: `cargo doc` had gone
+    # red on main on redundant, private, and unresolved intra-doc links —
+    # three of them pointed at nothing at all (#122).
+    # `--all-features` matches what docs.rs renders; `--no-deps` keeps the run
+    # to this workspace's own docs, which are the only ones it can fix.
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/rust
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo doc --workspace --all-features --no-deps
+
   conformance:
     name: conformance (green and --misbehave red)
     runs-on: ubuntu-latest

@@ -3,7 +3,7 @@
 //!
 //! It serves `Symbol` frames (one per definition, backed by the exact source
 //! line with a re-verifiable `file://` + `L<line>` + `sha256` provenance) and a
-//! `Graph` frame per file whose [`Relation`](contextgraph_types::Relation)
+//! `Graph` frame per file whose [`Relation`]
 //! edges are the `code.defines` / `code.calls` / `code.imports` links between
 //! those symbols. It honors `query.anchors` the way the reference fixture does:
 //! a frame anchored on a symbol URI is boosted to the front.

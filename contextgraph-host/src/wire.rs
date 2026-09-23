@@ -149,7 +149,7 @@ pub enum Envelope {
         /// Machine-readable classification (`SPEC.md` §Errors). Optional so
         /// that a provider written against an earlier revision stays
         /// conformant; a host treats its absence as
-        /// [`ErrorCode::Internal`](contextgraph_types::ErrorCode::Internal).
+        /// [`ErrorCode::Internal`].
         #[serde(default, skip_serializing_if = "Option::is_none")]
         code: Option<ErrorCode>,
         /// Human-readable detail. Always present: the code is for the machine,

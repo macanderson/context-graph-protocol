@@ -81,7 +81,7 @@ style guide.
 - Sign off commits (`git commit -s`) — this is DCO, not a CLA. You keep your
   copyright.
 - One logical change per PR. CI must be green (`fmt`, `clippy -D warnings`,
-  `test`). Include a test that proves the change (a "witness"), or say why one
+  `test`, `rustdoc -D warnings`). Include a test that proves the change (a "witness"), or say why one
   isn't possible.
 - Update docs in the same PR as the code change.
 - Dual-licensed MIT OR Apache-2.0.

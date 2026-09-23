@@ -261,7 +261,7 @@ impl RawStdioConnection {
 
     /// Read the next raw line, or `None` at EOF (the child closed stdout).
     ///
-    /// Bounded to [`MAX_LINE_BYTES`] via an incremental `fill_buf`/`consume`
+    /// Bounded to `MAX_LINE_BYTES` via an incremental `fill_buf`/`consume`
     /// loop: a buggy or hostile child that streams bytes without ever emitting
     /// a newline would otherwise grow a single `String` without limit (the
     /// handshake/query timeouts bound *time*, not *memory*) and OOM the host.
@@ -286,7 +286,7 @@ impl RawStdioConnection {
 
     /// Perform the Context Graph Protocol handshake (SPEC.md §3): send `handshake`, expect
     /// `handshake_ack`, and reject an incompatible protocol version with a
-    /// named error. Bounded by [`HANDSHAKE_TIMEOUT`] so a silent provider
+    /// named error. Bounded by `HANDSHAKE_TIMEOUT` so a silent provider
     /// fails cleanly rather than hanging (task deliverable 1).
     pub async fn handshake(&mut self) -> Result<(ProviderInfo, Capabilities), HostError> {
         self.send(&Envelope::Handshake {
@@ -607,7 +607,7 @@ fn drain_waiters(pending: &PendingTable, no_id_slot: &NoIdSlot, exit: &ReaderExi
 /// capabilities, then splits the connection into independently-lockable halves:
 /// the write half (`stdin`) is locked only for the length of one line write, a
 /// dedicated reader task owns the read half and demultiplexes replies on their
-/// correlation `id`, and a [`StdioControl`] holds the child for teardown. A
+/// correlation `id`, and a `StdioControl` holds the child for teardown. A
 /// provider that negotiated [`Capabilities::correlation`](contextgraph_types::Capabilities::correlation)
 /// can therefore have several `query`s in flight at once — a slow one no longer
 /// head-of-line blocks the rest. A provider that did **not** negotiate

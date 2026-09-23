@@ -15,7 +15,7 @@
 //!
 //! # What this is, and what it deliberately is not
 //!
-//! This is a **host-produced record**, exactly like [`UsageReport`](crate::UsageReport)
+//! This is a **host-produced record**, exactly like [`UsageReport`]
 //! — not a wire method. There is no `context/feedback` envelope, no
 //! `Capabilities.feedback`, and no host API that transmits any of this to a
 //! provider.
@@ -38,7 +38,7 @@
 //! # The identity is not new
 //!
 //! Attribution needs a stable per-item handle, and the protocol already has
-//! one: [`FrameId`](crate::FrameId), the `(provider id, frame id, content
+//! one: [`FrameId`], the `(provider id, frame id, content
 //! digest)` triple that composition, dedup, usage reports, and `verify` all
 //! key on. Minting a second id for attribution would let the two disagree —
 //! and a disagreement between "the frame that was billed" and "the frame that

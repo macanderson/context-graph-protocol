@@ -298,7 +298,7 @@ impl Host {
 
     /// [`query_provider`](Self::query_provider), plus what the host found when
     /// it checked the provider's attestations against its
-    /// [`TrustStore`](crate::TrustStore) (`SPEC.md` §6.5,
+    /// [`TrustStore`] (`SPEC.md` §6.5,
     /// [ADR 0016](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0016-attestation-trust-roots.md)).
     ///
     /// Returns the result exactly as the provider served it and one
@@ -783,7 +783,7 @@ pub struct ProviderOutcome {
     pub provider_id: String,
     pub result: ProviderResult,
     /// What the host found when it checked this provider's attestations
-    /// against its [`TrustStore`](crate::TrustStore) — one entry per accepted
+    /// against its [`TrustStore`] — one entry per accepted
     /// frame, including the frames no attestation covered (`SPEC.md` §6.5,
     /// [ADR 0016](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0016-attestation-trust-roots.md)).
     ///
@@ -819,7 +819,7 @@ pub enum ProviderResult {
         dropped_frames: usize,
     },
     /// The provider returned more frames than `max_frames` — a frame-count
-    /// overspend. Dropped whole and reported, symmetric to a [`BudgetLie`]
+    /// overspend. Dropped whole and reported, symmetric to a [`BudgetLie`](ProviderResult::BudgetLie)
     /// (SPEC.md §7, B4).
     FrameFlood {
         returned_frames: usize,

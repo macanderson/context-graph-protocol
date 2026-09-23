@@ -3,7 +3,7 @@
 //!
 //! It speaks just enough of the Model Context Protocol over stdio —
 //! `initialize`, `resources/list`, `resources/read` (plus `ping`) — to stand in
-//! for a real MCP server, so [`contextgraph-mcp-bridge`] and its CI job are
+//! for a real MCP server, so `contextgraph-mcp-bridge` and its CI job are
 //! **self-contained**: no network, no `npx`, no external MCP install to point
 //! the bridge at.
 //!

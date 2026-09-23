@@ -115,7 +115,7 @@ pub struct Capabilities {
     ///
     /// Format: `<model-id>/<dimensions>[/<normalization>]`, e.g.
     /// `bge-small-en-v1.5/384/l2`. Matching is exact — see
-    /// [`embedding_fingerprints_match`](crate::embedding_fingerprints_match)
+    /// [`embedding_fingerprints_match`]
     /// and `SPEC.md` §E1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embeddings_fingerprint: Option<String>,

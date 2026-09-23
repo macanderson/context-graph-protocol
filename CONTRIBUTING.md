@@ -23,7 +23,9 @@ your copyright; no assignment, ever.
 **PR checklist** (the template walks you through it):
 
 1. One logical change per PR — smaller lands faster.
-2. The gate is green locally (`fmt` / `clippy -D warnings` / `test`).
+2. The gate is green locally (`fmt` / `clippy -D warnings` / `test`), and
+   `RUSTDOCFLAGS="-D warnings" cargo doc -p <crate> --all-features --no-deps`
+   for any crate whose doc comments you touched.
 3. A witness test, or a stated reason there isn't one.
 4. Docs updated in the same PR if behavior or flags changed (`README.md`,
    `--help` text, doc comments).
