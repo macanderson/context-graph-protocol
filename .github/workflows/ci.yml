@@ -399,11 +399,12 @@ jobs:
     runs-on: ubuntu-latest
     # The templates ship a conformance.yml under `_github/`, which the
     # scaffolder renames to `.github/` only at scaffold time. Dependabot scans
-    # `.github/workflows` alone, so it bumped setup-python to v7 in every
-    # workflow here and never saw the template's v5 (#194). The scaffold job
-    # runs the conformance script directly and never executes that nested
-    # workflow, so nothing green covered it. Same failure mode as ADR 0012,
-    # same remedy: an offline guard that fails the commit which opens the gap.
+    # `.github/workflows` and `.github/actions` alone, so it bumped
+    # setup-python to v7 in every workflow here and never saw the template's
+    # v5 (#194). The scaffold job runs the conformance script directly and
+    # never executes that nested workflow, so nothing green covered it. Same
+    # failure mode as ADR 0012, same remedy: an offline guard that fails the
+    # commit which opens the gap. Its own job, so a red run names what drifted.
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v7

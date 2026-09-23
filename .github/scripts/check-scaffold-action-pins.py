@@ -6,20 +6,21 @@ Usage:
     python3 .github/scripts/check-scaffold-action-pins.py
 
 Exits 0 if every `uses: owner/action@ref` in a scaffold template's workflow
-names the same major that this repository's own workflows pin for that action.
-Exits 1 otherwise. Stdlib only, offline.
+names the same major that this repository's own workflows and composite
+actions pin for that action. Exits 1 otherwise. Stdlib only, offline.
 
-Why this exists (see docs/adr/0012-sdk-version-pins-share-a-major.md):
+Why this exists (see docs/adr/0012-sdk-version-pins-share-a-major.md and
+#194, which owns this guard):
 
   `sdk/create-contextgraph-provider` hands every new provider a
   `.github/workflows/conformance.yml`. In the tree that file lives under
   `templates/<lang>/_github/`, and the scaffolder renames `_github` to
-  `.github` only at scaffold time. Dependabot scans `.github/workflows`
-  alone, so it bumps every action in this repository's workflows and never
-  sees the copy the templates ship. #194 moved `actions/setup-python` to v7
-  in three workflows while the Python template stayed on v5, and no job
-  could have noticed: the scaffold job runs the conformance script directly
-  and never executes the nested workflow.
+  `.github` only at scaffold time. Dependabot scans `.github/workflows` and
+  `.github/actions/**/action.yml` and never sees the copy the templates ship.
+  #194 moved `actions/setup-python` to v7 in this repository's workflows
+  while the Python template stayed on v5, and #198 does the same for
+  `actions/checkout`. No job could have noticed: the scaffold job runs the
+  conformance script directly and never executes the nested workflow.
 
   That is the failure mode ADR 0012 records for SDK pins, on a different
   axis. The remedy is the same: an offline guard that fails the commit which
@@ -29,12 +30,20 @@ Why this exists (see docs/adr/0012-sdk-version-pins-share-a-major.md):
 The rule:
 
   For each action a template pins with a readable major, the repository's
-  workflows must pin that action, on exactly one major, and the template's
-  major must equal it. A ref without a major (`@master`, `@stable`, a local
-  `./` path, a reusable workflow at a bare SHA) is skipped, and so is an
-  action only the template uses, because there is nothing to compare it to.
-  A major is readable from `@v<N>`, `@v<N>.<x>.<y>`, or a SHA ref followed by
-  a `# v<N>` comment, which is the form Dependabot maintains for SHA pins.
+  workflows and composite actions must pin that action on exactly one major,
+  and the template's major must equal it. A major is readable from `@v<N>`,
+  `@v<N>.<x>.<y>`, or a SHA ref followed by a `# v<N>` comment, which is the
+  form Dependabot maintains for SHA pins. Prose after the version in that
+  comment is ignored.
+
+  These are skipped and reported, because there is nothing to compare:
+  a ref with no major (`@master`, `@stable`), an action only the template
+  uses, a local `./` action, and a reusable workflow
+  (`owner/repo/.github/workflows/x.yml@ref`).
+
+  Any line whose `uses:` value this guard cannot parse fails. A pin the
+  parser misses would otherwise pass silently, which is the failure this
+  guard exists to prevent.
 
   Majors, not exact refs, because the repository pins tags (`@v7`) while a
   hardened workflow may pin a SHA with a version comment, and the two are
@@ -48,20 +57,34 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 REPO_WORKFLOWS = sorted(
     list((ROOT / ".github" / "workflows").glob("*.yml"))
+    + list((ROOT / ".github" / "workflows").glob("*.yaml"))
     + list((ROOT / ".github" / "actions").glob("**/action.yml"))
+    + list((ROOT / ".github" / "actions").glob("**/action.yaml"))
 )
 TEMPLATE_WORKFLOWS = sorted(
-    (ROOT / "sdk" / "create-contextgraph-provider" / "templates").glob(
-        "*/_github/workflows/*.yml"
+    list(
+        (ROOT / "sdk" / "create-contextgraph-provider" / "templates").glob(
+            "*/_github/workflows/*.yml"
+        )
+    )
+    + list(
+        (ROOT / "sdk" / "create-contextgraph-provider" / "templates").glob(
+            "*/_github/workflows/*.yaml"
+        )
     )
 )
 
-# `uses:` may be a step key or a list item, and the value may be quoted. A
-# trailing `# v7.0.0` comment is captured so a SHA pin can state its major.
+# A line that carries a `uses:` key, as a step key or a list item. Every such
+# line must parse with USES below, or the guard fails.
+USES_KEY = re.compile(r"^\s*(?:-\s*)?uses:")
+# The value may be quoted. The action may carry a subpath
+# (`github/codeql-action/init`). A trailing `# v7.0.0 ...` comment is
+# captured whole so a SHA pin can state its major.
 USES = re.compile(
-    r"""^\s*(?:-\s*)?uses:\s*['"]?(?P<action>[^@\s'"]+)@(?P<ref>[^\s'"#]+)['"]?"""
-    r"""(?:\s*#\s*(?P<comment>.*))?$"""
+    r"""^\s*(?:-\s*)?uses:\s*(?P<q>['"]?)(?P<action>[^@\s'"#]+)@(?P<ref>[^\s'"#]+)(?P=q)"""
+    r"""\s*(?:#\s*(?P<comment>.*))?$"""
 )
+LOCAL = re.compile(r"""^\s*(?:-\s*)?uses:\s*['"]?\./""")
 MAJOR_TAG = re.compile(r"^v(\d+)(?:\.\d+)*$")
 SHA = re.compile(r"^[0-9a-f]{40}$")
 
@@ -79,23 +102,44 @@ def check(label: str, ok: bool, detail: str = "") -> bool:
 
 
 def major_of(ref: str, comment: str | None) -> int | None:
-    """The major named by `@ref`, or by its `# vN` comment for a SHA pin."""
+    """The major named by `@ref`, or by the first word of its `# vN` comment on a SHA pin."""
     match = MAJOR_TAG.match(ref)
     if match:
         return int(match[1])
-    if SHA.match(ref) and comment:
+    if SHA.match(ref) and comment and comment.split():
         match = MAJOR_TAG.match(comment.split()[0])
         if match:
             return int(match[1])
     return None
 
 
+def relative(path: Path) -> str:
+    return path.relative_to(ROOT).as_posix()
+
+
 def pins(path: Path) -> list[tuple[int, str, str, int | None]]:
-    """Every `uses:` in `path` as `(line, action, ref, major)`."""
+    """Every action `uses:` in `path` as `(line, action, ref, major)`.
+
+    Local actions and reusable workflows are left out. A `uses:` line that
+    does not parse is a failure, never a silent skip.
+    """
     found = []
     for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not USES_KEY.match(line) or LOCAL.match(line):
+            continue
         match = USES.match(line)
-        if match is None or match["action"].startswith("./"):
+        if match is None:
+            # Reported only when it fails: a PASS line per parsed `uses:`
+            # would bury the few lines a reader needs.
+            check(
+                f"{relative(path)}:{number} has a `uses:` value this guard can parse",
+                False,
+                f"line: {line.strip()}\n"
+                "remedy: write it as `uses: owner/action@ref`, optionally quoted, with"
+                " any comment after `#`, or extend USES in this script.",
+            )
+            continue
+        if "/.github/workflows/" in match["action"]:
             continue
         found.append(
             (number, match["action"], match["ref"], major_of(match["ref"], match["comment"]))
@@ -103,11 +147,15 @@ def pins(path: Path) -> list[tuple[int, str, str, int | None]]:
     return found
 
 
-def relative(path: Path) -> str:
-    return path.relative_to(ROOT).as_posix()
-
-
 print("the scaffold templates pin the action majors this repository runs")
+
+if not check(
+    "the scaffolder ships at least one workflow to compare",
+    bool(TEMPLATE_WORKFLOWS),
+    "no sdk/create-contextgraph-provider/templates/*/_github/workflows/*.yml found\n"
+    "remedy: if the templates moved, point TEMPLATE_WORKFLOWS at them.",
+):
+    sys.exit(1)
 
 repo_majors: dict[str, dict[int, list[str]]] = {}
 for workflow in REPO_WORKFLOWS:
@@ -116,13 +164,6 @@ for workflow in REPO_WORKFLOWS:
             repo_majors.setdefault(action, {}).setdefault(major, []).append(
                 f"{relative(workflow)}:{number}"
             )
-
-check(
-    "the scaffolder ships at least one workflow to compare",
-    bool(TEMPLATE_WORKFLOWS),
-    "no sdk/create-contextgraph-provider/templates/*/_github/workflows/*.yml found\n"
-    "remedy: if the templates moved, point TEMPLATE_WORKFLOWS at them.",
-)
 
 for template in TEMPLATE_WORKFLOWS:
     for number, action, ref, major in pins(template):
@@ -140,18 +181,18 @@ for template in TEMPLATE_WORKFLOWS:
                 f"{where} can follow one repository major for {action}",
                 False,
                 f"this repository pins {action} on more than one major:\n{split}\n"
-                f"remedy: settle the repository on one major first.",
+                "remedy: settle the repository on one major first.",
             )
             continue
-        (repo_major, sites), = used.items()
+        ((repo_major, sites),) = used.items()
         check(
             f"{where} pins {action} on the major this repository runs (v{repo_major})",
             major == repo_major,
             f"template pins {action}@{ref}; the repository pins v{repo_major} at"
             f" {sites[0]}\n"
             f"remedy: move {where} to {action}@v{repo_major}. Dependabot cannot,"
-            f" because the template lives under _github/, which the scaffolder"
-            f" renames to .github/ only at scaffold time.",
+            " because the template lives under _github/, which the scaffolder"
+            " renames to .github/ only at scaffold time.",
         )
 
 if failures:
