@@ -496,8 +496,6 @@ this is a crate-version release only.
   cut from `main` and contains it. **0.1.1 corresponds to no commit on `main`
   and should not be depended on**; use 0.1.2 or later.
 
-## [Unreleased]
-
 ## [1.0.0] — 2026-08-11 (stable protocol and crate release)
 
 The `contextgraph/1.0` wire contract is now frozen. The four public Rust crates
