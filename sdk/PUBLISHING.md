@@ -141,13 +141,12 @@ tag pattern is reserved for a module living at the repo root, which doesn't
 exist here) — it's an easy mistake to make once and then have to explain why
 `go get ...@v0.1.0` 404s while `go get ...@sdk/go/v0.1.0` works.
 
-Note this is a distinct tag from the general repo release-tagging tracked in
-#30 (a root-level `v0.0.2` for downstream git-pins to the Rust crates) — the
-Go SDK's tag is independent of whatever prefix or cadence that one settles
-on, but #30 is the first real tag this repository will have cut since the
-pre-rename `ocp-v0.1.0`, so treat it as the dry run for the mechanics
-(annotated tag, changelog cross-reference, pushing tags at all) that this
-tag then repeats.
+Note this is a distinct tag from the Rust crates' release tags, which are
+named `contextgraph-vX.Y.Z` (`contextgraph-v2.0.0` is the first; pushing one is
+what starts `.github/workflows/release.yml`). The Go SDK's tag is independent
+of that prefix and cadence. A root-level `v0.0.2` git-pin tag was once planned
+(#30) and was never cut: the crates reached crates.io first, which made it
+unnecessary.
 
 ### The publish sequence
 
