@@ -86,8 +86,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Pinned to a commit SHA rather than a tag, unlike the rest of this
-      # repository's workflows. A tag is mutable, and this is the one job here
+      # Pinned to a commit SHA. A tag is mutable, and this is the one step here
       # that holds credentials able to write to a production bucket.
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
