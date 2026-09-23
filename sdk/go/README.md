@@ -12,7 +12,7 @@ the same conformance suite that judges the Rust reference provider.
 ## Install
 
 ```sh
-go get github.com/macanderson/context-graph-protocol/sdk/go/contextgraph@v0.1.0
+go get github.com/macanderson/context-graph-protocol/sdk/go/contextgraph
 ```
 
 ## Write a provider

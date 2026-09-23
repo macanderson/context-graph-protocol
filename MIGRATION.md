@@ -284,7 +284,10 @@ ContextQueryResult { frames, truncated, dropped_estimate, ..Default::default() }
 on `never`-narrowing stops type-checking. Narrow with the exported
 `isKnownFrameKind` / `KNOWN_FRAME_KINDS` when you need to branch only on kinds
 you understand. The Go SDK is unchanged in this release — porting it is tracked
-in issue #93. It takes a break of its own later; see §7.
+in issue #93. It takes a break of its own later; see §7. The lockstep covers
+the npm and PyPI packages only. The Go SDK has its own version line, because
+Go ties a module's major version to its import path
+([ADR 0026](./docs/adr/0026-versions-in-prose-and-the-go-sdk-tag.md)).
 
 ## 6. The JSON Schemas moved to a branded `$id` — no action required
 

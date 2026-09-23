@@ -473,6 +473,9 @@ jobs:
     # that: it overrides both published pins with local paths so CI never
     # depends on a publish — the right call for that job, and the reason this
     # guard is a separate one. Offline, stdlib only, reads no registry.
+    # It also reads install commands and dependency lines in tracked Markdown,
+    # where two versions had gone stale with no manifest comparison to see
+    # them, and refuses a concrete Go SDK version there (#108, ADR 0026).
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7

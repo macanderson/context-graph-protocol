@@ -79,7 +79,10 @@ with a window in between.
   may move on its own cadence.
 - **Prose.** A README's `npm install …@2` would not be caught. Extending the
   check there is possible and was left out as a separate judgement, not an
-  oversight.
+  oversight. *Since #108 it is caught:*
+  [ADR 0026](./0026-versions-in-prose-and-the-go-sdk-tag.md) extends this
+  rule to install commands and dependency lines in tracked Markdown, and
+  decides the Go SDK's case.
 
 ### Action pins in the scaffold workflows
 

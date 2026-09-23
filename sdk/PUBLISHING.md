@@ -5,15 +5,24 @@ This documents the release process for the three provider SDKs — `sdk/typescri
 **independent implementation** of the same wire contract (that's the point —
 see [`sdk/README.md`](./README.md)), so unlike the workspace crates
 ([`../PUBLISHING.md`](../PUBLISHING.md)) there is no dependency order between
-them: any SDK can publish without the others being live. What they share is a
-target version (`0.1.0` for the first release of each) and the same bar —
-green on `.github/scripts/conformance-external.sh` — before anything goes out.
+them: any SDK can publish without the others being live. What they share is
+the same bar — green on `.github/scripts/conformance-external.sh` — before
+anything goes out.
 
-| SDK | Registry | Status |
+| SDK | Registry | First published (historical record) |
 | --- | --- | --- |
-| TypeScript | npm, `@contextgraphprotocol/typescript-sdk` | ✅ published (PR #46) |
-| Python | PyPI, [`contextgraph-sdk`](https://pypi.org/project/contextgraph-sdk/) | ✅ published 0.1.0 (2026-07-31) |
-| Go | Go module proxy, `.../sdk/go/contextgraph` | ✅ published 0.1.0 (2026-08-01, tag `sdk/go/v0.1.0`) |
+| TypeScript | npm, `@contextgraphprotocol/typescript-sdk` | 0.1.0 (PR #46) |
+| Python | PyPI, [`contextgraph-sdk`](https://pypi.org/project/contextgraph-sdk/) | 0.1.0 (2026-07-31) |
+| Go | Go module proxy, `.../sdk/go/contextgraph` | 0.1.0 (2026-08-01, tag `sdk/go/v0.1.0`) |
+
+**That table records each SDK's first publish and does not change.** It is
+not a status field, so it does not track the current version. The current
+version is in the package's manifest: `sdk/typescript/package.json`,
+`sdk/python/pyproject.toml`. For Go, whose module has no version field, it is
+the newest `sdk/go/v*` tag (`git tag -l 'sdk/go/v*'`). The npm and PyPI
+versions move in lockstep with the crates; the Go SDK has a version line of
+its own. [ADR 0026](../docs/adr/0026-versions-in-prose-and-the-go-sdk-tag.md)
+records both choices.
 
 **All three first publishes have now happened.** This file remains the
 checklist for every *subsequent* release, so a version bump is a checklist,
@@ -159,10 +168,12 @@ unnecessary.
 ### The publish sequence
 
 ```bash
-# From the repo root, after confirming sdk/go/go.mod's version is 0.1.0-ready
-# (no in-flight breaking changes) and CI is green on the commit being tagged:
-git tag -a sdk/go/v0.1.0 -m "sdk/go v0.1.0"
-git push origin sdk/go/v0.1.0
+# From the repo root, after confirming the Go SDK is ready for vX.Y.Z (no
+# in-flight breaking changes) and CI is green on the commit being tagged.
+# vX.Y.Z is the Go SDK's own version (ADR 0026), not the crates'. A major of 2
+# or more also needs the `/vN` module path suffix Go requires.
+git tag -a sdk/go/vX.Y.Z -m "sdk/go vX.Y.Z"
+git push origin sdk/go/vX.Y.Z
 ```
 
 This is the one command sequence in this document that is *also* explicitly
@@ -186,8 +197,11 @@ version number and `@latest` resolution, not fetchability itself.
 ```bash
 mkdir -p /tmp/cgp-go-smoke && cd /tmp/cgp-go-smoke
 go mod init cgp-go-smoke
-go get github.com/macanderson/context-graph-protocol/sdk/go/contextgraph@v0.1.0
+go get github.com/macanderson/context-graph-protocol/sdk/go/contextgraph@vX.Y.Z
 ```
+
+`vX.Y.Z` is the tag you just pushed. Name it exactly rather than using
+`@latest`, so the check fails if the proxy has not seen the new tag yet.
 
 A resolving `go.sum` entry (rather than a "module not found" or "no matching
 versions" error) is the acceptance criterion. Then copy
@@ -212,15 +226,18 @@ to whoever happens to try first.
 - **Record the version in `../CHANGELOG.md`** under `[Unreleased]`, same as a
   crate release — see the entry this issue (#59) already added as the
   template.
-- **Update the status table at the top of this file and in
-  [`sdk/README.md`](./README.md)** from ⬜ to ✅, and drop the "not yet
-  published" notes from `sdk/python/README.md` / `sdk/go/README.md`.
+- **Leave the first-publish table at the top of this file alone.** It is a
+  historical record. A new SDK's first publish adds a row; a later release
+  adds nothing.
 - **Verify the full acceptance bar from #59 end to end**: all three of
   `npm install @contextgraphprotocol/typescript-sdk`, `pip install
-  contextgraph-sdk`, and `go get .../sdk/go/contextgraph@v0.1.0` resolve from
+  contextgraph-sdk`, and `go get .../sdk/go/contextgraph@latest` resolve from
   a clean environment, and each SDK's example provider passes
   `conformance-external.sh` when run from the installed package, not the
-  in-tree copy.
+  in-tree copy. The three are unpinned on purpose, so they check the release
+  you just made. `check-sdk-version-pins.py` fails on a pinned version in
+  prose that disagrees with its manifest, and on any concrete Go version in
+  prose (ADR 0026).
 
 ## This is a one-way door
 

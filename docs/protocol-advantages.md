@@ -306,9 +306,11 @@ simultaneously is fragile — it creates coordination overhead and incentivizes
 freezing the spec to avoid disruption. CGP's major-family model allows
 incremental evolution within a family (additive fields, tighter checks)
 without breaking deployed providers, while reserving the major-version bump
-for real breaking changes. Early adopters who pin `contextgraph-types = "=0.1.0"` get a
-hard guarantee; those who use `^0.1` accept pre-1.0 churn but gain
-forward-compatibility within the family.
+for real breaking changes. An adopter who pins an exact release
+(`contextgraph-types = "=2.0.0"`) gets a hard guarantee. One who writes the
+default caret requirement (`contextgraph-types = "2"`) takes additive releases
+within the family automatically, and a breaking change never arrives without a
+new major.
 
 ---
 
