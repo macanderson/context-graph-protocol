@@ -626,6 +626,31 @@ jobs:
         if: github.event_name != 'pull_request'
         run: python3 .github/scripts/check-adr-numbers.py
 
+  dco:
+    name: every commit is signed off (DCO)
+    runs-on: ubuntu-latest
+    # The license grant here is written as flowing from each contributor's
+    # DCO sign-off, and for most of the history nothing checked that the
+    # sign-off existed (#141). ADR 0025 chose enforcing the rule over
+    # deleting it; this is the enforcement. It reads the commits the pull
+    # request adds (base..head), so history before the cut-over is neither
+    # checked nor rewritten. Pull requests only: the certification is made on
+    # the commits a contributor pushes, and the commit a squash merge writes
+    # to main is GitHub's rewrite of those (ADR 0025 covers why that holds).
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: every commit this pull request adds is signed off by its author
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 .github/scripts/check-dco.py --range "${BASE_SHA}..${HEAD_SHA}"
+
   conformance-counts:
     name: docs state the real number of conformance checks
     runs-on: ubuntu-latest

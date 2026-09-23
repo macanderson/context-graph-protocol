@@ -11,7 +11,9 @@ so adopters can trust that the protocol is maintained deliberately and that
   maintainer owns release decisions, approval of normative changes, and the
   stewardship of the frozen `contextgraph/1.0` family.
 - **Contributors.** Anyone. Contributions land via pull request under the
-  [DCO](./CONTRIBUTING.md) — no CLA, no copyright assignment.
+  [DCO](./CONTRIBUTING.md) — no CLA, no copyright assignment. Every commit a
+  pull request adds must be signed off by its author, and CI enforces it
+  ([ADR 0025](./docs/adr/0025-the-dco-is-enforced-not-requested.md)).
 
 Context Graph Protocol is **maintainer-led today, not committee-led** — deliberately. A steering
 committee before there are independent implementations is theater. The path to

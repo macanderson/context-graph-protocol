@@ -79,7 +79,8 @@ style guide.
 - Commit messages: [Conventional Commits](https://www.conventionalcommits.org/),
   scoped to the crate you touched (e.g. `feat(contextgraph-types): ...`).
 - Sign off commits (`git commit -s`) — this is DCO, not a CLA. You keep your
-  copyright.
+  copyright. CI checks every commit a pull request adds
+  ([ADR 0025](./adr/0025-the-dco-is-enforced-not-requested.md)).
 - One logical change per PR. CI must be green (`fmt`, `clippy -D warnings`,
   `test`, `rustdoc -D warnings`). Include a test that proves the change (a "witness"), or say why one
   isn't possible.
@@ -227,6 +228,7 @@ requests can pick the same number and each look fine on its own (#123).
 | [0017](./adr/0017-record-hash-and-record-attestation.md) | `record_hash` and `RecordAttestation` | The record layer's identity, implemented: RFC 8785 canonicalization with the record's own hash removed from the preimage, and a domain-separated Ed25519 signature over it. Says why JCS is right here and wrong at the frame layer. |
 | [0018](./adr/0018-signing-a-frame-requires-a-content-digest.md) | Signing a frame requires a content digest | A signature over a frame that declares no `content_digest` covers its name and its provenance and nothing it says, so the provider can serve different bytes tomorrow and the signature still verifies. The verifier now returns a separate verdict instead of calling it valid. |
 | [0019](./adr/0019-one-home-for-an-attestation.md) | One `FrameAttestation`, one wire home | Three types of that name and two wire places for one signature, with no rule for which wins when they disagree. The canonical type is the types crate's, the home is the result, and `handshake_ack.attester_keys` is written down as a construction anchor rather than a trust one. |
+| [0025](./adr/0025-the-dco-is-enforced-not-requested.md) | The DCO is enforced, not requested | Contributors were told their sign-off is what licenses their contribution, and nothing checked it, so most commits had none. A CI check now requires every commit a pull request adds to be signed off by its author (a bot's by the person behind it), from this change forward, without rewriting history. |
 
 
 ---

@@ -18,7 +18,14 @@ ci(release): publish contextgraph-types to crates.io
 
 **DCO, not CLA.** Sign every commit (`git commit -s`) to certify the
 [Developer Certificate of Origin](https://developercertificate.org/). You keep
-your copyright; no assignment, ever.
+your copyright; no assignment, ever. The `every commit is signed off (DCO)`
+check enforces it on every commit a pull request adds. The trailer must name
+the commit's author email; a commit authored by a GitHub App (a bot or an
+agent) needs a sign-off from the person or operator behind it. Forgot one?
+`git rebase --signoff <base>` and `git push --force-with-lease`. Enforcement
+started with [ADR 0025](./docs/adr/0025-the-dco-is-enforced-not-requested.md)
+(#141). Earlier history is not rewritten, so older commits carry a sign-off
+only where their authors gave one.
 
 **PR checklist** (the template walks you through it):
 
@@ -29,7 +36,7 @@ your copyright; no assignment, ever.
 3. A witness test, or a stated reason there isn't one.
 4. Docs updated in the same PR if behavior or flags changed (`README.md`,
    `--help` text, doc comments).
-5. Commits signed off (`-s`).
+5. Commits signed off (`-s`) — CI checks every one.
 
 Maintainers aim for a first response within a few days. "Needs work" is a
 normal part of the loop here, not a rejection.
