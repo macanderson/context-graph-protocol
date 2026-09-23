@@ -24,7 +24,7 @@ jobs:
     name: rustfmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust
         with:
           components: rustfmt
@@ -34,7 +34,7 @@ jobs:
     name: clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust
         with:
           components: clippy
@@ -45,7 +45,7 @@ jobs:
     name: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
@@ -72,7 +72,7 @@ jobs:
     # the other's dependencies, and only a build with exactly one feature on can
     # catch a `cfg` that silently relies on the other being enabled too.
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust
         with:
           components: clippy
@@ -96,7 +96,7 @@ jobs:
     name: msrv (rust-version from Cargo.toml)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       # Read the pinned MSRV rather than hardcoding it, so bumping
       # `workspace.package.rust-version` cannot silently desynchronize CI from
       # the version the crates claim to support.
@@ -130,7 +130,7 @@ jobs:
     name: conformance (green and --misbehave red)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
@@ -145,7 +145,7 @@ jobs:
     name: reference provider (ripgrep) is conformant
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
@@ -158,7 +158,7 @@ jobs:
     name: reference provider (treesitter) is conformant
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
@@ -172,7 +172,7 @@ jobs:
     # bridge that wraps it, then runs the same external conformance gate the SDK
     # example providers pass. No network, no npx — the fixture is the MCP server.
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
@@ -186,7 +186,7 @@ jobs:
     name: sdk (typescript) is a conformant implementation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
@@ -208,7 +208,7 @@ jobs:
     name: sdk (python) is a conformant implementation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
@@ -225,7 +225,7 @@ jobs:
     name: sdk (go) is a conformant implementation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
@@ -247,7 +247,7 @@ jobs:
     name: sdk (typescript) HTTP adapter is conformant
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
@@ -277,7 +277,7 @@ jobs:
     name: sdk (python) HTTP adapter is conformant
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
@@ -302,7 +302,7 @@ jobs:
     name: sdk (go) HTTP adapter is conformant
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
@@ -337,7 +337,7 @@ jobs:
     # run: no local toolchain, and `npx tsc` failed in that environment (#94).
     # This is the run — no Rust, no emit, one question.
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
@@ -363,7 +363,7 @@ jobs:
     # `py.typed` package that leaks `Any` across its own boundary keeps that
     # promise to its callers and not to itself.
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -388,7 +388,7 @@ jobs:
     # depends on a publish — the right call for that job, and the reason this
     # guard is a separate one. Offline, stdlib only, reads no registry.
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -406,7 +406,7 @@ jobs:
     # failure mode as ADR 0012, same remedy: an offline guard that fails the
     # commit which opens the gap. Its own job, so a red run names what drifted.
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -418,7 +418,7 @@ jobs:
     env:
       CONTEXTGRAPH_INSPECT: ${{ github.workspace }}/target/debug/contextgraph-inspect
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
@@ -446,7 +446,7 @@ jobs:
     name: schema validates the examples
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -467,7 +467,7 @@ jobs:
     # MSRV at all. Neither is visible in review, which is what earns them a
     # gate (#160).
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -485,7 +485,7 @@ jobs:
     # a dead link ships silently. It already had: the badge docs/registry.md
     # told providers to paste into their READMEs 404ed (#57).
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -505,7 +505,7 @@ jobs:
     # Reading the constants is the only way this stays true without somebody
     # remembering to make it true.
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -527,7 +527,7 @@ jobs:
     # Reading the source is the only way the docs stay true without somebody
     # remembering to make them true.
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -547,7 +547,7 @@ jobs:
     # actually live on crates.io (see PUBLISHING.md's note on why local
     # pre-publish verification is asymmetric).
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       # `--locked`, matching the real publish in release.yml: a dry run allowed
