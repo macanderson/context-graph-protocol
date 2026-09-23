@@ -56,7 +56,9 @@
 //!   from the same unauthenticated party, so §6.2 is satisfied in full by a
 //!   provider that fabricated both. A provider that publishes no attester key
 //!   and serves no attestation passes: §6.5 makes the construction mandatory
-//!   and the signing optional.
+//!   and the signing optional. One that signs in a scheme this build cannot
+//!   check fails as uncheckable — never as forged (F8), and never as a skip
+//!   (ADR 0027).
 //!
 //! The suite is deliberately adversarial: pointed at a provider that lies
 //! about costs, emits an out-of-range score, omits a citation label, or dies
@@ -907,9 +909,41 @@ async fn correlation_stdio_probe(program: &str, args: &[String]) -> CheckResult 
 ///   construction mandatory and the signing optional, so a provider that signs
 ///   nothing is conformant and this check has nothing to say about it.
 /// - every attestation it serves verifies ⇒ **pass**.
-/// - every attestation names a scheme this build cannot check ⇒ **skip**, per
-///   F8: "I cannot check this" is never "this is good", and it is equally never
-///   "this is forged".
+///
+/// Anything else fails, and that includes an attestation whose `algorithm`
+/// this build does not recognise.
+///
+/// **Why an uncheckable attestation fails rather than skips** ([ADR 0027]).
+/// F8 binds the *verifier*: "I cannot check this" is never "this is good", and
+/// it is equally never "this is forged". This probe honours both halves — the
+/// verdict it reports is `UnknownAlgorithm`, never `BadSignature`, and the F9
+/// question below is still put, so the frame must still be served as
+/// unattested. What F8 does not settle is what a *conformance verdict* says
+/// about such a provider, and the two candidates were:
+///
+/// - **Skip**, on the reading that a provider on a scheme this build predates
+///   is not broken, only uncertified here. Rejected, because a skip is a pass
+///   to [`ConformanceReport::passed`], and skip means "this check does not
+///   apply to what you declared". It does apply: the provider published keys
+///   and served signatures, so it declared the capability this check exists
+///   for. It is the check that could not be *decided*, which is a different
+///   finding. A skip also turns the whole check into an opt-out: relabel a
+///   forged signature `"magic"` and it stops being `BadSignature` and starts
+///   being certified. A mixed answer — some frames verified, some uncheckable
+///   — fails for the same reason; one honest frame must not launder the rest.
+/// - **Fail**, on the reading that "conformant" means green on this suite, and
+///   a suite that green-lights signatures it never checked is the
+///   self-attestation §11.1 exists to rule out. Chosen. The evidence says the
+///   attestation was *uncheckable here*, not that it was wrong, so a provider
+///   ahead of this build learns what it is waiting on — a suite that knows its
+///   scheme — rather than being told it forged anything.
+///
+/// It is the same position this probe already took for the two neighbouring
+/// cases: a published key with no attestation, and an attestation with no
+/// published key, are both failures — a signing claim nothing here can
+/// exercise.
+///
+/// [ADR 0027]: https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0027-an-attestation-the-suite-cannot-check-is-not-certified.md
 async fn attestation_stdio_probe(program: &str, args: &[String]) -> CheckResult {
     let mut conn = match RawStdioConnection::spawn(program, args).await {
         Ok(conn) => conn,
@@ -1119,40 +1153,38 @@ async fn attestation_stdio_probe(program: &str, args: &[String]) -> CheckResult 
         ));
     }
 
+    // F8's findings are reported apart from the failures above, because they
+    // say something different: not "this attestation is wrong" but "nothing
+    // here could check it". Both fail the check (see the doc comment and ADR
+    // 0027); only the wording tells a provider ahead of this build from a
+    // forger.
+    let mut findings: Vec<String> = Vec::new();
     if !problems.is_empty() {
-        return CheckResult::fail(
-            CHECK_ATTESTATION,
-            format!(
-                "{} of {} attestation(s) did not verify (§6.5.4): {}",
-                problems.len(),
-                attestations.len(),
-                problems.join("; ")
-            ),
-        );
+        findings.push(format!(
+            "{} of {} attestation(s) did not verify (§6.5.4): {}",
+            problems.len(),
+            attestations.len(),
+            problems.join("; ")
+        ));
     }
-    if verified.is_empty() {
-        return CheckResult::skip(
-            CHECK_ATTESTATION,
-            format!(
-                "every attestation names a scheme this build cannot check, so F8 declines rather than guessing: {}",
-                uncheckable.join(", ")
-            ),
-        );
+    if !uncheckable.is_empty() {
+        findings.push(format!(
+            "{} of {} attestation(s) name a scheme this build cannot check (UnknownAlgorithm): {} — \
+             F8 leaves those frames unattested, not forged, and this suite certifies only what it \
+             checked, so an attestation it cannot check is not certified",
+            uncheckable.len(),
+            attestations.len(),
+            uncheckable.join(", ")
+        ));
+    }
+    if !findings.is_empty() {
+        return CheckResult::fail(CHECK_ATTESTATION, findings.join("; "));
     }
 
-    let note = if uncheckable.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "; {} left unattested by F8 as uncheckable here: {}",
-            uncheckable.len(),
-            uncheckable.join(", ")
-        )
-    };
     CheckResult::pass(
         CHECK_ATTESTATION,
         format!(
-            "recomputed and verified {} detached attestation(s) over {} served frame(s) against the handshake-published key(s) (§6.5){note}",
+            "recomputed and verified {} detached attestation(s) over {} served frame(s) against the handshake-published key(s) (§6.5)",
             verified.len(),
             frames.len()
         ),
@@ -1180,8 +1212,9 @@ fn describe_attestation_failure(frame_id: &str, verdict: &AttestationVerdict) ->
         AttestationVerdict::MalformedCommitment => format!(
             "frame `{frame_id}`: `signed_commitment` is not the `sha256:<64 lowercase hex>` §F7 requires (MalformedCommitment)"
         ),
-        // Handled by the caller, which reports it as uncheckable rather than
-        // as a failure — F8's whole point.
+        // `UnknownAlgorithm` is handled by the caller, which reports it as
+        // uncheckable rather than invalid — F8's whole point — in a finding of
+        // its own.
         other => format!("frame `{frame_id}`: {other:?}"),
     }
 }

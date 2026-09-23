@@ -27,7 +27,7 @@ check name here stops matching the code.
 | `malformed-input-tolerance` | malformed input does not crash the provider — an unparseable line, a JSON value that is not an envelope object (`42`), and a `query` envelope with its payload missing — and each is answered `bad_request` or, for garbage with no id to answer, ignored (§R1) | **stdio only** — the probe is wire-level |
 | `embedding-fingerprint` | a declared `embeddings_fingerprint` is not contradicted by a `bad_request` (§E1) | **stdio only**, and when the provider declares no fingerprint |
 | `correlation` | request ids are echoed back (§H4) | **stdio only**, and when the provider does not declare `capabilities.correlation` |
-| `attestation` | a provider offering attestations produces ones that verify (§6.5) | **stdio only**, and when the provider returned no frames to attest |
+| `attestation` | a provider offering attestations produces ones that verify (§6.5); one in a scheme this build cannot check fails as *uncheckable* (`UnknownAlgorithm`), never as forged and never as a skip ([ADR 0027](./adr/0027-an-attestation-the-suite-cannot-check-is-not-certified.md)) | **stdio only**, and when the handshake failed (the `handshake` check owns that) |
 
 A run's overall verdict, `ConformanceReport::passed()`, is true iff **no check
 failed**. A skipped check never fails a run — which is why the "skipped when"
@@ -35,6 +35,16 @@ column matters: an HTTP or in-process provider legitimately skips the four
 wire-level probes, and a provider that declares no graph capability legitimately
 skips `anchor-relevance`. Skipping is not passing, and the report distinguishes
 them.
+
+A skip always means *does not apply*, never *could not decide*. A check that
+binds what the provider declared but cannot reach a verdict fails, with evidence
+saying why — otherwise `passed()` would certify what nobody checked. The case
+that settled it is an attestation signed in a scheme this build does not know:
+the provider published keys and served signatures, so `attestation` applies,
+and it reports `fail` naming `UnknownAlgorithm` rather than skipping
+([ADR 0027](./adr/0027-an-attestation-the-suite-cannot-check-is-not-certified.md)).
+CI's `conformance-green.sh` and `conformance-external.sh` go one step further
+and fail on any skip, because the providers they judge declare every capability.
 
 The suite is deliberately adversarial. Pointed at a provider that lies about
 costs, emits an out-of-range score, omits a citation label, serves a digest that

@@ -193,7 +193,24 @@ enum Misbehave {
     /// peer a denial-of-service primitive — attach garbage, watch the evidence
     /// disappear.
     MalformedAttestation,
+    /// Sign every frame honestly, then relabel each attestation's `algorithm`
+    /// as a scheme this build cannot check, `dilithium3` (trips
+    /// `attestation`).
+    ///
+    /// F8 is the verifier's rule: "I cannot check this" is never "this is
+    /// good", and never "this is forged" either, so the verdict is
+    /// `UnknownAlgorithm` and the frames are still served (F9). The check
+    /// *fails* rather than skipping because a conformance verdict certifies
+    /// only what the suite checked — a provider whose every signature is in a
+    /// scheme nobody here can verify has had none of them verified, and a
+    /// skip is a pass to `ConformanceReport::passed()` (ADR 0027).
+    UnknownAlgorithm,
 }
+
+/// The scheme [`Misbehave::UnknownAlgorithm`] claims: a real post-quantum
+/// signature name, so the mode reads as a provider ahead of this build rather
+/// than as garbage — which is the case F8 exists for.
+const UNCHECKABLE_ALGORITHM: &str = "dilithium3";
 
 #[derive(Parser)]
 #[command(
@@ -575,8 +592,9 @@ fn summarisation_link() -> Provenance {
 ///
 /// Honest modes sign each frame exactly as served, so every misbehaviour that
 /// is *not* about attestation leaves the `attestation` check green and stays
-/// attributable to the check that owns it. The five attestation modes each sign
-/// one thing and serve another.
+/// attributable to the check that owns it. Five attestation modes each sign one
+/// thing and serve another; the sixth, `unknown-algorithm`, serves exactly what
+/// it signed under a scheme name no verifier here recognises (F8).
 fn attestations_for(
     frames: &[ContextFrame],
     misbehave: Option<Misbehave>,
@@ -661,6 +679,18 @@ fn attestations_for(
                 } else {
                     staple(frame, attest(frame, &ATTESTER_SEED))
                 }
+            })
+            .collect(),
+        // An honest signature under a label no verifier here recognises. The
+        // commitment and the signature bytes are exactly the honest ones, so
+        // the only thing standing between this and `Valid` is the scheme name
+        // — which is what makes the verdict attributable to F8 alone.
+        Some(Misbehave::UnknownAlgorithm) => frames
+            .iter()
+            .map(|frame| {
+                let mut attestation = attest(frame, &ATTESTER_SEED);
+                attestation.algorithm = UNCHECKABLE_ALGORITHM.into();
+                staple(frame, attestation)
             })
             .collect(),
         _ => frames

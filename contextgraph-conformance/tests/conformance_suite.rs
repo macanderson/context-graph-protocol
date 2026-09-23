@@ -483,3 +483,43 @@ async fn a_garbage_attestation_leaves_the_frame_served_but_unattested() {
         evidence_of(&report, CHECK_FRAME_VALIDITY)
     );
 }
+
+#[tokio::test]
+async fn an_attestation_in_a_scheme_this_build_cannot_check_fails_as_uncheckable() {
+    // F8, the one attestation rule that had no adversarial mode (#159). The
+    // signatures are the honest ones; only the scheme name is unknown. The
+    // verdict is a FAIL rather than a skip, because a skip is a pass to
+    // `ConformanceReport::passed()` and this suite certifies only what it
+    // checked (ADR 0027) — and the evidence must say `UnknownAlgorithm`, not
+    // merely "not a pass", or a provider ahead of this build would be told it
+    // forged something.
+    let evidence = attestation_mode_is_caught("unknown-algorithm", "UnknownAlgorithm").await;
+    assert!(
+        evidence.contains("dilithium3"),
+        "the evidence must name the scheme it could not check: {evidence}"
+    );
+    // "I cannot check this" is never "this is forged".
+    for forged in ["BadSignature", "CommitmentMismatch", "did not verify"] {
+        assert!(
+            !evidence.contains(forged),
+            "an uncheckable attestation must not be reported as `{forged}`: {evidence}"
+        );
+    }
+    // F9: uncheckable degrades the frames to unattested; it never drops them.
+    assert!(
+        !evidence.contains("F9"),
+        "the frames must survive as unattested, not be dropped: {evidence}"
+    );
+
+    // The consumers of a report agree: the library verdict is not conformant,
+    // and the status every CI script reads off `--json` is `fail`, not the
+    // `skipped` that `passed()` would have counted as a pass.
+    let report = run_conformance(target(&["--misbehave", "unknown-algorithm"])).await;
+    assert!(!report.passed());
+    let json = serde_json::to_value(&report).expect("a report serializes");
+    let status = json["checks"]
+        .as_array()
+        .and_then(|checks| checks.iter().find(|c| c["name"] == CHECK_ATTESTATION))
+        .map(|check| check["status"].clone());
+    assert_eq!(status, Some(serde_json::json!("fail")));
+}

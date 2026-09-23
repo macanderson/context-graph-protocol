@@ -12,7 +12,14 @@ pub enum CheckStatus {
     Pass,
     Fail,
     /// Not applicable to this provider/transport (e.g. a wire-level probe
-    /// against an in-process provider).
+    /// against an in-process provider, or `verify-honesty` against a provider
+    /// that does not advertise `verify`).
+    ///
+    /// Never "applicable but undecidable". A check that applies to what the
+    /// provider declared and cannot reach a verdict — an attestation in a
+    /// scheme this build cannot check is the case that forced the distinction
+    /// (ADR 0027) — reports [`Fail`](Self::Fail) with evidence saying why,
+    /// because [`ConformanceReport::passed`] counts a skip as a pass.
     Skipped,
 }
 
@@ -71,6 +78,14 @@ pub struct ConformanceReport {
 impl ConformanceReport {
     /// True when no check failed (skips don't fail a run). This is the
     /// "Context Graph Protocol conformant for your declared capability set" verdict (SPEC.md §11).
+    ///
+    /// A skip passes because it means the check does not bind the declared
+    /// capability set, so there is nothing to certify. That is only sound
+    /// while no check reports `Skipped` for something it *could not decide*;
+    /// see [`CheckStatus::Skipped`]. CI's `conformance-green.sh` and
+    /// `conformance-external.sh` hold their providers to a stricter bar on
+    /// purpose — every check must pass — because those providers declare every
+    /// capability, so a skip there would mean a check silently stopped running.
     pub fn passed(&self) -> bool {
         !self
             .checks

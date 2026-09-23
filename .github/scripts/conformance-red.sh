@@ -90,14 +90,23 @@ while IFS=$'\t' read -r mode expected; do
     continue
   fi
 
+  # A mode is caught only by a check that FAILED. A `skipped` check does not
+  # count, and that is a decision, not a detail (ADR 0027):
+  # `ConformanceReport::passed()` treats a skip as a pass, so a mode that only
+  # made its owning check skip would be certified conformant by the library
+  # while this script called it caught. Before this was stated, a skip happened
+  # to count as caught here, which is how a check that answered "skipped" to
+  # something it should have failed could have stayed green. The checks a
+  # failed handshake skips still ride along in the report; they are simply not
+  # evidence of anything.
   tripped=$(printf '%s' "$report" | python3 -c '
 import json, sys
 report = json.load(sys.stdin)
-print(",".join(c["name"] for c in report["checks"] if c["status"] != "pass"))
+print(",".join(c["name"] for c in report["checks"] if c["status"] == "fail"))
 ')
 
   if [[ -z "$tripped" ]]; then
-    echo "::error::mode '$mode' passed every check — the suite does not catch it"
+    echo "::error::mode '$mode' failed no check — the suite does not catch it (a skip is not a catch)"
     failed=1
     continue
   fi
