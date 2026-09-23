@@ -47,7 +47,7 @@ retires `docs/scr/` in all five repositories.
 - **[SCR-005](https://github.com/macanderson/oxagen/blob/main/.oxagen/rules/ctx.scr.005-triage-separation.toml) — Triage
   separation of duties:** Never apply priority (`P0`–`P4`) or size labels —
   a dedicated triage agent owns sizing and priority; a guard workflow
-  strips creator-applied priorities.
+  strips creator-applied priority and size labels.
 - **[SCR-006](https://github.com/macanderson/oxagen/blob/main/.oxagen/rules/ctx.scr.006-schema-change-labelled.toml) — Schema
   changes and migrations:** A pull request that changes a schema carries
   `migration-required`, and the migration reaches production before or with

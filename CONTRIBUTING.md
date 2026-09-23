@@ -83,9 +83,13 @@ locally before you push):
 - **[Bug report](https://github.com/macanderson/context-graph-protocol/issues/new?template=bug_report.yml)** — include the CGP crate name and version, OS, and a repro.
 - **[Feature request](https://github.com/macanderson/context-graph-protocol/issues/new?template=feature_request.yml)** — say what you're trying to do, not just what to add.
 
-Labels you'll see: `area:*` routes an issue to a crate; `P0`–`P2` is priority;
-`good first issue` and `help wanted` mean what they say; `needs-witness` means
-a PR is waiting on its witness test.
+Labels you'll see: `triage` marks an issue nobody has sorted yet, and it is
+the only label to put on an issue you file; `P0`–`P4` is priority and
+`size/XS`–`size/XL` is size, both set only by the triage identity
+([SCR-005](https://github.com/macanderson/oxagen/blob/main/.oxagen/rules/ctx.scr.005-triage-separation.toml)),
+and [`triage-guard`](.github/workflows/triage-guard.yml) strips them from
+anyone else and re-queues the issue; `good first issue` and `help wanted` mean
+what they say.
 
 ## License
 

@@ -419,13 +419,19 @@ jobs:
     # judged by the one tree it runs on, where it is green by construction.
     # These tests run the guards against fixture trees built to be wrong —
     # a quoted or SHA-commented stale pin, an unparsed `uses:` line — and
-    # hold that each goes red (#207). Offline, stdlib only.
+    # hold that each goes red (#207) — and run the triage guard's label
+    # decision over every label family SCR-005 reserves (#137). Offline,
+    # stdlib only.
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: python3 -m unittest discover -s .github/scripts/tests -v
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - run: node --test .github/scripts/tests/triage-guard.test.cjs
 
   sdk-scaffold:
     name: create-contextgraph-provider scaffolds a conformant project
