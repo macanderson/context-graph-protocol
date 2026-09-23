@@ -289,6 +289,7 @@ loud.
 | **F15** | A verifier **MUST** distinguish an attestation that binds content from one that does not, and **MUST NOT** report the second as though it were the first. | `attestation` suite; `contextgraph_types::attest::AttestationVerdict::ValidIdentityOnly` |
 | **F16** | A host **SHOULD** surface that distinction to whoever reads the frame. A reader deciding whether to rely on a citation is asking about the bytes in front of them. | host composition |
 | **F17** | A `range` on `file` provenance **MUST** be a `line-range` (§6.2.1) whose end is not before its start, and its digest **MUST** cover exactly the bytes §6.2.1 addresses. A verifier **MUST** report any other `range`, and one whose start lies past the resource's last line, as unverifiable — **never** as the whole resource and **never** as a mismatch. | `frame-validity` (grammar); `provenance-fixture-consistency` (bytes); `tests/vectors/range-vectors.json` |
+| **F18** | A verifier **MUST NOT** present an attestation member outside the signed preimage — `attester_id`, `issued_at`, `key_id`, `algorithm` — as covered by the signature, and a host **SHOULD** mark `attester_id` and `issued_at` as unverified wherever it surfaces them (§6.5.2). | `contextgraph_types::attest` test `rewriting_attester_id_or_issued_at_leaves_the_verdict_valid`; `contextgraph_host::trust::AttestationState::unverified_attester_id` |
 
 ### 6.1 Temporal profile (F4)
 
@@ -584,6 +585,49 @@ this case rather than `Valid`, and its host records it as attested with
 `covers_content: false`. An implementation is free to spell the distinction
 differently; it is not free to omit it.
 
+**What a signature does not bind: the attestation's own metadata.** The
+commitment above — or, for a result attestation, the §6.5.3 root — is the whole
+of what a signature covers. An attestation carries six members, and this is how
+each relates to the signature:
+
+| Member | Covered by the signature? |
+| ------ | ------------------------- |
+| `signed_commitment` | **Yes** — it is the signed message, recomputed from the frame in hand (§6.5.4). |
+| `signature` | It *is* the signature. |
+| `key_id` | **No.** It selects the verifying key. Rewriting it selects a different key, which the signature fails against, or none — a safe failure either way. |
+| `algorithm` | **No.** Rewriting it yields a signature that fails or an algorithm the verifier declines (F8) — a safe failure. |
+| `attester_id` | **No.** Nothing reads it during verification. |
+| `issued_at` | **No.** Nothing reads it during verification. |
+
+The last two are what the presence of a signature suggests is covered, so the
+consequence has to be stated plainly. Anyone who handles an attestation in
+transit — a relaying host, a cache, a registry, a compromised distribution step —
+can rewrite **`attester_id`** to name any authority and **`issued_at`** to any
+instant, and the signature still verifies as `Valid`. `attester_id` therefore
+carries no accountability the signature vouches for: who stands behind a verified
+attestation is answered by the key that verified it, resolved from the verifier's
+own trust store (§6.5.5), never by the name the attestation prints. `issued_at`
+is the attestation's only temporal claim and it is unauthenticated: a
+well-formed timestamp (F4) is the one part a forger has no reason to get wrong,
+and nothing in `contextgraph/1` supports reasoning about an attestation's age,
+freshness, or expiry.
+
+* **F18.** A verifier **MUST NOT** present an attestation member outside the
+  signed preimage — `attester_id`, `issued_at`, `key_id`, `algorithm` — as
+  covered by the signature, and a host **SHOULD** mark `attester_id` and
+  `issued_at` as unverified wherever it surfaces them. Reporting "valid" beside
+  an unsigned name and date is how a forged attribution comes to be read as a
+  signed one.
+
+The reference implementation's `sign_frame_attestation` and
+`verify_frame_attestation` follow this boundary, and its host's
+`AttestationState::Attested` vouches only for the `key_id` that verified,
+exposing the `attester_id` it echoes as `unverified_attester_id` and carrying no
+`issued_at` at all. Binding either member into the preimage would change the
+commitment of every attestation ever produced, which is a new major family
+(§13 U4); that question is recorded, and deliberately left to one, in
+[ADR 0021](./docs/adr/0021-attestation-metadata-outside-the-signature.md).
+
 `provider_id` is the provider's handshake-declared `provider.name` (§3). A host
 also keeps a local id for each provider it has configured, and that one is not a
 string the provider ever sees — so it is not one a provider could sign against.
@@ -633,6 +677,11 @@ responses — and, per F9, an unverifiable attestation degrades a frame to
 *unattested* rather than disqualifying it. A host that dropped such frames would
 hand any peer a denial-of-service primitive: attach a malformed attestation and
 watch the evidence disappear.
+
+A verdict is a statement about the commitment and the key, and about nothing
+else in the attestation. A `Valid` verdict says the frame in hand matches what the
+holder of the verifying key signed; it says nothing about the attestation's
+`attester_id` or `issued_at`, which the signature does not cover (§6.5.2, F18).
 
 Implementations **SHOULD** use a strict Ed25519 verifier — one rejecting
 small-order public keys and non-canonical signature encodings. A signature two

@@ -42,6 +42,35 @@
 //! the whole [`FrameId`] triple — *and* the chain head. A signature binds to one
 //! frame served by one provider, or it binds to nothing.
 //!
+//! # What the signature does *not* cover
+//!
+//! The commitment is the whole of what a signature binds (`SPEC.md` §6.5.2,
+//! F18). Of a [`ProvenanceAttestation`]'s six members, only `signed_commitment`
+//! is signed, and it is recomputed from the frame in hand rather than trusted.
+//! The other four are metadata the signature never reaches:
+//!
+//! | Member | If rewritten in transit |
+//! | ------ | ----------------------- |
+//! | `key_id` | selects a different key, and the signature fails against it — safe |
+//! | `algorithm` | [`AttestationVerdict::UnknownAlgorithm`] or a failed signature — safe |
+//! | `attester_id` | **the signature still verifies** |
+//! | `issued_at` | **the signature still verifies** |
+//!
+//! So a `Valid` verdict says the frame matches what the holder of the
+//! verifying key signed, and nothing about who the attestation *names* as its
+//! attester or *when* it claims to have been issued. Anyone who relays an
+//! attestation can rewrite either. A verifier must not present them as signed
+//! (F18): who is accountable for a verified attestation is answered by the key
+//! that verified it, resolved from the verifier's own trust store, never by
+//! `attester_id`; and `issued_at` supports no reasoning about freshness or
+//! expiry in `contextgraph/1`. Binding them would change every commitment ever
+//! produced — a new major family, which
+//! [ADR 0021](../../docs/adr/0021-attestation-metadata-outside-the-signature.md)
+//! records and leaves to one. The tests
+//! `rewriting_attester_id_or_issued_at_leaves_the_verdict_valid` and
+//! `rewriting_the_algorithm_fails_safe` pin this boundary, so moving it is a
+//! deliberate act rather than an accident.
+//!
 //! # Why the encoding is length-prefixed rather than canonical JSON
 //!
 //! The lifecycle profile's `record_hash` canonicalizes with RFC 8785 (JCS),
@@ -131,6 +160,10 @@ pub struct ProvenanceAttestation {
     /// The signing key's id. Rotation is expressed by a new `key_id`, never by
     /// reusing one, so an archived attestation always names the exact key that
     /// produced it.
+    ///
+    /// **Not signed** (`SPEC.md` §6.5.2, F18) — it selects the verifying key.
+    /// Rewriting it selects a different key and the signature fails, which is
+    /// the safe direction.
     pub key_id: String,
     /// The signature scheme, e.g. [`ALGORITHM_ED25519`].
     ///
@@ -139,9 +172,18 @@ pub struct ProvenanceAttestation {
     /// which is a *safe* failure. Freezing the set into an enum would make
     /// adopting a post-quantum scheme a breaking wire change, and this protocol
     /// promises no flag day inside a major family.
+    ///
+    /// **Not signed** (F18); rewriting it fails safe.
     pub algorithm: String,
-    /// The attesting authority — who is accountable for the claim, as distinct
-    /// from which key mechanically produced it.
+    /// The attesting authority the attestation *names* — who the signer claims
+    /// is accountable, as distinct from which key mechanically produced it.
+    ///
+    /// **Not signed, and not verified** (`SPEC.md` §6.5.2, F18). Nothing reads
+    /// it during verification, so anyone relaying the attestation can rewrite
+    /// it and the signature still verifies. It is a label, never evidence: who
+    /// stands behind a verified attestation is the key that verified it, as
+    /// the verifier's own trust store attributes that key. A host that shows
+    /// this field marks it unverified.
     pub attester_id: String,
     /// The detached signature, lowercase hex.
     ///
@@ -149,7 +191,15 @@ pub struct ProvenanceAttestation {
     /// digest in this protocol already uses; one encoding across the wire
     /// surface is worth more than the 40 bytes base64 would save.
     pub signature: String,
-    /// When the attestation was issued (a `SPEC.md` §F4 protocol timestamp).
+    /// When the attestation claims to have been issued (a `SPEC.md` §F4
+    /// protocol timestamp).
+    ///
+    /// **Not signed, and not verified** (`SPEC.md` §6.5.2, F18). It can be
+    /// rewritten to any instant without disturbing the signature, so it
+    /// supports no freshness, replay, or expiry decision in `contextgraph/1`
+    /// ([ADR 0021](../../docs/adr/0021-attestation-metadata-outside-the-signature.md)).
+    /// [`has_well_formed_issued_at`](Self::has_well_formed_issued_at) checks its
+    /// shape — the one part a forger has no reason to get wrong.
     pub issued_at: String,
 }
 
@@ -184,6 +234,9 @@ impl ProvenanceAttestation {
     }
 
     /// Whether `issued_at` is a well-formed protocol timestamp (`SPEC.md` §F4).
+    ///
+    /// Shape only. `issued_at` is outside the signed preimage (F18), so a
+    /// `true` here says nothing about whether the signer wrote this value.
     pub fn has_well_formed_issued_at(&self) -> bool {
         crate::validate::is_protocol_timestamp(&self.issued_at)
     }
@@ -1061,6 +1114,73 @@ mod tests {
         );
         assert!(attestation.uses_known_algorithm());
         assert!(attestation.has_well_formed_issued_at());
+    }
+
+    /// `SPEC.md` §6.5.2 / F18: the signature covers the commitment and
+    /// nothing else. This pins today's boundary rather than wishing it away —
+    /// `attester_id` and `issued_at` are rewritable in transit and the verdict
+    /// is still `Valid`, content-binding and all. That is why F18 forbids
+    /// presenting them as signed. If this test ever fails, the preimage moved,
+    /// which is a new major family (ADR 0021), not a refactor.
+    #[test]
+    fn rewriting_attester_id_or_issued_at_leaves_the_verdict_valid() {
+        let frame = frame_with(
+            "f1",
+            vec![link("file", Some("src/a.rs"), Some("sha256:aa"))],
+        );
+        let key = public_key_for(&SEED);
+        let honest = sign_frame_attestation(
+            "repo-graph",
+            &frame,
+            &SEED,
+            "key-1",
+            "acme",
+            "2026-08-29T00:00:00Z",
+        );
+
+        let mut forged = honest.clone();
+        forged.attester_id = "someone-else".into();
+        forged.issued_at = "2099-01-01T00:00:00Z".into();
+
+        let verdict = verify_frame_attestation("repo-graph", &frame, &forged, &key);
+        assert_eq!(verdict, AttestationVerdict::Valid);
+        assert!(verdict.binds_content());
+        // The signed parts are untouched — which is the whole finding: the
+        // bytes a verifier checks are identical, so it cannot tell.
+        assert_eq!(forged.signed_commitment, honest.signed_commitment);
+        assert_eq!(forged.signature, honest.signature);
+        // A well-formed forgery passes the shape check too.
+        assert!(forged.has_well_formed_issued_at());
+
+        // And the same holds for a result-set root over this frame.
+        let commitments = [frame_commitment("repo-graph", &frame)];
+        let root = merkle_root(&commitments);
+        let mut root_attestation =
+            sign_commitment(&root, &SEED, "key-1", "acme", "2026-08-29T00:00:00Z");
+        root_attestation.attester_id = "someone-else".into();
+        root_attestation.issued_at = "1970-01-01T00:00:00Z".into();
+        assert_eq!(
+            verify_commitment(&root, &root_attestation, &key),
+            AttestationVerdict::Valid
+        );
+    }
+
+    /// The other two unsigned members fail in the safe direction: rewriting
+    /// `algorithm` is declined as uncheckable (F8), never waved through.
+    /// (`key_id` is resolved by the verifier's trust store before this
+    /// function runs; the host's `trust` tests pin that a rewritten `key_id`
+    /// never verifies.)
+    #[test]
+    fn rewriting_the_algorithm_fails_safe() {
+        let frame = frame_with("f1", vec![]);
+        let key = public_key_for(&SEED);
+        let mut attestation =
+            sign_frame_attestation("p", &frame, &SEED, "key-1", "acme", "2026-08-29T00:00:00Z");
+        attestation.algorithm = "ed448".into();
+        assert_eq!(
+            verify_frame_attestation("p", &frame, &attestation, &key),
+            AttestationVerdict::UnknownAlgorithm("ed448".into())
+        );
     }
 
     #[test]

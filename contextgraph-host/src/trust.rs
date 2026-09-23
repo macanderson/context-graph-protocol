@@ -28,6 +28,19 @@
 //! [`AttestationState`] and none of them ends in a dropped frame. Verification
 //! adds a fact to the audit; it never subtracts evidence and never reranks.
 //!
+//! # Attested means the key, not the name the attestation prints
+//!
+//! A signature covers the commitment and nothing else (`SPEC.md` §6.5.2, F18).
+//! `attester_id` and `issued_at` sit outside the signed preimage: anyone who
+//! relays an attestation can rewrite either and it still verifies. So an
+//! [`AttestationState::Attested`] vouches for exactly one identity — the
+//! `key_id` whose key, trusted by this operator for this provider, verified the
+//! signature. The `attester_id` it also carries is echoed from the attestation
+//! as its *unverified claim*, reachable through
+//! [`AttestationState::unverified_attester_id`] under a name that says so, and
+//! `issued_at` is not carried at all: this host makes no decision on it, and a
+//! state that exposed it would invite one.
+//!
 //! # Attacker-controlled work is bounded before any cryptography runs
 //!
 //! Every field of an attestation arrives from the provider, so this module
@@ -525,12 +538,26 @@ pub enum AttestationState {
     ///
     /// This means exactly "signed by a key this operator chose to trust". It
     /// does not mean the content is true, and it carries no weight for a
-    /// second host that holds no key (ADR 0016 Consequences).
+    /// second host that holds no key (ADR 0016 Consequences). Nor does it mean
+    /// anything about `attester_id` or `issued_at`, which the signature does
+    /// not cover (`SPEC.md` §6.5.2, F18).
     Attested {
-        /// The key that verified it.
+        /// The key that verified it — the one identity this state vouches for.
+        /// `key_id` is not itself signed, but it is what selected the verifying
+        /// key from this host's trust store, so a rewritten one verifies against
+        /// nothing.
         key_id: String,
-        /// The attesting authority the attestation names — who is accountable
-        /// for the claim, as distinct from the key that produced it.
+        /// The attesting authority the attestation **names**, echoed verbatim
+        /// (truncated) and **unverified**.
+        ///
+        /// Outside the signed preimage (F18): anyone relaying the attestation
+        /// can rewrite it to name any authority and this state is unchanged
+        /// apart from the echo. It is the attestation's claim about who is
+        /// accountable, never evidence of it — that answer is whoever this
+        /// operator trusted `key_id` for. A host that renders it **SHOULD**
+        /// mark it unverified; read it through
+        /// [`unverified_attester_id`](AttestationState::unverified_attester_id),
+        /// whose name carries the mark to every call site.
         attester_id: String,
         /// Whether the signature covers the frame's **content bytes**.
         ///
@@ -601,6 +628,20 @@ impl AttestationState {
                 ..
             }
         )
+    }
+
+    /// The `attester_id` an [`Attested`](Self::Attested) attestation names —
+    /// **unverified**, because the signature does not cover it (`SPEC.md`
+    /// §6.5.2, F18). `None` for every other state.
+    ///
+    /// Named for what it is so a caller cannot surface it as signed by
+    /// accident: render it beside [`Attested::key_id`](Self::Attested), which
+    /// is what verified, and label it as the attestation's claim.
+    pub fn unverified_attester_id(&self) -> Option<&str> {
+        match self {
+            Self::Attested { attester_id, .. } => Some(attester_id),
+            _ => None,
+        }
     }
 
     /// Whether an attestation was offered at all. A host reports on
@@ -801,6 +842,57 @@ mod tests {
         );
         assert!(state.is_attested());
         assert!(state.covers_content());
+    }
+
+    /// F18 at the host: `attester_id` and `issued_at` are outside the signed
+    /// preimage, so rewriting them in transit leaves the frame attested — and
+    /// the state vouches only for the trusted `key_id`, echoing the rewritten
+    /// `attester_id` as the unverified claim it is. A rewritten `key_id`, by
+    /// contrast, never verifies: it is what selects the key.
+    #[test]
+    fn unsigned_attestation_metadata_is_echoed_as_a_claim_never_verified() {
+        let frame = frame("frm_1");
+        let honest = signed(&frame, &SEED);
+
+        let mut relayed = honest.clone();
+        relayed.attester_id = "someone-else".into();
+        relayed.issued_at = "2099-01-01T00:00:00Z".into();
+
+        let store = store_trusting(&SEED);
+        let state = store.check(PROVIDER, &frame, &relayed);
+        assert_eq!(
+            state,
+            AttestationState::Attested {
+                key_id: KEY_ID.to_string(),
+                attester_id: "someone-else".to_string(),
+                covers_content: true,
+            },
+            "the signature cannot tell: the rewritten metadata was never signed"
+        );
+        assert_eq!(state.unverified_attester_id(), Some("someone-else"));
+        assert_eq!(AttestationState::Unattested.unverified_attester_id(), None);
+
+        // `key_id` fails safe. Pointed at another key this host trusts for the
+        // provider, the signature does not verify against it...
+        let mut store_with_two = store.clone();
+        store_with_two.trust(
+            PROVIDER,
+            TrustedKey::ed25519_bytes("docs-other", &public_key_for(&OTHER_SEED)),
+        );
+        let mut rekeyed = honest.clone();
+        rekeyed.key_id = "docs-other".into();
+        assert_eq!(
+            store_with_two.check(PROVIDER, &frame, &rekeyed),
+            AttestationState::Invalid {
+                verdict: AttestationVerdict::BadSignature
+            }
+        );
+        // ...and pointed at a key it does not trust, nothing is checked at all.
+        rekeyed.key_id = "nobody".into();
+        assert!(matches!(
+            store.check(PROVIDER, &frame, &rekeyed),
+            AttestationState::NoTrustedKey { .. }
+        ));
     }
 
     #[test]
