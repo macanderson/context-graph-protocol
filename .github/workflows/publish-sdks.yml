@@ -63,7 +63,7 @@ jobs:
       - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
       - name: Build the TypeScript SDK
@@ -127,7 +127,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"

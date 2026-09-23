@@ -190,7 +190,7 @@ jobs:
       - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
       - name: Build the TypeScript SDK
@@ -251,7 +251,7 @@ jobs:
       - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
       - name: Build the TypeScript SDK
@@ -338,7 +338,7 @@ jobs:
     # This is the run — no Rust, no emit, one question.
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
       - name: TypeScript SDK typechecks
@@ -404,7 +404,7 @@ jobs:
       - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
       - uses: actions/setup-python@v5
