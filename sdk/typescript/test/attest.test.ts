@@ -100,6 +100,25 @@ test("an absent field never encodes like an empty one", () => {
   assert.notDeepEqual(encodeProvenanceLink(absent), encodeProvenanceLink(empty));
 });
 
+test("a present-but-empty field encodes to the published bytes, distinct from an absent one", () => {
+  // "These two differ" is the local test above; this is the stronger claim
+  // that they are these exact bytes (#125). A port that collapsed `""` to
+  // absent would satisfy the first and fail here, by name.
+  //
+  // The fixture must still spell the member out: a reader that normalized
+  // `"uri": ""` away on load would make both vectors below test the absent
+  // case twice and pass for the wrong reason.
+  assert.ok(Object.hasOwn(link("empty_uri"), "uri"), "the fixture's empty_uri link lost its `uri` member");
+  assert.equal(link("empty_uri").uri, "");
+  assert.ok(!Object.hasOwn(link("absent_uri"), "uri"), "the fixture's absent_uri link grew a `uri` member");
+
+  assert.equal(toHex(encodeProvenanceLink(link("empty_uri"))), V.link_encodings_hex.empty_uri);
+  assert.equal(toHex(encodeProvenanceLink(link("absent_uri"))), V.link_encodings_hex.absent_uri);
+  assert.equal(digestString(provenanceChainHead([link("empty_uri")])), V.chain_heads.empty_uri);
+  assert.equal(digestString(provenanceChainHead([link("absent_uri")])), V.chain_heads.absent_uri);
+  assert.notEqual(V.chain_heads.empty_uri, V.chain_heads.absent_uri);
+});
+
 test("the chain heads match the published vectors", () => {
   assert.equal(digestString(provenanceChainHead([])), V.chain_heads.empty);
   assert.equal(digestString(provenanceChainHead([link("file")])), V.chain_heads.file);

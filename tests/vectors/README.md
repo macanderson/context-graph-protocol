@@ -32,6 +32,20 @@ type is just `string` publishes one chain head where this file publishes two —
 which is exactly how the Go SDK came to report `commitment_mismatch` on honest
 frames.
 
+All four suites assert that pair's exact encoding bytes **and** chain heads, not
+merely that the two differ (#125), so a port collapsing `""` to absent fails a
+named test in each language:
+
+| Suite | Test |
+| --- | --- |
+| Rust | `the_published_empty_versus_absent_vectors_hold`, `the_shared_fixture_publishes_exactly_these_values` |
+| TypeScript | `a present-but-empty field encodes to the published bytes, distinct from an absent one` |
+| Python | `test_a_present_but_empty_field_encodes_to_the_published_bytes`, `test_a_present_but_empty_field_has_its_own_published_chain_head` |
+| Go | `TestLinkEncodingMatchesThePublishedBytes`, `TestADecodedEmptyURIKeepsTheChainHeadItsSignerComputed` |
+
+Each also checks that the fixture still spells `"uri": ""` out, because a loader
+that normalized it away would test the absent case twice and pass.
+
 This directory is deliberately not `tests/fixtures/`, which
 [`schema/validate-examples.py`](../../schema/validate-examples.py) globs and
 validates against the lifecycle **record** schema. These are not records.

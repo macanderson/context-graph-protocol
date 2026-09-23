@@ -114,6 +114,27 @@ class EncodingVectors(unittest.TestCase):
             encode_provenance_link({"type": "file", "uri": ""}),
         )
 
+    def test_a_present_but_empty_field_encodes_to_the_published_bytes(self) -> None:
+        # "These two differ" is the local test above; this is the stronger
+        # claim that they are these exact bytes (#125). A port that collapsed
+        # "" to absent would satisfy the first and fail here, by name.
+        #
+        # The fixture must still spell the member out: a loader that normalized
+        # `"uri": ""` away would make both vectors below test the absent case
+        # twice and pass for the wrong reason.
+        self.assertIn("uri", link("empty_uri"))
+        self.assertEqual(link("empty_uri")["uri"], "")
+        self.assertNotIn("uri", link("absent_uri"))
+
+        self.assertEqual(
+            encode_provenance_link(link("empty_uri")).hex(),
+            V["link_encodings_hex"]["empty_uri"],
+        )
+        self.assertEqual(
+            encode_provenance_link(link("absent_uri")).hex(),
+            V["link_encodings_hex"]["absent_uri"],
+        )
+
     def test_an_explicit_none_is_absent(self) -> None:
         self.assertEqual(
             encode_provenance_link({"type": "file", "uri": None}),
@@ -135,6 +156,21 @@ class ChainVectors(unittest.TestCase):
         self.assertEqual(
             digest_string(provenance_chain_head([link("unicode")])), heads["unicode"]
         )
+
+    def test_a_present_but_empty_field_has_its_own_published_chain_head(self) -> None:
+        # The presence byte reaches the signed chain, not only the link bytes:
+        # `uri: ""` and an absent `uri` publish two heads, and a port that
+        # collapsed them would compute one (#125).
+        heads = V["chain_heads"]
+        self.assertEqual(
+            digest_string(provenance_chain_head([link("empty_uri")])),
+            heads["empty_uri"],
+        )
+        self.assertEqual(
+            digest_string(provenance_chain_head([link("absent_uri")])),
+            heads["absent_uri"],
+        )
+        self.assertNotEqual(heads["empty_uri"], heads["absent_uri"])
 
     def test_reordering_the_chain_changes_the_head(self) -> None:
         self.assertNotEqual(
