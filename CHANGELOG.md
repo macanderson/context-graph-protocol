@@ -20,6 +20,15 @@ text lands without a human merge.
 ## [Unreleased]
 
 ### Added
+- **CI catches a scaffold workflow whose action pin has drifted from the
+  repository's own** ([ADR 0012](./docs/adr/0012-sdk-version-pins-share-a-major.md)).
+  `.github/scripts/check-scaffold-action-pins.py` holds every action a
+  template's `_github/workflows/conformance.yml` pins to the major this
+  repository's workflows pin for it. Dependabot cannot see the templates, so
+  the setup-python bump to v7 left the Python template on v5 with nothing
+  to notice (#194). The template now pins v7. The guard also reads
+  `.github/actions/**/action.yml`, accepts quoted pins and prose after a SHA
+  pin's version comment, and fails on a `uses:` line it cannot parse.
 - **Record content addressing and record attestation, implemented (lifecycle
   profile `LH1`/`LC3`;
   [ADR 0017](./docs/adr/0017-record-hash-and-record-attestation.md)).** The
