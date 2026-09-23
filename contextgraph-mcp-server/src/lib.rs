@@ -2,8 +2,8 @@
 //! (issue #19, direction 2).
 //!
 //! An MCP **server** exposing one tool, `query_context(goal, budget, kinds)`,
-//! backed by a CGP [`Host`](contextgraph_host::Host). A call builds a
-//! [`ContextQuery`](contextgraph_types::ContextQuery), fans it out with
+//! backed by a CGP [`Host`]. A call builds a
+//! [`ContextQuery`], fans it out with
 //! [`Host::query_all`](contextgraph_host::Host::query_all), and returns the
 //! result as MCP **structured content**: frames with their provenance and
 //! citation labels intact, plus a budget audit. An agent that only speaks MCP

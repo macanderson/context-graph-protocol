@@ -13,7 +13,9 @@ keywords = ["context-graph-protocol", "cgp", "context", "provider", "sdk"]
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/macanderson/context-graph-protocol"
+Homepage = "https://contextgraphprotocol.org"
+Repository = "https://github.com/macanderson/context-graph-protocol"
+Issues = "https://github.com/macanderson/context-graph-protocol/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]

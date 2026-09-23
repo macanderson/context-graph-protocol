@@ -16,6 +16,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::identity::FrameId;
+use crate::range::is_well_formed_line_range;
 use crate::token::budget_tokens;
 use crate::validate::{is_protocol_timestamp, is_well_formed_digest};
 
@@ -267,6 +268,17 @@ impl Provenance {
     pub fn has_well_formed_digest(&self) -> bool {
         self.digest.as_deref().is_some_and(is_well_formed_digest)
     }
+
+    /// Whether the `range`, if present, is a line range in the grammar of
+    /// `SPEC.md` §6.2.1 (F17) — the only spelling that says which bytes the
+    /// digest covers.
+    ///
+    /// Absent counts as well-formed: a link without a `range` digests the whole
+    /// resource (§6.2). Every other spelling is reserved, and a verifier reports
+    /// it unverifiable rather than guessing — see [`crate::range`].
+    pub fn has_well_formed_range(&self) -> bool {
+        self.range.as_deref().is_none_or(is_well_formed_line_range)
+    }
 }
 
 /// The recommended relation vocabulary (`SPEC.md` §Graph).
@@ -374,7 +386,7 @@ pub struct ContextFrame {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
     /// The provider-declared digest of this frame's **inline** content bytes —
-    /// the third component of its stable [`FrameId`](crate::FrameId) identity,
+    /// the third component of its stable [`FrameId`] identity,
     /// opaque to the protocol (e.g. `sha256:<hex>`). This is the spec's
     /// `content_hash` (SHA-256 over the exact inline UTF-8 content) under its
     /// established name; see [`canonical_content_hash`](Self::canonical_content_hash)
@@ -521,7 +533,7 @@ impl ContextFrame {
     }
 
     /// The token cost this frame's **inline** content is *required* to declare
-    /// (`SPEC.md` §B3) — see [`budget_tokens`](crate::budget_tokens). A
+    /// (`SPEC.md` §B3) — see [`budget_tokens`]. A
     /// `reference` frame carries no inline content, so its expected cost is 0.
     ///
     /// Distinct from the [`canonical_token_cost`](Self::canonical_token_cost)
@@ -576,6 +588,24 @@ impl ContextFrame {
             .iter()
             .enumerate()
             .filter(|(_, p)| p.is_file_provenance() && !p.has_well_formed_digest())
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    /// Indices of `file` provenance links whose `range` is present but outside
+    /// the §6.2.1 grammar, or inverted (`SPEC.md` F17).
+    ///
+    /// Such a link names bytes no conforming verifier can locate, so its digest
+    /// can never be confirmed — and before the grammar was written down, a host
+    /// re-reading it reported *unreadable* and a conformance run skipped it, so
+    /// a provider using `120-160` or `L10-L20` passed everything while serving
+    /// digests nobody could check. Only `file` links are held to it: a
+    /// `derivation` or `episode` link addresses no bytes (§6.2).
+    pub fn provenance_with_unrecognised_ranges(&self) -> Vec<usize> {
+        self.provenance
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.is_file_provenance() && !p.has_well_formed_range())
             .map(|(index, _)| index)
             .collect()
     }
@@ -759,6 +789,32 @@ mod tests {
 
         frame.provenance[0].digest = Some(format!("sha256:{}", "a".repeat(64)));
         assert!(frame.provenance_with_unusable_digests().is_empty());
+    }
+
+    #[test]
+    fn a_file_range_outside_the_line_grammar_is_flagged_by_index() {
+        // §6.2.1 / F17. `sample_frame` carries `L120-160`, the canonical form.
+        let mut frame = sample_frame();
+        assert!(frame.provenance_with_unrecognised_ranges().is_empty());
+
+        // Each of these names bytes no conforming verifier can locate.
+        for bad in ["120-160", "L10-L20", "l120", "L0", "L160-120", "B0-64"] {
+            frame.provenance[0].range = Some(bad.into());
+            assert_eq!(
+                frame.provenance_with_unrecognised_ranges(),
+                vec![0],
+                "{bad}"
+            );
+        }
+
+        // No range at all is the whole resource, which is well-formed.
+        frame.provenance[0].range = None;
+        assert!(frame.provenance_with_unrecognised_ranges().is_empty());
+
+        // A non-file link addresses no bytes, so its range is not held to F17.
+        frame.provenance[0].kind = "episode".into();
+        frame.provenance[0].range = Some("t=0-30s".into());
+        assert!(frame.provenance_with_unrecognised_ranges().is_empty());
     }
 
     #[test]

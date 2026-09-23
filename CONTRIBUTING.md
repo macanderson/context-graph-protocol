@@ -18,16 +18,25 @@ ci(release): publish contextgraph-types to crates.io
 
 **DCO, not CLA.** Sign every commit (`git commit -s`) to certify the
 [Developer Certificate of Origin](https://developercertificate.org/). You keep
-your copyright; no assignment, ever.
+your copyright; no assignment, ever. The `every commit is signed off (DCO)`
+check enforces it on every commit a pull request adds. The trailer must name
+the commit's author email; a commit authored by a GitHub App (a bot or an
+agent) needs a sign-off from the person or operator behind it. Forgot one?
+`git rebase --signoff <base>` and `git push --force-with-lease`. Enforcement
+started with [ADR 0025](./docs/adr/0025-the-dco-is-enforced-not-requested.md)
+(#141). Earlier history is not rewritten, so older commits carry a sign-off
+only where their authors gave one.
 
 **PR checklist** (the template walks you through it):
 
 1. One logical change per PR — smaller lands faster.
-2. The gate is green locally (`fmt` / `clippy -D warnings` / `test`).
+2. The gate is green locally (`fmt` / `clippy -D warnings` / `test`), and
+   `RUSTDOCFLAGS="-D warnings" cargo doc -p <crate> --all-features --no-deps`
+   for any crate whose doc comments you touched.
 3. A witness test, or a stated reason there isn't one.
 4. Docs updated in the same PR if behavior or flags changed (`README.md`,
    `--help` text, doc comments).
-5. Commits signed off (`-s`).
+5. Commits signed off (`-s`) — CI checks every one.
 
 Maintainers aim for a first response within a few days. "Needs work" is a
 normal part of the loop here, not a rejection.
@@ -78,14 +87,35 @@ locally before you push):
    `.github/scripts/check-deploy-hygiene.py` decides, and its
    `SERVED_PREFIXES` is the list.
 
+## The gates have self-tests
+
+The Python gates under `.github/scripts/` and `schema/validate-examples.py`
+decide merges, and a gate that stops seeing its subject still prints PASS. So
+each one gets a suite under `.github/scripts/tests/` that proves it goes red in
+every direction it should. A suite builds a throwaway tree and copies the real,
+unmodified gate into it, so it never reads or changes your checkout (#110).
+Run them with the standard library alone (plus `jsonschema`, which the schema
+gate itself needs):
+
+```bash
+python3 -m unittest discover -s .github/scripts/tests -v
+```
+
+If you change a gate, change its suite. Then break the gate on purpose and
+check that some test goes red. A suite that only ever passes proves nothing.
+
 ## Issues and labels
 
 - **[Bug report](https://github.com/macanderson/context-graph-protocol/issues/new?template=bug_report.yml)** — include the CGP crate name and version, OS, and a repro.
 - **[Feature request](https://github.com/macanderson/context-graph-protocol/issues/new?template=feature_request.yml)** — say what you're trying to do, not just what to add.
 
-Labels you'll see: `area:*` routes an issue to a crate; `P0`–`P2` is priority;
-`good first issue` and `help wanted` mean what they say; `needs-witness` means
-a PR is waiting on its witness test.
+Labels you'll see: `triage` marks an issue nobody has sorted yet, and it is
+the only label to put on an issue you file; `P0`–`P4` is priority and
+`size/XS`–`size/XL` is size, both set only by the triage identity
+([SCR-005](https://github.com/macanderson/oxagen/blob/main/.oxagen/rules/ctx.scr.005-triage-separation.toml)),
+and [`triage-guard`](.github/workflows/triage-guard.yml) strips them from
+anyone else and re-queues the issue; `good first issue` and `help wanted` mean
+what they say.
 
 ## License
 

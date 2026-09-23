@@ -58,13 +58,19 @@
 //! frame content, and a host composing frames into a prompt must delimit them
 //! as quoted material.
 //!
-//! **Not yet enforced — filesystem confinement.** A child runs with the
-//! host's working directory and ordinary filesystem access; there is no cwd
+//! **Not enforced — filesystem and network confinement.** A child runs with
+//! the host's working directory and ordinary filesystem access; there is no cwd
 //! jail, chroot, mount namespace, or seccomp sandbox. Environment scrubbing
 //! blocks credentials passed *via env vars*, but a provider can still read
-//! files the host user can read. Treat a stdio provider as trusted code you
-//! chose to run, not as a sandboxed principal — real filesystem isolation is
-//! future work.
+//! files the host user can read, and it can open sockets: over stdio its
+//! `egress: false` is a declaration the host trusts and cannot observe
+//! (`SPEC.md` §4.3, §11.1; `tests/stdio_egress_gap.rs` witnesses it). Treat a
+//! stdio provider as trusted code you chose to run, not as a sandboxed
+//! principal. Confinement is the deployment's choice by decision
+//! ([ADR 0024](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0024-consent-binds-what-the-transport-can-see.md)):
+//! [`Host::add_stdio`] spawns whatever program it is given, so an operator
+//! passes a confining wrapper (`bwrap --unshare-net`, `unshare -n`, a container
+//! with no network) as the program.
 
 pub mod compose;
 pub mod consent;

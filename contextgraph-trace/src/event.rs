@@ -1,4 +1,4 @@
-//! The trace event vocabulary (`docs/sketches/host-trace.md` §"The shape").
+//! The trace event vocabulary (`docs/host-trace.md` §"The journal").
 //!
 //! One [`TraceEvent`] per journal line. The vocabulary is deliberately
 //! minimal — each event exists because an oracle in [`crate::oracle`] consumes

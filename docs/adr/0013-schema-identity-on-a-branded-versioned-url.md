@@ -11,6 +11,13 @@ schemas ("GitHub-raw is the only host it can honestly advertise") rested on a
 fact that [#78](https://github.com/macanderson/context-graph-protocol/pull/78)
 retired.
 
+**Amended 2026-09-23 by
+[#111](https://github.com/macanderson/context-graph-protocol/issues/111).**
+`schema/reference-vectors.ndjson` is now published under `/schema/v1/` as well
+as `/schema/`. The vectors belong to the `contextgraph/1` contract, so they sit
+beside the schemas. See [the amendment](#amendment-the-reference-vectors-are-part-of-the-family-contract)
+at the end.
+
 Each schema's `$id` becomes:
 
 ```
@@ -160,3 +167,47 @@ identity answers. Neither check is weakened to accommodate the other.
   its own, it earns its own path segment. It shares `v1` today because the
   profile is layered *on* the `contextgraph/1` base family rather than versioned
   against it; changing that is a decision made out loud, not a drift.
+
+## Amendment: the reference vectors are part of the family contract
+
+*2026-09-23, [#111](https://github.com/macanderson/context-graph-protocol/issues/111).*
+
+This ADR moved the two schemas to `/schema/v1/` and left
+`reference-vectors.ndjson` only at `/schema/`. That was deliberate at the time:
+the vectors carry no `$id`, so nothing resolves them as an identity and nothing
+broke. But it left a split nobody had chosen. Someone who fetched the
+`contextgraph/1` schema from `/schema/v1/` and looked for the vectors in the
+same place got a 404.
+
+There were two readings, and either would have been coherent:
+
+1. The vectors are part of the `contextgraph/1` contract, so they are published
+   at `/schema/v1/` too.
+2. The vectors are a repository artifact that happens to live in `schema/`, so
+   the path stays and the asymmetry is written down.
+
+**Decision: (1).** The vectors are what the reference Rust types serialize for
+the `contextgraph/1` wire (`contextgraph-conformance/tests/reference_vectors.rs`).
+`validate-examples.py` holds the schema to them, and third-party serializers
+diff against them. That makes them evidence about one wire family, bounded the
+same way the schemas are: additive within `contextgraph/1`, and a new file
+under `/schema/v2/` if `contextgraph/2` ever exists. Reading (2) would have
+had to explain why the file that proves the schema matches the serializer is
+versioned differently from the schema. No explanation of that holds up over
+time.
+
+What follows:
+
+- `publish-spec.yml` copies the vectors to both `/schema/v1/` and `/schema/`,
+  with an explicit `application/x-ndjson` content type. `/schema/` is already
+  in the wild, so it stays as an alias, exactly as for the schemas.
+- The live check is on bytes and type, not `$id`, because the vectors have
+  none. Each path must return exactly the committed file, served as
+  `application/x-ndjson`.
+- `check-deploy-hygiene.py` adds `ndjson` to its artifact extensions. Before,
+  an advertised `.ndjson` URL matched nothing and so was checked by nothing,
+  which is the same narrowing this ADR's Consequences describe for versioned
+  URLs.
+- As with the schemas, there is one copy in the repository and no
+  `schema/v1/` directory. `schema/reference-vectors.ndjson` must not move,
+  because its raw URL is the file's GitHub path.

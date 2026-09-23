@@ -90,11 +90,11 @@ runtime and verified by a public conformance suite.
 |---|---|---|
 | **Provenance** | Every frame carries its full origin chain (URI, range, digest, method, agent) | `ContextFrame.provenance` (`contextgraph-types::frame`) |
 | **Budget honesty** | A provider's frames never sum above the query's `max_tokens`; a lie is detected and the frames are dropped | `Host::query_one_isolated` budget audit (`contextgraph-host::host`); `frame-validity` conformance check |
-| **Consent enforcement** | An egress provider is never queried until recorded, named consent exists; the query payload is not transmitted before that | `ConsentStore::permits` (`contextgraph-host::consent`); `Host::query_provider` gate |
+| **Consent enforcement** | A provider declaring egress, and every HTTP provider whatever it declares, is never queried until recorded, named consent exists; the query payload is not transmitted before that. A stdio provider's `egress: false` is trusted, not observed ([`SPEC.md` §4.3](../SPEC.md#43-what-the-transport-cannot-see-c3-over-stdio)) | `ConsentStore::permits` (`contextgraph-host::consent`); `Host::query_provider` gate; HTTP transport |
 | **Conformance verification** | "CGP conformant" is a machine-checked claim, not a self-attestation; the conformance suite is adversarial | `contextgraph-conformance` — 14 provider checks that deliberately trip each failure mode |
 | **Citation guarantees** | Every frame has a non-empty `title` and `citation_label`; raw ids are never the primary identifier | `frame-validity` conformance check; platform-wide convention |
 | **Version stability** | The protocol evolves within a major family without breaking interop; the draft-to-freeze transition requires no flag day | `versions_compatible` (`contextgraph-host::wire`); major-family matching |
-| **Temporal validity** | Facts carry `valid_from` / `valid_to` windows; queries can pin retrieval to a point in time via `as_of` | `ContextFrame` temporal fields; `ContextQuery.as_of` (`contextgraph-types`) |
+| **Temporal validity** | Facts carry `valid_from` / `valid_to` windows; a query pinned with `as_of` gets only frames whose window contains that instant | [`SPEC.md` Q2](../SPEC.md#53-what-as_of-pins-q2); `as-of-temporal` conformance check |
 
 Each property is defined not by documentation but by a type in `contextgraph-types`
 and an enforcement path in `contextgraph-host` or `contextgraph-conformance`. The remainder of
@@ -210,9 +210,19 @@ This is enforced structurally:
 - The `ConsentRecord` retains `granted_scope` — a human-readable description of
   what data flows out — as an auditable trail. Consent is not a boolean
   checkbox; it is a *named, recorded, revocable* decision.
-- `contextgraph-host`'s HTTP transport goes further: it treats *every* remote provider
-  as egress regardless of the handshake claim, so a remote provider cannot lie
-  its way out of the consent gate.
+- `contextgraph-host`'s HTTP transport goes further: it treats *every* HTTP provider
+  as egress regardless of the handshake claim, loopback included (stricter than
+  `SPEC.md` C4, deliberately), so a remote provider cannot lie its way out of
+  the consent gate.
+
+What this does **not** cover is stated just as plainly. A stdio provider is a
+child process with its own sockets, and the pipe carries no evidence of what it
+opens, so a stdio provider declaring `egress: false` is queried without consent
+on the strength of its declaration alone. Lying breaks C3, which is a **MUST**,
+but no host or conformance check can observe the breach. Closing that gap means
+confining the child's network, and that is left to the deployment
+([`SPEC.md` §4.3](../SPEC.md#43-what-the-transport-cannot-see-c3-over-stdio),
+§11.1; ADR 0024).
 
 **Why this matters.** In a world where coding agents increasingly integrate
 with external services — issue trackers, documentation APIs, cloud embedding
@@ -306,9 +316,11 @@ simultaneously is fragile — it creates coordination overhead and incentivizes
 freezing the spec to avoid disruption. CGP's major-family model allows
 incremental evolution within a family (additive fields, tighter checks)
 without breaking deployed providers, while reserving the major-version bump
-for real breaking changes. Early adopters who pin `contextgraph-types = "=0.1.0"` get a
-hard guarantee; those who use `^0.1` accept pre-1.0 churn but gain
-forward-compatibility within the family.
+for real breaking changes. An adopter who pins an exact release
+(`contextgraph-types = "=2.0.0"`) gets a hard guarantee. One who writes the
+default caret requirement (`contextgraph-types = "2"`) takes additive releases
+within the family automatically, and a breaking change never arrives without a
+new major.
 
 ---
 
@@ -326,7 +338,10 @@ And `ContextQuery` carries:
 
 Together, these enable **bi-temporal retrieval**: a query can ask "what was
 true about this function as of last Tuesday?" and receive only frames whose
-validity window includes that timestamp. This is the same discipline that
+validity window includes that timestamp. That is a requirement, not an
+aspiration: [`SPEC.md` Q2](../SPEC.md#53-what-as_of-pins-q2) makes it the
+half-open predicate `valid_from <= as_of < valid_to`, and the `as-of-temporal`
+conformance check probes both halves of it. This is the same discipline that
 bi-temporal databases (like Btrieve or Crux) apply to transactional data,
 applied here to the context that feeds an AI agent.
 

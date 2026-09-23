@@ -74,6 +74,11 @@ jobs:
       - name: Inspect exactly what `npm publish` would upload
         working-directory: sdk/typescript
         run: npm pack --dry-run
+      # The registry page's homepage, repository and issues links come from
+      # these fields, and a published version's fields can never be changed.
+      # So check them against Cargo.toml's before anything is uploaded (#112).
+      - name: Package metadata names the crates' homepage and repository
+        run: python3 .github/scripts/check-sdk-metadata.py
       - name: Example provider passes the conformance suite
         run: ./.github/scripts/conformance-external.sh -- node sdk/typescript/dist/examples/example-docs.js
 
@@ -96,6 +101,10 @@ jobs:
       - name: Validate package metadata (no upload)
         working-directory: sdk/python
         run: twine check dist/*
+      # `twine check` proves the metadata renders, not that it says the right
+      # thing. This proves the project URLs match Cargo.toml's (#112).
+      - name: Package metadata names the crates' homepage and repository
+        run: python3 .github/scripts/check-sdk-metadata.py
       - name: Example provider passes the conformance suite
         run: ./.github/scripts/conformance-external.sh -- python3 sdk/python/examples/example_docs.py
 

@@ -51,9 +51,10 @@ and external implementations tied to the stable contract.
 ## Dependency guidance
 
 Use a compatible stable requirement such as `contextgraph-types = "2"`, and
-upgrade within `2.x` normally. `1.x` remains on crates.io and still speaks
-`contextgraph/1.0` on the wire, so a `1.x` consumer interoperates with a `2.x`
-one; see [MIGRATION.md](../MIGRATION.md) §5 for the source changes the major
+upgrade within `2.x` normally. No `1.x` crate was published to crates.io; the
+pre-freeze `0.1.x` releases remain there and speak the same `contextgraph/1`
+family on the wire, so an older consumer interoperates with a `2.x` one. Only
+`2.x` receives security fixes ([SECURITY.md](../SECURITY.md)); see [MIGRATION.md](../MIGRATION.md) §5 for the source changes the major
 asks of you. Do not hardcode a protocol identifier: use
 `contextgraph_types::PROTOCOL_VERSION` and
 `contextgraph_host::wire::versions_compatible`, or implement the equivalent

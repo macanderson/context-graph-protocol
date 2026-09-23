@@ -135,7 +135,7 @@ install/consent time.
 | - | ----------- | ----------- |
 | **C1** | A host **MUST NOT** auto-enable a provider declaring `egress: true`. It **MUST** gate it behind explicit, named, revocable consent. | `ConsentStore` |
 | **C2** | A host **MUST NOT** transmit a query payload to an egress provider before consent is recorded. | `Host::query_provider` |
-| **C3** | A provider **SHOULD** declare `egress: true` honestly if data leaves the machine, directly or indirectly. | advisory — see C4 |
+| **C3** | A provider **MUST** declare `egress: true` if data leaves the machine, directly or indirectly — including through a process, service, or proxy it relays to. | unverifiable over stdio (§4.3, §11.1); overridden over HTTP by C4 |
 | **C4** | A host's HTTP transport **MUST** treat every non-loopback provider as egress regardless of its handshake claim. | HTTP transport |
 | **C5** | A provider **MUST NOT** declare an off-machine `egress_scope` alongside `egress: false` — a local posture that names a destination content leaves is a contradiction a host rejects at the handshake. | `DataFlow::scopes_consistent` |
 | **C6** | A host **MUST** refuse a query, with a typed error naming the scopes, when a provider declares off-machine egress scopes and any such scope has no recorded consent receipt; the payload **MUST NOT** be transmitted. | `ConsentStore::evaluate`; `scope-lie` witness |
@@ -144,7 +144,8 @@ install/consent time.
 
 C4 is the load-bearing one: C3 is a claim, and a protocol that trusted claims
 about egress would have no security story at all. The transport overrides the
-declaration because the transport *knows*.
+declaration because the transport *knows*. Over stdio it does not, and §4.3
+states what the consent guarantee is worth there.
 
 ### 4.1 Egress scopes and consent receipts
 
@@ -179,6 +180,53 @@ spill its bearer token into a log, has no egress-security story at all. A
 provider **MAY** require a bearer credential; how a host obtains and stores one
 is host machinery and outside this revision.
 
+### 4.3 What the transport cannot see (C3 over stdio)
+
+C4's argument has a converse. Over HTTP the transport knows that a query leaves
+the host, so it overrides the provider's claim. Over stdio it knows nothing of
+the kind: a stdio provider is a child process with its own sockets, and nothing
+on the NDJSON pipe reveals whether it opens one. There, `egress: false` is C3 and
+only C3, a declaration the host acts on and cannot check. So the consent
+guarantee (C1, C2) holds as follows:
+
+- **An HTTP provider** is never queried without recorded consent, whatever it
+  declares (C4).
+- **A stdio or in-process provider declaring `egress: true`** is never queried
+  without recorded consent (C1, C2).
+- **A stdio provider declaring `egress: false`** is queried without consent,
+  because it has said nothing leaves. If that is a lie, it breaks C3, and nothing
+  in the protocol, the reference host, or the conformance suite detects it
+  (§11.1).
+
+**C3 is a MUST even though nobody can check it.** Strength and checkability are
+separate properties. A dishonest `egress: false` is a conformance violation a
+deployment can act on, by contract, by delisting, or in a registry. That is how
+every unverifiable but load-bearing declaration is handled, and A2's `cited` is
+the precedent inside this specification. Leaving it a SHOULD would have made
+exfiltration behind an honest-looking handshake merely *discouraged*.
+
+**Confining a child's network belongs to the deployment.** The reference host
+does not sandbox stdio providers. Network confinement is platform-specific
+(network namespaces or seccomp on Linux, a sandbox profile on macOS,
+AppContainer on Windows), and a partial implementation would state a guarantee
+that holds on some platforms and silently not on others, which is the gap this
+section exists to close. What the reference host provides is a seam that
+composes with every such mechanism. `Host::add_stdio` spawns whatever program it
+is given, with the scrubbed environment `stdio.rs` already applies, so an
+operator who cannot trust a provider's declaration passes a confining wrapper as
+the program: `bwrap --unshare-net`, `unshare -n`, `sandbox-exec -p`, or a
+container with no network. A host that confines a stdio provider's network has
+made C4's argument true for stdio again, because the transport knows.
+
+**The reference host is stricter than C4 on loopback, deliberately.** C4 exempts
+loopback. `HttpProvider` in `http.rs` does not: it forces `egress: true` for
+every HTTP provider, loopback included. A loopback listener is a process of
+unknown provenance that can relay every query onward, and a local proxy is the
+cheapest way to walk a remote provider past C4. C4 stays the floor a conformant
+host must meet. The reference host's stricter behaviour is policy, recorded in
+[ADR 0024](./docs/adr/0024-consent-binds-what-the-transport-can-see.md), and is
+not a divergence to relax.
+
 ---
 
 ## 5. Query
@@ -195,7 +243,7 @@ is host machinery and outside this revision.
     "anchors": ["file:///repo/src/net.rs"],
     "max_frames": 8,
     "max_tokens": 2000,
-    "as_of": "2026-07-01T00:00:00Z"      // optional; see F4
+    "as_of": "2026-07-01T00:00:00Z"      // optional; see Q2, F4
   }
 }
 ```
@@ -208,6 +256,7 @@ is only that anchors bias relevance.
 | # | Requirement | Verified by |
 | - | ----------- | ----------- |
 | **Q1** | When `kinds` is non-empty, a provider **MUST NOT** return a frame whose `kind` is outside it. Empty `kinds` means any kind. A provider serving none of the requested kinds returns zero frames, or replies `unsupported_kind`. | `kinds-filter` |
+| **Q2** | When `as_of` is present, a provider **MUST NOT** return a frame whose valid-time window excludes it: a returned frame carrying `valid_from` satisfies `valid_from <= as_of`, and one carrying `valid_to` satisfies `as_of < valid_to`, compared as instants (§6.1). A frame carrying neither bound makes no temporal claim and is eligible. A provider with nothing valid at the pin returns zero frames. | `as-of-temporal`; `ignore-as-of`, `ignore-valid-to` witnesses |
 
 ### 5.1 Why `kinds` binds (Q1)
 
@@ -241,6 +290,56 @@ dimension and normalization both change what a vector *means*: a 384-dim
 unnormalized vector sent to an index of 384-dim L2-normalized vectors yields
 plausible-looking, meaningless scores — the silent wrongness CGP exists to make
 loud.
+
+### 5.3 What `as_of` pins (Q2)
+
+`as_of` shipped the way `kinds` did (§5.1): a request field with a format rule
+(F4) and no stated semantics. The conformance suite nevertheless enforced half
+of one — it failed a provider for returning a frame whose `valid_from` postdated
+the pin, citing a sentence of §6.1 that imposed nothing — and checked nothing
+about the other half, so a frame whose `valid_to` had passed years before the
+pin was returned and passed. Q2 states the rule the suite now checks, whole.
+
+**It is a point-in-window predicate on valid time.** A frame's `valid_from` and
+`valid_to` bound when its content was *true in the world* (§6.1), and `as_of`
+asks what was true at one instant, so the answer is the frames whose window
+contains that instant. The window is **half-open**, `[valid_from, valid_to)`: a
+fact is admitted at the instant it becomes true and excluded at the instant it
+stops, so two consecutive windows that share a boundary — a fact and the fact
+that superseded it — never both answer for the boundary instant. An absent bound
+is unbounded on that side. Instants are compared as instants, not as strings:
+under F4 an optional fractional part sorts `…:00.5Z` before `…:00Z`, and spells
+one instant as both `…:00Z` and `…:00.0Z`.
+
+**It does not pin `recorded_at`.** §6.1 separates when content was true from when
+the provider *learned* it, which is a bitemporal model, and `as_of` constrains
+the first axis only. A historical query wants what was true then *as best the
+provider knows now*, which a fact recorded after the pin can answer correctly. A
+pin on the transaction-time axis — "what did the provider believe at that
+instant" — is a different question with a different field, and is reserved for
+an additive `1.x` minor (§13).
+
+**An absent `as_of` imposes no temporal constraint this revision defines.**
+Whether an unpinned query answers with the provider's current view, its whole
+history, or something between is provider-private, like ranking (§5).
+
+**Every provider can honour it, so it is a MUST with no capability and no error
+code.** The predicate ranges over fields the provider itself emits, and is
+applied to the frames it was about to return. A provider with no temporal index
+serves frames that carry no window, which the predicate admits, and that absence
+is itself the signal a host reads: undated evidence makes no claim about the
+pinned instant, and a host that needs dated evidence filters on the fields'
+presence. So nothing needs a `capabilities` flag — which §8.3 and
+[ADR 0004](./docs/adr/0004-dead-capability-surface.md) would forbid in any case
+while nothing exercised it — and there is no `unsupported_as_of`: following Q1, a
+provider with nothing valid at the pin returns zero frames.
+
+The `as-of-temporal` check (`check_as_of`, named by `CHECK_AS_OF`) pins two
+instants on either side of the reference fixture's validity boundary, so each
+half of the window has observable work to do, and the fixture's `ignore-as-of`
+and `ignore-valid-to` modes each break one half. The decision and the
+alternatives are recorded in
+[ADR 0022](./docs/adr/0022-as-of-is-a-point-in-window-predicate.md).
 
 ---
 
@@ -288,6 +387,8 @@ loud.
 | **F14** | A provider that signs a frame **MUST** populate that frame's `content_digest`. A frame carrying none remains conformant; *signing* one is not — the commitment would bind the frame's identity and provenance and nothing about its bytes (§6.5.2). | `attestation` suite |
 | **F15** | A verifier **MUST** distinguish an attestation that binds content from one that does not, and **MUST NOT** report the second as though it were the first. | `attestation` suite; `contextgraph_types::attest::AttestationVerdict::ValidIdentityOnly` |
 | **F16** | A host **SHOULD** surface that distinction to whoever reads the frame. A reader deciding whether to rely on a citation is asking about the bytes in front of them. | host composition |
+| **F17** | A `range` on `file` provenance **MUST** be a `line-range` (§6.2.1) whose end is not before its start, and its digest **MUST** cover exactly the bytes §6.2.1 addresses. A verifier **MUST** report any other `range`, and one whose start lies past the resource's last line, as unverifiable — **never** as the whole resource and **never** as a mismatch. | `frame-validity` (grammar); `provenance-fixture-consistency` (bytes); `tests/vectors/range-vectors.json` |
+| **F18** | A verifier **MUST NOT** present an attestation member outside the signed preimage — `attester_id`, `issued_at`, `key_id`, `algorithm` — as covered by the signature, and a host **SHOULD** mark `attester_id` and `issued_at` as unverified wherever it surfaces them (§6.5.2). | `contextgraph_types::attest` test `rewriting_attester_id_or_issued_at_leaves_the_verdict_valid`; `contextgraph_host::trust::AttestationState::unverified_attester_id` |
 
 ### 6.1 Temporal profile (F4)
 
@@ -300,7 +401,7 @@ deliberate accuracy.
 
 Semantics: `valid_from`/`valid_to` bound when the content was *true in the
 world*; `recorded_at` is when the provider *learned* it. `as_of` pins retrieval
-to an instant.
+to an instant on the first axis, under the predicate Q2 states (§5.3).
 
 ### 6.2 Digests (F5)
 
@@ -311,12 +412,83 @@ from tampering.
 **Digested bytes:** the exact UTF-8 source bytes addressed by `uri` + `range` at
 retrieval time, with **no normalization** (no line-ending translation, no
 trailing-newline adjustment). Provenance without a `range` digests the whole
-resource.
+resource; provenance with one digests exactly the span §6.2.1 addresses.
 
 Only `file` provenance is held to F5: a `derivation` or `episode` link has no
 addressable bytes, so requiring a digest of it would be theatre.
 
-### 6.3 Frame identity (D1–D4)
+#### 6.2.1 Line ranges (F17)
+
+A digest is compared byte for byte, so two implementations that disagree about
+which bytes `L120-160` names compute different digests over an identical file —
+and a verifier reports that as a **mismatch**, the signal §6.5.4 treats as
+tampering. The failure mode of an unstated range grammar is a false accusation,
+not a parse error. The grammar is therefore normative:
+
+```abnf
+line-range  = %x4C line-number [ "-" line-number ]  ; "L", uppercase only
+line-number = %x31-39 *DIGIT                         ; decimal, >= 1, no leading zero
+```
+
+`%x4C` rather than `"L"` because ABNF string literals are case-insensitive, and
+`l120` is not a line range. A range addresses bytes as follows:
+
+1. **Lines split on LF (`0x0A`) only.** A line is the bytes from the start of the
+   resource, or from just after an LF, through **and including** the next LF —
+   or through the end of the resource when no LF follows. A final LF does not
+   begin an additional empty line; an empty resource has zero lines. Splitting is
+   over bytes, with no decoding (UTF-8 never encodes `0x0A` inside a multi-byte
+   sequence, so this agrees with splitting on U+000A for valid input).
+2. **CR (`0x0D`) is content.** It is never stripped and never a terminator: a
+   CRLF line carries both bytes, and a resource that uses bare CR is one line.
+   This is §6.2's no-normalization clause, applied to ranges.
+3. **1-indexed, end inclusive.** `L2-3` is lines two and three. `L5` addresses
+   exactly what `L5-5` does.
+4. **The addressed bytes** run from the first byte of line *start* through the
+   last byte — its LF included — of line *end*, contiguous and exactly as stored.
+5. **An end past the last line clamps** to the last line. **A start past the last
+   line addresses nothing**, and a verifier reports it unverifiable: an empty span
+   is not something a range can mean.
+6. **An end before the start** addresses nothing. A producer **MUST NOT** emit
+   one; a verifier reports it unverifiable.
+7. **Line numbers are unbounded.** A verifier whose integers cannot hold a line
+   number treats it as larger than any line count: such an end clamps, such a
+   start lies past the last line. The meaning of a range never depends on the
+   verifier's integer width.
+
+**Every other spelling is reserved.** `contextgraph/1` defines no byte,
+character, or column range, and GitHub's `L10-L20` is not this grammar. A later
+revision may define further forms; the reservation is what makes that safe,
+because a verifier built before it reports such a range unverifiable, which
+degrades the digest check rather than faking it — the stance F8 takes toward an
+unknown signature algorithm. A verifier **MUST NOT** fall back to digesting the
+whole resource, which would confirm bytes the range never named, and **MUST NOT**
+report a mismatch, which would call a grammar disagreement tampering.
+
+**Why the end clamps.** The digest, not the range, is the integrity check: a
+clamped span still has to hash to the declared digest, so clamping can never make
+altered bytes verify. What it decides is only how a file that shrank beneath a
+range is reported — as a mismatch, which is true (the bytes changed), rather than
+as unverifiable. The rest of the ecosystem already depends on it: the reference
+fixture and all four SDK examples declare `L1-40` over a four-line file. A
+producer **SHOULD** nonetheless emit an end within the resource, and **SHOULD**
+write a single line as `L<n>` rather than `L<n>-<n>`: the two address the same
+bytes, but `range` is compared as a string by hosts deduplicating citations and is
+signed as a string inside the attestation preimage (§6.5.1).
+
+That preimage never parses `range`. §6.5.1 encodes it as opaque bytes, so an
+attestation over a link whose `range` is outside this grammar is still well
+defined — the `range` values in `tests/vectors/attestation-vectors.json` are
+encoding inputs, not digest claims.
+
+The reference implementation is `contextgraph_types::LineRange` (addressing) and
+`contextgraph_host::verify`'s `extract_line_range` (the re-read); an unrecognised
+range surfaces there as `DigestVerification::Unreadable` carrying an
+`unsupported_range` reason. `tests/vectors/range-vectors.json` publishes the
+addressed bytes and digest for every rule above, including each unverifiable
+case, so a second implementation can check itself.
+
+### 6.3 Frame identity (D1–D5)
 
 A frame's stable identity is the triple *(provider id, frame id,
 `content_digest`)*. `content_digest` is the provider-declared SHA-256 over the
@@ -332,6 +504,46 @@ frame carries so a resolved rehydration can be checked (§6.4).
 | **D2** | Two frames with the same *(provider id, frame id, `content_digest`)* **MUST** be treated as the same content; a host **MAY** dedup or reuse across queries on that basis. | host composition |
 | **D3** | A frame whose `content_digest` is absent **MUST NOT** be reused unchecked across queries — a host re-queries or re-verifies it rather than trusting a stored copy. | host composition |
 | **D4** | A `content_digest` is a claim about the *inline* bytes only; a host that reuses a frame's body across queries **SHOULD** confirm the identity still holds via `verify` (§9) before trusting it. | `verify` |
+| **D5** | On the wire — a `verify` request, a `verified` verdict, a `frame_attestations` entry, and the §6.5.2 commitment — *provider id* is the provider's handshake-declared `provider.name` (§3). Inside a host — composition, dedup (D2), reuse (D3), usage reports (UR1), attribution (A1) — it is the host's local id for the provider. A host **MUST** translate at the connection boundary: it substitutes the declared name of the provider it is sending to, and resolves an echoed identity to the local id of the connection it arrived on, **never** by looking a declared name up across providers. | `Host::verify_frames`; `verify-honesty` (the suite registers the provider under a local id that differs from its declared name) |
+
+**Which provider id (D5).** A host knows every provider by two names. The
+*local id* is the key the operator configured it under (`Host::add_stdio(id, …)`),
+under which consent (§4) and attestation trust are recorded; the provider never
+sees it. The *declared name* is `provider.name` from the handshake, the only
+provider identifier both ends of the wire observe. They need not agree, and the
+reference conformance suite deliberately registers every provider under a local
+id that differs from it.
+
+Each is right for exactly one half of the triple's job, which is why D5 assigns
+both rather than choosing one:
+
+- **The wire needs the declared name**, because a provider can only answer about,
+  or sign over, an identifier it knows. §6.5.2 already puts it in the signed
+  preimage, and that preimage is frozen for the `contextgraph/1` family.
+- **The host needs the local id**, because a declared name is a claim, not a
+  credential: H2 requires only that it be non-empty. A provider declaring another
+  provider's name would otherwise mint identities that collide with that
+  provider's — and D2 says two frames sharing an identity are *the same content*,
+  so the collision would poison dedup, reuse, the usage-report join, and
+  attribution at once. The local id is chosen by the operator in the same act as
+  the consent grant, so it names the provider the operator actually configured.
+
+Because translation is per connection, two configured providers that declare the
+same name are not ambiguous: each is asked only about the frames held under its
+own local id, and each verdict is resolved through the connection it arrived on.
+A host **MAY** warn an operator about the duplicate; it need not refuse it.
+
+An identity keyed on a local id is **host-scoped**: meaningful together with that
+host's configuration and not beyond it, and canonical order (§6.3,
+[`docs/context-reuse.md` §1](./docs/context-reuse.md)) is byte-stable across hosts
+only where they configure the same local ids. A host that shares identities
+beyond itself — a fleet-wide cache, a usage warehouse spanning hosts — carries its
+local-id → declared-name binding with them. Matching identities across hosts on
+the declared name alone inherits H2's weakness, so a deployment that needs it
+pins each declared name to the attester key it trusts for that provider (§6.5,
+[ADR 0016](./docs/adr/0016-attestation-trust-roots.md)). The decision and the
+alternatives are recorded in
+[ADR 0023](./docs/adr/0023-frame-identity-names-two-provider-ids.md).
 
 The identity rules and the reuse discipline they enable are developed in full in
 [`docs/context-reuse.md` §1](./docs/context-reuse.md).
@@ -512,6 +724,49 @@ this case rather than `Valid`, and its host records it as attested with
 `covers_content: false`. An implementation is free to spell the distinction
 differently; it is not free to omit it.
 
+**What a signature does not bind: the attestation's own metadata.** The
+commitment above — or, for a result attestation, the §6.5.3 root — is the whole
+of what a signature covers. An attestation carries six members, and this is how
+each relates to the signature:
+
+| Member | Covered by the signature? |
+| ------ | ------------------------- |
+| `signed_commitment` | **Yes** — it is the signed message, recomputed from the frame in hand (§6.5.4). |
+| `signature` | It *is* the signature. |
+| `key_id` | **No.** It selects the verifying key. Rewriting it selects a different key, which the signature fails against, or none — a safe failure either way. |
+| `algorithm` | **No.** Rewriting it yields a signature that fails or an algorithm the verifier declines (F8) — a safe failure. |
+| `attester_id` | **No.** Nothing reads it during verification. |
+| `issued_at` | **No.** Nothing reads it during verification. |
+
+The last two are what the presence of a signature suggests is covered, so the
+consequence has to be stated plainly. Anyone who handles an attestation in
+transit — a relaying host, a cache, a registry, a compromised distribution step —
+can rewrite **`attester_id`** to name any authority and **`issued_at`** to any
+instant, and the signature still verifies as `Valid`. `attester_id` therefore
+carries no accountability the signature vouches for: who stands behind a verified
+attestation is answered by the key that verified it, resolved from the verifier's
+own trust store (§6.5.5), never by the name the attestation prints. `issued_at`
+is the attestation's only temporal claim and it is unauthenticated: a
+well-formed timestamp (F4) is the one part a forger has no reason to get wrong,
+and nothing in `contextgraph/1` supports reasoning about an attestation's age,
+freshness, or expiry.
+
+* **F18.** A verifier **MUST NOT** present an attestation member outside the
+  signed preimage — `attester_id`, `issued_at`, `key_id`, `algorithm` — as
+  covered by the signature, and a host **SHOULD** mark `attester_id` and
+  `issued_at` as unverified wherever it surfaces them. Reporting "valid" beside
+  an unsigned name and date is how a forged attribution comes to be read as a
+  signed one.
+
+The reference implementation's `sign_frame_attestation` and
+`verify_frame_attestation` follow this boundary, and its host's
+`AttestationState::Attested` vouches only for the `key_id` that verified,
+exposing the `attester_id` it echoes as `unverified_attester_id` and carrying no
+`issued_at` at all. Binding either member into the preimage would change the
+commitment of every attestation ever produced, which is a new major family
+(§13 U4); that question is recorded, and deliberately left to one, in
+[ADR 0021](./docs/adr/0021-attestation-metadata-outside-the-signature.md).
+
 `provider_id` is the provider's handshake-declared `provider.name` (§3). A host
 also keeps a local id for each provider it has configured, and that one is not a
 string the provider ever sees — so it is not one a provider could sign against.
@@ -561,6 +816,11 @@ responses — and, per F9, an unverifiable attestation degrades a frame to
 *unattested* rather than disqualifying it. A host that dropped such frames would
 hand any peer a denial-of-service primitive: attach a malformed attestation and
 watch the evidence disappear.
+
+A verdict is a statement about the commitment and the key, and about nothing
+else in the attestation. A `Valid` verdict says the frame in hand matches what the
+holder of the verifying key signed; it says nothing about the attestation's
+`attester_id` or `issued_at`, which the signature does not cover (§6.5.2, F18).
 
 Implementations **SHOULD** use a strict Ed25519 verifier — one rejecting
 small-order public keys and non-canonical signature encodings. A signature two
@@ -911,7 +1171,9 @@ a notification-shaped 1.x addition (§13) and is not defined here.
 A verify request carries frame **identities** (§6.3), never bodies. Each verdict
 echoes the identity it answers *in full*, so a host correlates by matching rather
 than by position and a provider that reorders or omits entries cannot shift a
-`valid` onto the wrong frame.
+`valid` onto the wrong frame. The `provider_id` in those identities is the
+recipient's handshake-declared `provider.name`, never the host's local id for it
+(D5, V5).
 
 | # | Requirement | Verified by |
 | - | ----------- | ----------- |
@@ -919,6 +1181,14 @@ than by position and a provider that reorders or omits entries cannot shift a
 | **V2** | A provider declaring `capabilities.verify` **MUST** answer a `verify` with a `verified` reply. A requested identity that comes back with no verdict **MUST** be treated by the host as `unknown`. | `verify-honesty`; `rubber-stamp-verify`, `hollow-verify` witnesses |
 | **V3** | A verdict is one of `valid`, `stale`, `gone`, `unknown`. A host **MUST** reuse a held frame body **only** on `valid`; `unknown` **MUST NOT** be read as validity. Reuse requires a positive answer, never the absence of a negative one. | `verify-honesty` |
 | **V4** | A `stale` verdict **MAY** carry a `replacement_digest` — the provider's current digest for the frame, a digest never a body. A host **MUST NOT** keep serving its stored copy of a `stale` or `gone` frame. | `verify-honesty` |
+| **V5** | Every identity in a `verify` request **MUST** carry the recipient provider's handshake-declared `provider.name` as its `provider_id` (D5). A provider **MAY** answer `unknown` for an identity naming any other provider id — it did not serve that frame, whatever its frame id — and **MUST NOT** reject the whole request on that basis. | `Host::verify_frames`; `verify-honesty` |
+
+V5 answers a foreign `provider_id` per entry rather than per request because V2
+and V3 already make `unknown` safe — a host never reads it as validity — while a
+whole-request error would let one misaddressed entry deny revalidation for every
+other frame in the batch. The reference fixture exercises the permission: it
+answers `unknown` to any identity not naming its own declared name, which is what
+makes a host that leaked its local id onto the wire fail `verify-honesty`.
 
 A provider that does not declare `capabilities.verify` is queried afresh each
 time and stays fully conformant — verification is an optimisation a host earns by
@@ -1041,6 +1311,20 @@ What remains genuinely unchecked:
   against a real non-loopback TLS peer — and witnessing C4's treat-as-egress
   override over that same peer — needs a network peer the in-process harness
   cannot stand up, and stays the host-side harness's next increment.
+- **C3 over stdio — a stdio provider's `egress: false` is unverifiable.** This
+  is a larger hole than the HTTP rules above. A child process can open a
+  socket and send the query payload anywhere while declaring `egress: false`,
+  and the host queries it without asking for consent, because C3 is the only
+  thing that says otherwise and the pipe carries no evidence either way (§4.3). No provider
+  check can observe it from the wire, and no host scenario can observe it from
+  the transport. The `contextgraph-host` test
+  `a_stdio_provider_declaring_no_egress_exfiltrates_undetected`
+  (`tests/stdio_egress_gap.rs`) witnesses that the gap exists today: a child
+  declaring `egress: false` connects out carrying the query's goal, and the
+  query succeeds with no consent recorded and no error raised. That test is
+  the fail→pass case for any later fix, whether confinement in the reference
+  host or a detection hook. Until then, closing the gap is the deployment's
+  confinement choice (§4.3).
 - **R3 breakout-resistance is escaping, not an unguessable fence — a design
   choice, no longer a gap.** The reference `compose_context` neutralizes a
   content-embedded `<frame`/`</frame>` token and escapes fence attributes, so

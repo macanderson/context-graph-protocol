@@ -17,7 +17,8 @@
 //!   namespaced.
 //! - **frame-validity** — queried frames pass `contextgraph-types` validation: score
 //!   in `[0, 1]`, a non-empty title, a non-empty `citation_label` (SPEC.md §6 —
-//!   "NEVER a bare uuid").
+//!   "NEVER a bare uuid"), well-formed temporal fields and digests (§F4, §F5),
+//!   and every `file` provenance `range` in the §6.2.1 line grammar (§F17).
 //! - **verify-honesty** — a provider advertising `verify` answers `valid` for
 //!   frames it just served and `stale` when their digests are mutated
 //!   (`docs/context-reuse.md` §4). Skipped when `verify` is not advertised —
@@ -26,9 +27,9 @@
 //!   the query budget, every declared cost is the canonical count, and the
 //!   frame count respects `max_frames` (SPEC.md §7 — "never lies about cost").
 //! - **as-of-temporal** — a query pinned with `as_of` gets back no frame whose
-//!   `valid_from` is after the pin, i.e. no content that was not yet true at
-//!   the pinned instant (SPEC.md §6.1). SHOULD-strength and one-sided: a
-//!   provider that returns fewer frames, or none, never fails it.
+//!   `[valid_from, valid_to)` window excludes the pin: nothing not yet true,
+//!   and nothing no longer true, at the pinned instant (SPEC.md §5.3, Q2).
+//!   One-sided: a provider that returns fewer frames, or none, never fails it.
 //! - **shutdown-clean** — the provider tears down without error (SPEC.md §3).
 //! - **malformed-input-tolerance** — a garbage line is ignored, or errored with
 //!   code `bad_request`, never crashing the host (SPEC.md §R1). Staying alive is
@@ -90,6 +91,7 @@ use contextgraph_types::{
     FrameId, FrameKind, Grantor, ProviderInfo, verify_frame_attestation, verify_frame_inclusion,
 };
 
+mod as_of;
 pub mod composition_conformance;
 pub mod host_conformance;
 mod report;
@@ -334,7 +336,7 @@ async fn run_query_and_shutdown_checks(
     // its own regardless of how the unpinned query above fared. The §Q1 probe
     // is independent for the same reason — it narrows `kinds`, which the
     // unfiltered query above deliberately never does.
-    checks.push(check_as_of(&host, id).await);
+    checks.push(as_of::check_as_of(&host, id).await);
     checks.push(check_kinds_filter(&host, id, caps).await);
     checks.push(check_anchor_relevance(&host, id, caps).await);
     checks.push(check_provenance_fixture_consistency(&host, id).await);
@@ -381,6 +383,13 @@ const MUTATED_SUFFIX: &str = "-contextgraph-conformance-mutated";
 /// Skipped — not failed — when the provider does not advertise `verify`: that
 /// is the declared capability-gated fallback (V3), and the host re-queries
 /// instead.
+///
+/// The identities are built with the host-local id the suite registered the
+/// provider under (`provider-under-test`), which never equals a provider's
+/// declared name, and go through [`Host::verify_frames`] — so the check also
+/// exercises the host's D5 translation to the declared name on the wire. The
+/// reference fixture answers `unknown` to a foreign provider id (V5), which is
+/// what makes a regression there visible here.
 async fn check_verify_honesty(
     host: &Host,
     id: &str,
@@ -1159,61 +1168,6 @@ fn decode_hex(hex: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
-/// The instant the `as_of` probe pins retrieval to (`SPEC.md` §6.1). Chosen to
-/// fall *between* the reference fixture's two frame validity windows, so an
-/// honest provider's pinned answer is observably narrower than its unpinned one.
-const AS_OF_PIN: &str = "2026-07-01T00:00:00Z";
-
-/// Probe `as_of` temporal pinning (`SPEC.md` §6.1, §F4). `as_of` pins retrieval
-/// to an instant; a frame whose `valid_from` is strictly after the pin is
-/// content that was not yet true then — exactly what the pin exists to keep out
-/// of the answer.
-///
-/// SHOULD-strength and deliberately one-sided: it never penalizes a provider for
-/// returning *fewer* frames (or none) under a pin, because implementing
-/// time-travel retrieval is optional. It fails only on a frame the provider
-/// *did* return whose `valid_from` provably postdates the pin — a temporal lie
-/// no matter how sophisticated the provider's time handling. Comparison is
-/// lexicographic on the UTC strings, which is chronological because the
-/// timestamp profile admits one spelling per instant (§6.1). A provider serving
-/// no timestamped content trivially passes.
-async fn check_as_of(host: &Host, id: &str) -> CheckResult {
-    match host.query_provider(id, &as_of_query()).await {
-        Ok(result) => {
-            let not_yet_valid: Vec<String> = result
-                .frames
-                .iter()
-                .filter_map(|frame| {
-                    frame
-                        .valid_from
-                        .as_deref()
-                        .filter(|valid_from| *valid_from > AS_OF_PIN)
-                        .map(|valid_from| format!("{} (valid_from={valid_from})", frame.id))
-                })
-                .collect();
-            if not_yet_valid.is_empty() {
-                CheckResult::pass(
-                    CHECK_AS_OF,
-                    format!(
-                        "as_of={AS_OF_PIN}: none of the {} returned frame(s) is dated after the pin",
-                        result.frames.len()
-                    ),
-                )
-            } else {
-                CheckResult::fail(
-                    CHECK_AS_OF,
-                    format!(
-                        "provider returned {} frame(s) whose valid_from is after as_of={AS_OF_PIN} — content that was not yet true at the pinned instant (§6.1): {}",
-                        not_yet_valid.len(),
-                        not_yet_valid.join(", ")
-                    ),
-                )
-            }
-        }
-        Err(error) => CheckResult::fail(CHECK_AS_OF, format!("as_of query failed: {error}")),
-    }
-}
-
 /// **§Q1** — a non-empty `kinds` is a filter a provider must honor.
 ///
 /// The probe narrows to a single kind drawn from the provider's *own* declared
@@ -1463,15 +1417,6 @@ async fn check_provenance_fixture_consistency(host: &Host, id: &str) -> CheckRes
     )
 }
 
-/// The [`sample_query`] pinned to [`AS_OF_PIN`] — the query the temporal probe
-/// fires. Everything else is held equal so only the pin varies.
-fn as_of_query() -> ContextQuery {
-    ContextQuery {
-        as_of: Some(AS_OF_PIN.into()),
-        ..sample_query()
-    }
-}
-
 /// The query the suite probes every provider with — no `kinds` filter, so any
 /// provider is asked for its best frames (SPEC.md §5).
 pub fn sample_query() -> ContextQuery {
@@ -1544,6 +1489,17 @@ pub fn check_frames(result: &ContextQueryResult) -> (bool, String) {
         for index in frame.provenance_with_unusable_digests() {
             problems.push(format!(
                 "frame[{i}] provenance[{index}] addresses a file but its digest is missing or not `sha256:<64 lowercase hex>` (§F5)"
+            ));
+        }
+        // §F17: a file range must be a §6.2.1 line range, or no conforming
+        // verifier can locate the bytes its digest covers. Before this, a host
+        // re-reading `range: "120-160"` reported the link unreadable and
+        // `provenance-fixture-consistency` skipped it — so a provider whose
+        // digests nobody could check passed every check in the suite.
+        for index in frame.provenance_with_unrecognised_ranges() {
+            let range = frame.provenance[index].range.as_deref().unwrap_or_default();
+            problems.push(format!(
+                "frame[{i}] provenance[{index}] range `{range}` is not a line range `L<start>` or `L<start>-<end>` with start <= end (§F17, §6.2.1)"
             ));
         }
         // §G1/§G2: a graph edge must be citable by a human label, and must

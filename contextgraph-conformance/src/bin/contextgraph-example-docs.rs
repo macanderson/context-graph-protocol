@@ -79,6 +79,15 @@ enum Misbehave {
     /// is self-consistent over the wire, so only a host re-reading the bytes the
     /// digest claims to cover catches it (`SPEC.md` §6.2).
     StaleDigest,
+    /// Emit file provenance whose `range` is `1-40` — a line span without the
+    /// `L` prefix the §6.2.1 grammar requires, so no conforming verifier can
+    /// locate the bytes its digest covers (trips `frame-validity` §F17).
+    ///
+    /// Before F17 this passed every check: the host reported the link
+    /// unreadable, `provenance-fixture-consistency` skipped it as a file it
+    /// could not see, and a provider whose digests nobody could check was
+    /// conformant.
+    UnrecognisedRange,
     /// Return far more frames than the query's `max_frames` allows, each
     /// individually cheap so the token budget is respected (trips
     /// `budget-honesty` §B4).
@@ -92,8 +101,16 @@ enum Misbehave {
     LyingRepresentation,
     /// Return a frame whose `valid_from` is after the query's `as_of` pin —
     /// content that was not yet true at the pinned instant (trips
-    /// `as-of-temporal` §F4/§6.1).
+    /// `as-of-temporal` §Q2).
     IgnoreAsOf,
+    /// Honor only the `valid_from` half of an `as_of` pin, returning a frame
+    /// whose `valid_to` had already passed — content no longer true at the
+    /// pinned instant (trips `as-of-temporal` §Q2).
+    ///
+    /// This is the half the probe did not check before Q2 existed: a
+    /// "not-yet-true" filter is the obvious first implementation, and it
+    /// serves stale facts to every historical query.
+    IgnoreValidTo,
     /// Score a query embedding whose length contradicts the declared
     /// `embeddings_fingerprint` dimension instead of rejecting it (trips
     /// `embedding-fingerprint` §E1).
@@ -286,16 +303,24 @@ fn main() {
                         frames.sort_by_key(|f| !is_anchored(f, &query.anchors));
                     }
                 }
-                // §F4/§6.1: honor an `as_of` pin — content not yet true at the
-                // pinned instant is not returned. The timestamp profile is one
-                // spelling per instant, so a lexicographic compare on the UTC
-                // strings *is* a chronological one. `ignore-as-of` skips this,
-                // returning a not-yet-valid frame the `as-of-temporal` probe
-                // catches.
+                // §Q2: honor an `as_of` pin — return only frames whose
+                // half-open window `[valid_from, valid_to)` contains it, so
+                // nothing not yet true and nothing no longer true at the pinned
+                // instant. Every timestamp this fixture emits is whole-second
+                // §F4, so a lexicographic compare on the UTC strings *is* a
+                // chronological one here (the suite's probe does not assume
+                // that). `ignore-as-of` skips the filter entirely;
+                // `ignore-valid-to` applies only its first half. The
+                // `as-of-temporal` probe catches both.
                 if args.misbehave != Some(Misbehave::IgnoreAsOf)
                     && let Some(as_of) = query.as_of.as_deref()
                 {
-                    frames.retain(|f| !f.valid_from.as_deref().is_some_and(|vf| vf > as_of));
+                    let honor_valid_to = args.misbehave != Some(Misbehave::IgnoreValidTo);
+                    frames.retain(|f| {
+                        let begun = !f.valid_from.as_deref().is_some_and(|vf| vf > as_of);
+                        let ended = f.valid_to.as_deref().is_some_and(|vt| vt <= as_of);
+                        begun && !(honor_valid_to && ended)
+                    });
                 }
                 // Detached, per F6: the attestations are computed over the
                 // frames as finally filtered, and ride beside them on the
@@ -726,12 +751,23 @@ fn current_digest(frame_id: &str, misbehave: Option<Misbehave>) -> Option<String
 /// and opaque, so only the provider can say whether the bytes behind an
 /// identity still match. A digest that differs from the current one is exactly
 /// what a mutated source looks like from here.
+///
+/// An identity naming a provider id other than this provider's declared name is
+/// answered `unknown`, as `SPEC.md` V5 permits: it is not a frame this provider
+/// served, whatever its frame id. That makes this fixture the conformance
+/// witness for D5 — the suite registers it as `provider-under-test`, so a host
+/// that put its local id on the wire instead of the declared name would have
+/// every frame come back `unknown` and fail `verify-honesty`.
 fn verify_honestly(request: &VerifyRequest, misbehave: Option<Misbehave>) -> VerifyResponse {
+    let declared = provider_info(misbehave).name;
     VerifyResponse::new(
         request
             .frames
             .iter()
             .map(|frame| {
+                if frame.provider_id != declared {
+                    return FrameVerdict::new(frame.clone(), Verdict::Unknown);
+                }
                 let verdict = match current_digest(&frame.frame_id, misbehave) {
                     // Never served, or no longer served: nothing to revalidate.
                     None => Verdict::Gone,
@@ -766,6 +802,11 @@ fn is_anchored(frame: &ContextFrame, anchors: &[String]) -> bool {
             .any(|r| anchors.contains(&r.target_uri))
 }
 
+/// The instant the first canned frame stops being true and the second starts:
+/// the boundary the `as-of-temporal` probe's two pins straddle (`SPEC.md` Q2).
+/// One constant, so the two windows can never drift into a gap or an overlap.
+const AUTUMN_BOUNDARY: &str = "2026-09-01T00:00:00Z";
+
 fn canned_frames(misbehave: Option<Misbehave>) -> Vec<ContextFrame> {
     let bad_score = misbehave == Some(Misbehave::BadScore);
     let empty_citation = misbehave == Some(Misbehave::EmptyCitation);
@@ -786,18 +827,22 @@ fn canned_frames(misbehave: Option<Misbehave>) -> Vec<ContextFrame> {
     }
 
     vec![
-        // Valid since the start of the year — before the `as_of` probe's pin.
+        // True from the start of the year until the autumn: the §Q2 probe's
+        // mid-year pin falls inside this window and its autumn pin after it
+        // closed, so an as_of-honoring provider keeps it at the first pin and
+        // omits it at the second — the `valid_to` half with work to do.
         doc_frame(
             "frm_getting_started",
             "Getting Started",
             "Install the reference binding with `cargo add contextgraph-types`, then implement \
              the four required methods.",
-            "2026-01-01T00:00:00Z",
+            ("2026-01-01T00:00:00Z", Some(AUTUMN_BOUNDARY)),
             0.82,
             misbehave,
         ),
-        // Became true only in the autumn — *after* the `as_of` probe's pin, so
-        // an as_of-honoring provider omits it from a mid-year pinned query.
+        // Became true only in the autumn — *after* the probe's mid-year pin, so
+        // an as_of-honoring provider omits it from that pinned query, and
+        // before its autumn pin, so it is kept there.
         //
         // Deliberately a **different kind** from the frame above. The §Q1 probe
         // narrows to the first kind this provider declares (`doc`), so the
@@ -811,7 +856,7 @@ fn canned_frames(misbehave: Option<Misbehave>) -> Vec<ContextFrame> {
                 "frm_configuration",
                 "Configuration example",
                 "let host = Host::new().with_provider(\"docs\", provider);",
-                "2026-09-01T00:00:00Z",
+                (AUTUMN_BOUNDARY, None),
                 0.61,
                 misbehave,
             );
@@ -852,17 +897,20 @@ fn canned_frames(misbehave: Option<Misbehave>) -> Vec<ContextFrame> {
 /// the first frame's file and both this frame and `context/verify` have to
 /// agree about that.
 ///
-/// `valid_from` is the instant the frame's content became true in the world
-/// (§6.1); callers give the two canned frames *disjoint* windows so an `as_of`
-/// pin between them is observable — the `as-of-temporal` probe depends on it.
+/// `window` is `(valid_from, valid_to)`: when the frame's content became true
+/// in the world and, if it has, when it stopped (§6.1). Callers give the two
+/// canned frames *adjacent, disjoint* windows meeting at [`AUTUMN_BOUNDARY`],
+/// so an `as_of` pin on either side of it is observable — the `as-of-temporal`
+/// probe depends on it.
 fn doc_frame(
     id: &str,
     title: &str,
     content: &str,
-    valid_from: &str,
+    window: (&str, Option<&str>),
     score: f32,
     misbehave: Option<Misbehave>,
 ) -> ContextFrame {
+    let (valid_from, valid_to) = window;
     let (file, range) = backing_file(id, misbehave).unwrap_or((PRIMARY_FILE, "L1-40"));
     let honest_cost = budget_tokens(content);
     ContextFrame {
@@ -899,12 +947,17 @@ fn doc_frame(
             Some(Misbehave::BadTimestamp) => "last tuesday".into(),
             _ => valid_from.to_string(),
         }),
-        valid_to: None,
+        valid_to: valid_to.map(String::from),
         recorded_at: Some("2026-07-20T18:00:00Z".into()),
         provenance: vec![Provenance {
             kind: "file".into(),
             uri: Some(fixture_uri(file)),
-            range: Some(range.into()),
+            range: Some(match misbehave {
+                // `L1-40` without its prefix: every other part of the link is
+                // honest, so the grammar is the only thing wrong (§F17).
+                Some(Misbehave::UnrecognisedRange) => range.trim_start_matches('L').into(),
+                _ => range.into(),
+            }),
             // The same declared digest as `content_digest`, so a host that
             // re-reads `uri` over `range` and re-hashes gets a match for an
             // honest frame — and a `Mismatch` under `stale-digest` (§6.2).
@@ -937,7 +990,7 @@ fn base_frame(
         "frm_flood",
         "Flood",
         "x",
-        "2026-01-01T00:00:00Z",
+        ("2026-01-01T00:00:00Z", None),
         0.5,
         misbehave.filter(|m| !matches!(m, Misbehave::FloodFrames)),
     )

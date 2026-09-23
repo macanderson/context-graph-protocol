@@ -14,6 +14,10 @@ passes the same conformance suite that judges the Rust reference provider.
 pip install contextgraph-sdk
 ```
 
+Python 3.9 or newer. CI runs the SDK's tests on the declared floor (3.9) and
+on the newest CPython release, and typechecks it with `mypy --strict` against
+the floor as well as 3.10.
+
 ## Write a provider
 
 ```python

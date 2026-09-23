@@ -73,7 +73,7 @@ pub trait ContextProvider: Send + Sync {
     /// Revalidate frames the host already holds, without any frame body
     /// travelling (`docs/context-reuse.md` §4 `context/verify`).
     ///
-    /// Defaults to answering [`Verdict::Unknown`](contextgraph_types::Verdict::Unknown)
+    /// Defaults to answering [`Verdict::Unknown`]
     /// for every requested identity, so an existing provider implements
     /// nothing and is simply treated as unable to vouch for its frames — the
     /// host then re-queries them. A provider that overrides this **MUST** also

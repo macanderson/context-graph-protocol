@@ -17,7 +17,8 @@
 - [ ] A witness test is included, or a reason there isn't one is stated below
 - [ ] Docs updated in the same PR if behavior or flags changed (`README.md`,
       `docs/`, doc comments, `--help` text)
-- [ ] All commits signed off (`git commit -s`, DCO)
+- [ ] All commits signed off (`git commit -s`, DCO) — the `dco` check enforces
+      it; fix a miss with `git rebase --signoff <base>`
 - [ ] `CHANGELOG.md` updated under `[Unreleased]` if user-visible
 
 ## Registry submission (only if adding a row to `docs/registry.md`)

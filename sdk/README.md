@@ -47,7 +47,6 @@ npm create contextgraph-provider@latest my-provider -- --lang python
 ```
 
 Conformant is a separate axis from **published**: see
-[`PUBLISHING.md`](./PUBLISHING.md) for each SDK's registry status and the
-release checklist. As of this writing only the TypeScript SDK is on a real
-registry (npm); Python and Go are conformant but not yet installable outside
-a checkout.
+[`PUBLISHING.md`](./PUBLISHING.md) for the release checklist and the record of
+each SDK's first publish. All three are published: TypeScript on npm, Python
+on PyPI, and Go through the Go module proxy.

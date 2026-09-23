@@ -126,6 +126,24 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
 
+  rustdoc:
+    name: rustdoc (-D warnings)
+    runs-on: ubuntu-latest
+    # docs.rs is the surface a third-party implementer reads these crates
+    # through (`contextgraph-types` builds there with `all-features = true`),
+    # and until this job existed nothing ever built it: `cargo doc` had gone
+    # red on main on redundant, private, and unresolved intra-doc links —
+    # three of them pointed at nothing at all (#122).
+    # `--all-features` matches what docs.rs renders; `--no-deps` keeps the run
+    # to this workspace's own docs, which are the only ones it can fix.
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/rust
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo doc --workspace --all-features --no-deps
+
   conformance:
     name: conformance (green and --misbehave red)
     runs-on: ubuntu-latest
@@ -375,8 +393,76 @@ jobs:
         working-directory: sdk/python
         # `--python-version 3.10`, not the 3.9 floor `pyproject.toml` declares:
         # mypy 2.x refuses to target 3.9 at all, and 3.10 is the nearest target
-        # it accepts.
+        # it accepts. The step below covers the floor.
         run: mypy --strict --python-version 3.10 contextgraph_sdk examples
+      # The declared floor, typechecked as the floor (#107). mypy 1.20.2 is the
+      # last release line that still accepts a 3.9 target, so it gets its own
+      # venv rather than sharing one with the 2.x pin above. The target is read
+      # from `requires-python`, so raising the floor moves this check with it.
+      - name: Python SDK typechecks against its declared floor
+        working-directory: sdk/python
+        run: |
+          floor=$(sed -n 's/^requires-python = ">=\([0-9][0-9.]*\)"$/\1/p' pyproject.toml)
+          if [[ -z "$floor" ]]; then
+            echo "::error::could not read a '>=X.Y' floor from requires-python in sdk/python/pyproject.toml"
+            exit 1
+          fi
+          python3 -m venv "$RUNNER_TEMP/mypy-floor"
+          "$RUNNER_TEMP/mypy-floor/bin/pip" install "mypy==1.20.2"
+          "$RUNNER_TEMP/mypy-floor/bin/mypy" --strict --python-version "$floor" contextgraph_sdk examples
+
+  sdk-python-interpreters:
+    name: sdk (python) runs on ${{ matrix.role }} interpreter (${{ matrix.python }})
+    runs-on: ubuntu-latest
+    # `requires-python = ">=3.9"` is a promise to every pip resolver, and every
+    # other Python job here pins 3.12, so for a long time nothing ran the SDK
+    # on any interpreter but that one (#107). The floor and the newest release
+    # are where breakage lives: a 3.10-only syntax or stdlib call fails the
+    # first, a removal in a new release fails the second. `3.x` floats on
+    # purpose, because the claim has no upper bound and a new interpreter is
+    # covered by it the day it ships.
+    #
+    # No Rust, deliberately: the conformance jobs above each build the whole
+    # workspace, and a matrix over them would multiply that for a question the
+    # SDK's own unit tests (stdio and HTTP runtimes, attestation vectors)
+    # already answer. The TypeScript (`engines.node: ">=18"`) and Go
+    # (`go 1.21`) SDKs carry the same shape of claim and are not yet matrixed.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - role: floor
+            python: "3.9"
+          - role: newest
+            python: "3.x"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      # The matrix hardcodes the floor; `pyproject.toml` declares it. This
+      # step makes them one number: moving either without the other fails.
+      - name: the floor leg runs the floor pyproject.toml declares
+        if: matrix.role == 'floor'
+        run: |
+          python3 - <<'PY'
+          import re, sys
+          text = open("sdk/python/pyproject.toml", encoding="utf-8").read()
+          found = re.search(r'^requires-python = ">=(\d+)\.(\d+)"$', text, re.M)
+          if not found:
+              sys.exit("could not read a '>=X.Y' floor from requires-python")
+          floor = (int(found[1]), int(found[2]))
+          running = sys.version_info[:2]
+          if running != floor:
+              sys.exit(f"floor leg runs {running}, pyproject.toml declares {floor}")
+          print(f"floor leg runs {running}, matching requires-python")
+          PY
+      - name: SDK and examples compile
+        working-directory: sdk/python
+        run: python3 -m compileall -q contextgraph_sdk examples
+      - name: SDK unit tests pass
+        working-directory: sdk/python
+        run: python3 -m unittest discover -s tests -v
 
   sdk-version-pins:
     name: sdk version pins name a version their manifest ships
@@ -387,12 +473,30 @@ jobs:
     # that: it overrides both published pins with local paths so CI never
     # depends on a publish — the right call for that job, and the reason this
     # guard is a separate one. Offline, stdlib only, reads no registry.
+    # It also reads install commands and dependency lines in tracked Markdown,
+    # where two versions had gone stale with no manifest comparison to see
+    # them, and refuses a concrete Go SDK version there (#108, ADR 0026).
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: python3 .github/scripts/check-sdk-version-pins.py
+
+  sdk-metadata:
+    name: sdk packages name the crates' homepage and repository
+    runs-on: ubuntu-latest
+    # Both npm packages shipped with no `homepage` or `repository`, so their
+    # registry pages linked nowhere. The Python package's homepage was the
+    # GitHub repo while the crates named the protocol domain (#112). The guard
+    # finds manifests by walking sdk/*/ rather than listing them, so a new SDK
+    # is held to Cargo.toml's pair from its first commit. Offline, stdlib only.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python3 .github/scripts/check-sdk-metadata.py
 
   scaffold-action-pins:
     name: scaffold workflows pin the action majors this repository runs
@@ -411,6 +515,30 @@ jobs:
         with:
           python-version: "3.12"
       - run: python3 .github/scripts/check-scaffold-action-pins.py
+
+  guard-self-tests:
+    name: CI guard scripts go red on the drift they name
+    runs-on: ubuntu-latest
+    # A guard that only ever passes proves nothing, and each guard above is
+    # judged by the one tree it runs on, where it is green by construction.
+    # These tests run the guards against inputs built to be wrong and hold
+    # that each goes red: a quoted or SHA-commented stale pin and an unparsed
+    # `uses:` line (#207), a creator-applied `P4` or `size/M` (#137), and a
+    # changelog with two `## [Unreleased]` headings or none (#149). Offline,
+    # stdlib plus jsonschema. Everything in .github/scripts/tests runs here.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      # validate-examples.py's self-test runs the real gate, which needs
+      # jsonschema; its suite fails rather than skips without it.
+      - run: pip install jsonschema
+      - run: python3 -m unittest discover -s .github/scripts/tests -v
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - run: node --test .github/scripts/tests/triage-guard.test.cjs
 
   sdk-scaffold:
     name: create-contextgraph-provider scaffolds a conformant project
@@ -491,6 +619,108 @@ jobs:
           python-version: "3.12"
       - run: python3 .github/scripts/check-deploy-hygiene.py
 
+  adr-numbers:
+    name: ADR numbers are unique in the merge result
+    runs-on: ubuntu-latest
+    # Two pull requests each added a differently named `0012-*.md`; git merged
+    # both cleanly and every check was green on each, because each branch was
+    # valid on its own (#123). A branch-local check cannot see the other pull
+    # request, so on a pull request this checks the tree HEAD would produce if
+    # merged into the base as the base is *now*, fetched at run time rather
+    # than frozen in the merge ref, so a re-run after a colliding ADR lands
+    # goes red. On a push to main it checks the tree itself, so a collision
+    # that slips past a stale green check reddens the merge that made it.
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # `merge-tree` needs the history back to the merge base.
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: ADRs in the merge with the current base are one number each
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags origin "+refs/heads/${GITHUB_BASE_REF}:refs/remotes/origin/${GITHUB_BASE_REF}"
+          python3 .github/scripts/check-adr-numbers.py --against "origin/${GITHUB_BASE_REF}"
+      - name: ADRs in this tree are one number each
+        if: github.event_name != 'pull_request'
+        run: python3 .github/scripts/check-adr-numbers.py
+
+  dco:
+    name: every commit is signed off (DCO)
+    runs-on: ubuntu-latest
+    # The license grant here is written as flowing from each contributor's
+    # DCO sign-off, and for most of the history nothing checked that the
+    # sign-off existed (#141). ADR 0025 chose enforcing the rule over
+    # deleting it; this is the enforcement. It reads the commits the pull
+    # request adds (base..head), so history before the cut-over is neither
+    # checked nor rewritten. Pull requests only: the certification is made on
+    # the commits a contributor pushes, and the commit a squash merge writes
+    # to main is GitHub's rewrite of those (ADR 0025 covers why that holds).
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: every commit this pull request adds is signed off by its author
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 .github/scripts/check-dco.py --range "${BASE_SHA}..${HEAD_SHA}"
+
+  adr-log:
+    name: the GUIDE's ADR log indexes every ADR, and ADR numbers are unique
+    runs-on: ubuntu-latest
+    # docs/GUIDE.md §3 is a shared cell every ADR-adding PR must write, so each
+    # PR's tree is fine on its own and a missing row exists only relative to a
+    # directory listing nobody compared it against. Three ADRs sat unindexed
+    # that way (#129), and two open PRs once each added an ADR 0012, which git
+    # would have merged cleanly (#123). This derives the expected rows from
+    # docs/adr/*.md on every run, so there is no list here to forget. Its unit
+    # tests (tests/test_check_adr_log.py) run in guard-self-tests.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python3 .github/scripts/check-adr-log.py
+
+  published-crates:
+    name: the security policy names every published crate
+    runs-on: ubuntu-latest
+    # contextgraph-trace was published and SECURITY.md went on listing three
+    # crates, so a reporter with a trace bug read a policy that did not mention
+    # it (#143). The `publish = true` manifests are the one list that cannot go
+    # stale; this holds the prose copies to them. Its unit tests
+    # (tests/test_check_published_crates.py) run in guard-self-tests.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python3 .github/scripts/check-published-crates.py
+
+  protocol-surface-mirror:
+    name: protocol-surface mirrors every SPEC.md requirement
+    runs-on: ubuntu-latest
+    # GOVERNANCE.md names docs/protocol-surface.md's conformance index as the
+    # mirror of SPEC.md's requirement tables. When #158 was filed it restated
+    # 23 of 57 requirements, and every one it missed was enforced by a
+    # conformance check that would fail a provider whose author read only that
+    # page. The guard compares the two id sets, in both directions, for any id
+    # family. It does not compare wording: the mirror is a summary on purpose,
+    # and SPEC.md wins any disagreement.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python3 .github/scripts/check-protocol-surface-mirror.py
+
   conformance-counts:
     name: docs state the real number of conformance checks
     runs-on: ubuntu-latest
@@ -532,6 +762,23 @@ jobs:
         with:
           python-version: "3.12"
       - run: python3 .github/scripts/check-doc-types.py
+
+  doc-links:
+    name: every docs/ path the tree names resolves
+    runs-on: ubuntu-latest
+    # PR #80 deleted the design-sketch directory and ten citations of it
+    # survived — in Rust doc comments, MIGRATION.md, and the crates.io
+    # description of a published crate — because nothing reads a path out of
+    # prose (#153). The deploy-hygiene job checks absolute artifact URLs only.
+    # This reads every repo-relative docs/ path, and every link into this
+    # repository's own tree, and fails naming each one that does not exist. Its
+    # self-test (tests/test_check_doc_links.py) runs in guard-self-tests.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python3 .github/scripts/check-doc-links.py
 
   publish-dry-run:
     name: contextgraph-types packages cleanly (crates.io dry run)

@@ -46,29 +46,32 @@ Rust paths follow the crate names: `use ocp_types::…` → `use contextgraph_ty
 The rename landed in commit `d6768a8`; the crates were originally imported in
 `7912257`.
 
-## 2. Pin by tag, not by SHA
+## 2. Depend on the published crates
 
-Until the crates are on crates.io (issue #16), pin the tag:
+The crates are on crates.io. Depend on them by version, not by a git URL:
 
 ```toml
 [dependencies]
-contextgraph-types = { git = "https://github.com/macanderson/context-graph-protocol", tag = "v0.0.2" }
-contextgraph-host  = { git = "https://github.com/macanderson/context-graph-protocol", tag = "v0.0.2" }
+contextgraph-types = "2"
+contextgraph-host  = "2"
 ```
 
-A tag is stable, greppable, and shows up in `cargo tree`; a bare SHA tells the
-next reader nothing about how far behind they are.
+`2` is the current major, and a `2.x` crate speaks the frozen
+`contextgraph/1.0` wire (§5 covers the Rust changes from older releases;
+[docs/stability.md](./docs/stability.md) explains why the crate and wire
+versions differ). A registry version is stable, reviewable in `Cargo.lock`, and
+shows up in `cargo tree`; a git pin is none of those, and a pin by bare SHA
+tells the next reader nothing about how far behind they are.
 
-### Cutting the tag
+If you must build from git — to test a fix before it is released — pin a
+release tag rather than a SHA. Release tags are named `contextgraph-vX.Y.Z`
+(the tag that `.github/workflows/release.yml` publishes from), for example:
 
-*(Pending maintainer authorization — the commands, not an instruction to run
-them unattended.)*
-
-```bash
-git checkout main && git pull
-git tag -a v0.0.2 -m "Pre-0.1.0 checkpoint: normative SPEC.md, canonical token accounting, CI"
-git push origin v0.0.2
+```toml
+contextgraph-types = { git = "https://github.com/macanderson/context-graph-protocol", tag = "contextgraph-v2.0.0" }
 ```
+
+Move back to the registry version once the fix ships.
 
 ## 3. Breaking changes since `7912257`
 
@@ -80,9 +83,9 @@ conformance check:
 
 | Removed | Replacement |
 | --- | --- |
-| `Capabilities.upsert` | none — see `docs/sketches/write-path.md` |
-| `Capabilities.subscribe` | pull-based revalidation; see `docs/sketches/push-invalidation.md` |
-| `QueryCapability.filters` | none — see `docs/sketches/query-filters.md` |
+| `Capabilities.upsert` | none — a write path waits for a working provider to drive its design; see [ADR 0004 §1](./docs/adr/0004-dead-capability-surface.md#1-capabilitiesupsert--removed) |
+| `Capabilities.subscribe` | pull-based revalidation with `context/verify`; push stays open as an additive 1.x notification (an envelope with no `id`); see [ADR 0004 §3](./docs/adr/0004-dead-capability-surface.md#3-capabilitiessubscribe--removed-freshness-is-answered-by-pull) and [ADR 0002](./docs/adr/0002-request-correlation-and-the-json-rpc-question.md) |
+| `QueryCapability.filters` | none — `kinds`, `anchors` and `query_text` cover the reference providers; see [ADR 0004 §4](./docs/adr/0004-dead-capability-surface.md#4-querycapabilityfilters--removed) |
 
 **The wire is unaffected.** These fields carried `#[serde(default)]`, and
 deserialization ignores unknown fields, so a provider still emitting them
@@ -281,7 +284,10 @@ ContextQueryResult { frames, truncated, dropped_estimate, ..Default::default() }
 on `never`-narrowing stops type-checking. Narrow with the exported
 `isKnownFrameKind` / `KNOWN_FRAME_KINDS` when you need to branch only on kinds
 you understand. The Go SDK is unchanged in this release — porting it is tracked
-in issue #93. It takes a break of its own later; see §7.
+in issue #93. It takes a break of its own later; see §7. The lockstep covers
+the npm and PyPI packages only. The Go SDK has its own version line, because
+Go ties a module's major version to its import path
+([ADR 0026](./docs/adr/0026-versions-in-prose-and-the-go-sdk-tag.md)).
 
 ## 6. The JSON Schemas moved to a branded `$id` — no action required
 

@@ -49,6 +49,21 @@ the reference conformance suite validate against the **same bytes**.
   recomputation calls `contextgraph_types::record_attest` rather than a copy of
   the rule kept in the test.
 
+## Adding a file here
+
+The script enforces the naming rule above. A `*.json` file here is validated as
+a record only if its stem is a `record_kind` in the schema's `recordKind` enum.
+The three non-record files listed above are declared by name in the script's
+`NON_RECORD_FIXTURES`, each beside the section that checks it. Any other JSON
+file fails the `schema` job with a message that names this convention, rather
+than being validated as a record and failing with a schema error that blames
+the wrong thing (#126). The script also fails when a declared `record_kind` has
+no fixture, or when a fixture's `record_kind` differs from its filename.
+
+So a new non-record artifact goes in a directory of its own, as
+[`tests/vectors/`](../vectors/) does. If it truly belongs beside the records,
+add it to `NON_RECORD_FIXTURES` together with the check that validates it.
+
 ## Regenerating
 
 `record_hash` is content-addressed (profile `LH1`). If you edit a fixture's

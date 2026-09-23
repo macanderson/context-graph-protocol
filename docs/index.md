@@ -58,6 +58,11 @@ Reference documentation for the **Context Graph Protocol (CGP)** crates:
 - [**Stability**](./stability.md) — the crate-semver vs. protocol-version
   relationship, and what changes (and doesn't) as the protocol moves from
   `contextgraph/1.0` to a later `contextgraph/1.x`.
+- [**Host execution trace**](./host-trace.md) — the journal wire format and
+  replay oracles the `contextgraph-trace` crate implements: invariants over a
+  host's agent loop (stale evidence cited, tool calls left unresolved, side
+  effects replayed after a crash) that provider conformance cannot see.
+  Sketch stage, not part of `contextgraph/1.0`.
 
 Also at the repo root: [`GOVERNANCE.md`](../GOVERNANCE.md) (how the protocol is
 maintained, what counts as a normative change, and the path to shared

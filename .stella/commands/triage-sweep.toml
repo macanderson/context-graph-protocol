@@ -55,8 +55,9 @@ Flags:
 
 Several repos in this org are steered by **SCR-005**
 ([`ctx.scr.005-triage-separation.toml`](https://github.com/macanderson/oxagen/blob/main/.oxagen/rules/ctx.scr.005-triage-separation.toml)).
-The record says issue creators apply only `triage`, and the triage identity
-assigns the priority and size. The retired markdown record of SCR-005 also said
+The record says issue creators apply only `triage`, and its statement reads:
+*"The triage identity assigns one priority, optionally a size, removes triage,
+and comments a one-line rationale."* The retired markdown record of SCR-005 also said
 the triage agent *"never implements anything and never closes issues — it only
 sizes and orders."*
 

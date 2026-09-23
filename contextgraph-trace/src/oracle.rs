@@ -1,6 +1,6 @@
 //! The replay oracles — pure functions over a parsed [`Journal`] that hold a
 //! harness's recording to the loop invariants
-//! (`docs/sketches/host-trace.md` §"The oracles").
+//! (`docs/host-trace.md` §"The oracles").
 //!
 //! Every oracle is deliberately independent: each walks the journal itself,
 //! so a check can be read, tested, and trusted in isolation, and a failure in

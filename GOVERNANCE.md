@@ -11,7 +11,9 @@ so adopters can trust that the protocol is maintained deliberately and that
   maintainer owns release decisions, approval of normative changes, and the
   stewardship of the frozen `contextgraph/1.0` family.
 - **Contributors.** Anyone. Contributions land via pull request under the
-  [DCO](./CONTRIBUTING.md) — no CLA, no copyright assignment.
+  [DCO](./CONTRIBUTING.md) — no CLA, no copyright assignment. Every commit a
+  pull request adds must be signed off by its author, and CI enforces it
+  ([ADR 0025](./docs/adr/0025-the-dco-is-enforced-not-requested.md)).
 
 Context Graph Protocol is **maintainer-led today, not committee-led** — deliberately. A steering
 committee before there are independent implementations is theater. The path to
@@ -24,7 +26,7 @@ contract — if it does any of the following:
 
 - adds, removes, or renames a field in the wire types (`contextgraph-types`);
 - changes a field's required-ness or its serialized name;
-- adds or tightens a [conformance requirement](./SPEC.md) (the normative home; [protocol-surface.md](./docs/protocol-surface.md#conformance-requirements) mirrors it);
+- adds or tightens a [conformance requirement](./SPEC.md) (the normative home; [protocol-surface.md](./docs/protocol-surface.md#conformance-requirements) mirrors it, and `check-protocol-surface-mirror.py` fails CI until the new id has a row there too);
 - changes the [version-compatibility rule](./SPEC.md) (SPEC.md §3.1); or
 - changes the envelope vocabulary or framing.
 

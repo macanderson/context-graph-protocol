@@ -352,45 +352,147 @@ SPEC.md and its stable requirement anchors (H1, B3, …) win. The
 built on `contextgraph-host` enforces the host-side requirements. Bold keywords
 follow [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 
+Every numbered requirement in `SPEC.md` has a row below, under the same id.
+`.github/scripts/check-protocol-surface-mirror.py` (CI:
+`protocol-surface mirrors every SPEC.md requirement`) fails when an id is in one
+file and not the other, so a new requirement lands in both. The rows summarise;
+they are not the normative text.
+
 ### Handshake and versioning
+
+SPEC.md §3.
 
 | # | Requirement | Enforced / verified by |
 | - | ----------- | ---------------------- |
 | H1 | A provider **MUST** reply to `handshake` with a `handshake_ack` whose `protocol_version` is in the same major family as the host's. | `handshake` conformance check |
 | H2 | The `provider.name` and `provider.version` fields **MUST NOT** be empty. | `handshake` conformance check |
-| H3 | A version-family mismatch **MUST** be reported to the host as a named error, not left to hang. | `contextgraph-host::wire::versions_compatible` |
+| H3 | A version-family mismatch **MUST** be reported to the host as a named error, not left to hang. | `contextgraph-host::wire::versions_compatible`; `handshake` check; `host-version-reject` host check |
+| H4 | A provider declaring `capabilities.correlation` **MUST** echo a request's `id` verbatim on the matching `frames` or `error`. | `CorrelationMismatch`; `--misbehave drop-correlation-id` witness |
 
 ### Data flow and consent
+
+SPEC.md §4.
 
 | # | Requirement | Enforced / verified by |
 | - | ----------- | ---------------------- |
 | C1 | A conforming host **MUST NOT** auto-enable a provider that declares `data_flow.egress: true`. It **MUST** gate that provider behind explicit, named, revocable consent. | `ConsentStore` gate in `contextgraph-host` |
 | C2 | The host **MUST NOT** transmit a query payload to an `egress` provider before consent is recorded. | `Host::query_provider` gate |
-| C3 | A provider **SHOULD** declare `egress: true` honestly if it sends data off the local machine, directly or indirectly. | advisory; the host cannot rely solely on the claim — see C4 |
-| C4 | `contextgraph-host`'s HTTP transport **MUST** treat every remote provider as `egress` regardless of its handshake claim. | `contextgraph-host` HTTP transport |
+| C3 | A provider **MUST** declare `egress: true` if it sends data off the local machine, directly or indirectly — including through a process, service, or proxy it relays to. | unverifiable over stdio, where the host sees a pipe and not the child's sockets (SPEC.md §4.3, §11.1; witnessed by `contextgraph-host`'s `stdio_egress_gap` test); overridden over HTTP by C4 |
+| C4 | A host's HTTP transport **MUST** treat every non-loopback provider as `egress` regardless of its handshake claim. | `contextgraph-host` HTTP transport, which is deliberately stricter and forces egress for loopback too (SPEC.md §4.3, ADR 0024) |
+| C5 | A provider **MUST NOT** declare an off-machine `egress_scope` alongside `egress: false`; a host rejects that contradiction at the handshake. | `DataFlow::scopes_consistent` |
+| C6 | A host **MUST** refuse a query, with a typed error naming the scopes, when a provider declares an off-machine egress scope that has no recorded [consent receipt](./context-reuse.md#3-consent-scopes-and-receipts). The payload **MUST NOT** be transmitted. | `ConsentStore::evaluate`; `--misbehave scope-lie` witness |
+| C7 | The host's HTTP transport **MUST** use TLS for every non-loopback provider, and **MUST** refuse to send a query payload over an unencrypted connection to one. | `contextgraph-host` HTTP transport (`HostError::InsecureTransport`) |
+| C8 | A host **MUST NOT** log, or put in an error surfaced off-machine, any bearer token, credential, or authorization header used to reach a provider. | `contextgraph-host` HTTP transport (`Credential` redaction) |
+
+### Query and embeddings
+
+SPEC.md §5.
+
+| # | Requirement | Enforced / verified by |
+| - | ----------- | ---------------------- |
+| Q1 | When `kinds` is non-empty, a provider **MUST NOT** return a frame whose `kind` is outside it. Empty `kinds` means any kind. A provider serving none of the requested kinds returns zero frames or replies `unsupported_kind`. | `kinds-filter` conformance check |
+| Q2 | When `as_of` is present, a provider **MUST NOT** return a frame whose half-open valid-time window `[valid_from, valid_to)` excludes it (an absent bound is unbounded; a frame with neither bound is eligible). A provider with nothing valid at the pin returns zero frames. `recorded_at` is not constrained. | `as-of-temporal` conformance check; `ignore-as-of`, `ignore-valid-to` witnesses |
+| E1 | A host **MUST NOT** populate `query.embedding` unless its embedding fingerprint is **exactly equal** to the provider's `capabilities.embeddings_fingerprint`. A provider given a vector whose length contradicts its declared dimension **SHOULD** reply `bad_request`. | host contract; the reference host never populates `query.embedding` |
 
 ### Frame validity
+
+SPEC.md §6, including provenance attestation (§6.5) and what `score` means
+(§6.6).
 
 | # | Requirement | Enforced / verified by |
 | - | ----------- | ---------------------- |
 | F1 | Every frame's `score` **MUST** be in the range `[0, 1]`. | `frame-validity` conformance check; `ContextFrame::has_valid_score()` |
 | F2 | Every frame's `title` **MUST** be non-empty. | `frame-validity` conformance check |
 | F3 | Every frame's `citation_label` **MUST** be non-empty. | `frame-validity` conformance check |
+| F4 | `valid_from`, `valid_to`, `recorded_at`, and `as_of` **MUST** match `YYYY-MM-DDTHH:MM:SS(.f+)?Z`. | `frame-validity` conformance check |
+| F5 | Provenance of kind `file` **MUST** carry a digest matching `sha256:<64 lowercase hex>`. | `frame-validity` conformance check |
+| F6 | A `ProvenanceAttestation` **MUST** be detached: never inside the frame it signs, nor inside any hash preimage the spec defines. | `attestation` conformance check |
+| F7 | An attestation's `signed_commitment` **MUST** be the `sha256:` rendering of a commitment computed exactly as SPEC.md §6.5.2 or §6.5.3 specifies. | `attestation` conformance check |
+| F8 | A verifier that does not recognise an attestation's `algorithm` **MUST** report it as uncheckable and **MUST NOT** treat the frame as attested. | `attestation` conformance check |
+| F9 | A host **MUST NOT** reject or drop a frame only because it carries an attestation the host cannot verify. The frame is treated as unattested. | `attestation` conformance check |
+| F10 | `score` is provider-local and ordinal. A host **MUST NOT** apply a cross-provider `score` threshold or present a raw `score` as a cross-provider relevance measure. Ordering frames from different providers by raw `score` is the host's own documented policy, never a protocol guarantee. | host composition |
+| F11 | An attestation **MUST** travel beside the frames it covers, in the result's `frame_attestations` / `result_attestation`, never as a member of a `ContextFrame`. A `frame_attestations` entry **MUST** name the full *(provider id, frame id, `content_digest`)* identity of a frame the same result carries. | `attestation_wire` suite; envelope schema |
+| F12 | A `result_attestation`'s `signed_commitment` **MUST** be the SPEC.md §6.5.3 Merkle root over exactly the frames in `result.frames`, in canonical order. | `attestation_wire` suite; `contextgraph_types::attest::result_set_root` |
+| F13 | An `inclusion_proof` is optional, and when present **MUST** recompute the `result_attestation` root. A host keeping a strict subset of a signed result set **MUST** derive the proofs for the frames it keeps before dropping the rest. | `attestation_wire` suite; host composition |
+| F14 | A provider that signs a frame **MUST** populate that frame's `content_digest`. | `attestation` suite |
+| F15 | A verifier **MUST** distinguish an attestation that binds content from one that does not, and **MUST NOT** report the second as the first. | `attestation` suite; `AttestationVerdict::ValidIdentityOnly` |
+| F16 | A host **SHOULD** surface that distinction to whoever reads the frame. | host composition |
+| F17 | A `range` on `file` provenance **MUST** be a `line-range` (`L<start>` or `L<start>-<end>`, SPEC.md §6.2.1) whose end is not before its start, and its digest **MUST** cover exactly the bytes §6.2.1 addresses. A verifier **MUST** report any other `range`, or one starting past the resource's last line, as unverifiable — never as the whole resource, never as a mismatch. | `frame-validity` conformance check (grammar); `provenance-fixture-consistency` (bytes); `contextgraph_types::LineRange`; [`tests/vectors/range-vectors.json`](../tests/vectors/range-vectors.json) |
+| F18 | A verifier **MUST NOT** present an attestation member outside the signed preimage — `attester_id`, `issued_at`, `key_id`, `algorithm` — as covered by the signature; a host **SHOULD** mark `attester_id` and `issued_at` as unverified wherever it surfaces them (SPEC.md §6.5.2). | `contextgraph_types::attest` regression tests; `contextgraph_host::trust::AttestationState::unverified_attester_id` |
+
+### Representations
+
+SPEC.md §6.4. The field-level tour is [Frame representations](#frame-representations)
+above.
+
+| # | Requirement | Enforced / verified by |
+| - | ----------- | ---------------------- |
+| P1 | A `full` frame **MUST** carry `content` and **MUST NOT** carry `content_ref`, `transform`, or `canonical_content_hash`. | `frame-validity` conformance check |
+| P2 | A `compact` frame **MUST** carry `content`, `content_digest`, `canonical_content_hash`, `transform`, and `content_ref`. | `frame-validity` conformance check |
+| P3 | A `reference` frame **MUST** carry `content_ref` and `canonical_content_hash`, and **MUST NOT** carry `content` (not even `""`), `content_digest`, or `transform`. | `frame-validity` conformance check |
+| P4 | `token_cost` is the cost of the **inline** rendering only: `0` for a `reference` frame, the distilled bytes' cost for a `compact` one. The full-source cost belongs in the optional `canonical_token_cost`. | `budget-honesty` conformance check |
+| P5 | A host **MUST NOT** request a representation the provider did not advertise in `capabilities.representations`. A provider asked for one **SHOULD** reply `unsupported_representation`, or fall back to `full`. | capability negotiation |
 
 ### Budget honesty
+
+SPEC.md §7.
 
 | # | Requirement | Enforced / verified by |
 | - | ----------- | ---------------------- |
 | B1 | The sum of `token_cost` across a provider's returned frames **MUST NOT** exceed the query's `max_tokens`. | `budget-honesty` conformance check; `ContextQueryResult::respects_budget` |
 | B2 | A host **MUST** drop (with a loud report) the frames of any provider that violates B1, rather than silently truncating them. | `contextgraph-host::Host` budget audit |
+| B3 | `token_cost` **MUST** equal `ceil(utf8_byte_length(content) / 4)`. | `budget-honesty` conformance check |
+| B4 | The number of returned frames **MUST NOT** exceed `max_frames`. | `budget-honesty` conformance check; host budget audit |
+| UR1 | A host **MUST** be able to produce a usage report for any query it executed. Its `budget_consumed` equals the summed `token_cost` of the served frames it reports, and it references those frames by `FrameId`. | `contextgraph-host::FanOut::usage_report`; `host-composition-audit` host check |
+
+### Graph
+
+SPEC.md §8.
+
+| # | Requirement | Enforced / verified by |
+| - | ----------- | ---------------------- |
+| G1 | Every `Relation` **MUST** carry a non-empty `display_name`. | `frame-validity` conformance check |
+| G2 | `target_uri` **MUST** be a non-empty URI. | `frame-validity` conformance check |
+| G3 | A provider declaring `capabilities.graph` **SHOULD** boost frames within a few relation hops of a query `anchor`. | `anchor-relevance` conformance check |
+| G4 | A frame is anchored when its `uri`, or one of its `relations[].target_uri`, equals an anchor. A provider declaring `capabilities.graph` and given a non-empty `anchors` **MUST** return at least one anchored frame when it has one, and **SHOULD** rank anchored frames first. | `anchor-relevance` conformance check |
+
+### Context reuse
+
+The full text lives in [`SPEC.md`](../SPEC.md) §6.3 (frame identity) and §9
+(verification). The companion [Context reuse](./context-reuse.md) page explains
+them, but it numbers its own tables differently. The ids here are SPEC.md's.
+
+| # | Requirement | Enforced / verified by |
+| - | ----------- | ---------------------- |
+| D1 | `content_digest`, when present, **MUST** match `sha256:<64 lowercase hex>`. | `frame-validity` conformance check |
+| D2 | Two frames with the same *(provider id, frame id, `content_digest`)* **MUST** be treated as the same content. A host **MAY** dedup or reuse on that basis. | host composition; `contextgraph-host::compose_context` |
+| D3 | A frame with no `content_digest` **MUST NOT** be reused unchecked across queries. A host re-queries or re-verifies it. | host composition; `Host::verify_frames` fallback |
+| D4 | A `content_digest` is a claim about the *inline* bytes only. A host reusing a frame's body **SHOULD** confirm the identity still holds via `verify` first. | `verify-honesty` conformance check |
+| D5 | *Provider id* in a frame identity is the provider's handshake-declared `provider.name` on the wire (`verify`, `verified`, `frame_attestations`, the attestation commitment) and the host's local id inside a host (composition, dedup, reuse, usage reports, attribution). A host **MUST** translate at the connection boundary, resolving an echoed identity by the connection it arrived on, never by looking a declared name up across providers. | `Host::verify_frames`; `verify-honesty` conformance check (provider registered under a differing local id) |
+| V1 | A `verify` request **MUST** carry frame identities only, never bodies. A host **SHOULD** include only identities that carry a `content_digest`. | `VerifyRequest` shape; `verify_wire` no-bodies test |
+| V2 | A provider declaring `capabilities.verify` **MUST** answer a `verify` with a `verified` reply. An identity that comes back with no verdict **MUST** be treated as `unknown`. | `verify-honesty` conformance check; `--misbehave rubber-stamp-verify` and `hollow-verify` witnesses |
+| V3 | A verdict is `valid`, `stale`, `gone`, or `unknown`. A host **MUST** reuse a held frame body **only** on `valid`. | `Verdict::permits_reuse`; `Host::verify_frames` default-deny partition |
+| V4 | A `stale` verdict **MAY** carry a `replacement_digest`, never a body. A host **MUST NOT** keep serving its stored copy of a `stale` or `gone` frame. | `verify-honesty` conformance check; `VerifyResponse` shape |
+| V5 | A `verify` request **MUST** carry the recipient's declared `provider.name` as each identity's `provider_id`. A provider **MAY** answer `unknown` for an identity naming another provider id, and **MUST NOT** reject the whole request on that basis. | `Host::verify_frames`; `verify-honesty` conformance check |
+
+### Errors
+
+SPEC.md §10.
+
+| # | Requirement | Enforced / verified by |
+| - | ----------- | ---------------------- |
+| X1 | The error `code` vocabulary is open. An unrecognised code **MUST** be treated as `internal`. | `contextgraph-types::ErrorCode::Unknown` (reacts as `Internal`) |
+| X2 | An absent `code` **MUST** be treated as `internal`. | `contextgraph-host::HostError` (a missing code is read as `ErrorCode::Internal`) |
 
 ### Robustness
+
+SPEC.md §11.
 
 | # | Requirement | Enforced / verified by |
 | - | ----------- | ---------------------- |
 | R1 | A provider **MUST NOT** crash on a malformed line or a bad request. It **SHOULD** reply `error` instead. | `malformed-input-tolerance` conformance check (stdio) |
 | R2 | A provider **MUST** tear down cleanly on `shutdown` (stdio: exit; HTTP: no further requests expected). | `shutdown-clean` conformance check |
-| R3 | Frame `content` **MUST** be treated as untrusted data by the host — delimited as quoted material, never executed as instructions. | `contextgraph-host` host contract |
+| R3 | Frame `content` **MUST** be treated as untrusted data by the host — delimited as quoted material, never executed as instructions. | `contextgraph-host` host contract; `host-content-quoting` and `host-composition-audit` host checks |
 
 A host realizing R3 **SHOULD** follow the reference composition module
 ([Composing frames into a prompt](./composing-frames-into-a-prompt.md);
@@ -401,23 +503,26 @@ preamble, and an audit record explaining every included and excluded frame. It i
 a `SHOULD`, not a `MUST` — a host may compose differently — and it is checked by
 host-conformance's `host-content-quoting` and `host-composition-audit` checks.
 
-### Context reuse
+### Forward compatibility
 
-The full text for these lives in the companion [Context reuse](./context-reuse.md)
-page and in [`SPEC.md`](../SPEC.md) §§4, 6.3, 9; they are indexed here for
-convenience.
+SPEC.md §13. These are what let a `1.0` peer and a later `1.x` peer interoperate.
 
 | # | Requirement | Enforced / verified by |
 | - | ----------- | ---------------------- |
-| D1 | Frames sharing a `FrameId` **MUST** have identical content bytes; changing content **MUST** change `content_digest`. | provider contract; `verify` conformance check |
-| D2 | A host composing a frame set **MUST** emit frames in canonical `FrameId` order, independent of arrival order, and **MUST NOT** let `score`/`token_cost` affect the rendered bytes. | `contextgraph-host::compose_context` |
-| UR1 | A host **MUST** be able to produce a usage report for any query it executed, whose consumed total equals the summed `token_cost` of the served frames it reports. | `contextgraph-host::FanOut::usage_report`; `host-composition-audit` host check |
-| C5 | A provider **MUST** declare its egress scopes (`egress_scopes`) truthfully and consistently with `data_flow.egress`; an off-machine scope alongside `egress: false` is a conformance failure. | `consent-scope` conformance check |
-| C6 | A host **MUST** reject a frame whose provider declares an egress scope with no live matching [consent receipt](./context-reuse.md#3-consent-scopes-and-receipts), with a typed error, before transmitting the query. | `ConsentStore` scope gate |
-| V1 | A provider advertising `verify` **MUST** answer honestly by comparing digests: `valid` when the presented digest matches what it currently serves, `stale` when it differs on a frame it still serves. It **MUST NOT** answer `valid` for content bytes it is not serving. | `verify-honesty` conformance check |
-| V2 | A host **MUST** keep reusing a held frame only on an explicit `valid`; `stale`, `gone`, `unknown`, and a missing verdict all evict it. | `contextgraph-host::Host::verify_frames` default-deny partition |
-| V3 | A host **MUST NOT** send `context/verify` to a provider that does not advertise `capabilities.verify`, and **MUST** fall back to re-querying those frames. | `Host::verify_frames` capability gate; `ContextProvider::verify` default |
-| V4 | Neither a verify request nor its response **MAY** carry frame bodies; a `stale` verdict carries at most a replacement **digest**. | `VerifyRequest`/`VerifyResponse` shapes; `verify_wire` no-bodies test |
+| U1 | A receiver **MUST** ignore an object member it does not recognise, anywhere in a message, and **MUST NOT** reject the message for it. | `contextgraph-types` deserialization (unknown members ignored); `extension` module |
+| U2 | `FrameKind` is the base vocabulary of a major family. A host receiving an unrecognised `kind` **MUST** treat the frame as opaque evidence, **MUST NOT** fail to deserialise or reject it, and **MUST** preserve the `kind` string verbatim if it re-emits the frame. Open vocabularies (`rel`, error `code`, `egress_scope`) grow without a version bump, and a receiver **MUST NOT** reject an unknown value in any of them. | `contextgraph-types::FrameKind` (open, round-trips unknown kinds; ADR 0011) |
+| U3 | Names containing `:` are reserved for namespacing. A vendor-specific `rel`, `egress_scope`, or error `code` **MUST** be written `vendor:name`. | spec contract; open vocabulary types in `contextgraph-types` |
+| U4 | A field is never repurposed within `contextgraph/1`. A superseded field is deprecated and stays parseable for the life of the family. Deleting or redefining one needs a new major family. | `GOVERNANCE.md` change process; `docs/stability.md` |
+
+### Attribution
+
+SPEC.md §14.
+
+| # | Requirement | Enforced / verified by |
+| - | ----------- | ---------------------- |
+| A1 | A frame's attribution handle **is** its `FrameId`. An implementation **MUST NOT** mint a separate attribution id. | `contextgraph-types::attribution` |
+| A2 | A host reporting attribution **MUST** report `selected`, `rendered`, and `cited` as independent observations. `cited` **MUST** mean the output referred to the frame, never an inference that the frame influenced it. | `contextgraph-types::attribution` |
+| A3 | An attribution record **MUST** be reconcilable: `cited` ⇒ `rendered` ⇒ `selected`, naming a frame the paired usage report billed. | `AttributionReport::is_reconcilable` |
 
 ## Version strings
 

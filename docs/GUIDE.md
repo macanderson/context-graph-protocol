@@ -36,11 +36,16 @@ style guide.
 2. **Budgets are checked, not trusted.** A provider says "this costs N tokens."
    The host recomputes that cost from the real bytes of content
    (`tokens = ceil(bytes / 4)`, exact match, no wiggle room). If the numbers
-   don't match, the frames get dropped. See [ADR 0003](#adr-0003).
+   don't match, the frames get dropped. See [ADR 0003](./adr/0003-canonical-token-accounting.md).
 
 3. **Data doesn't leave the machine without a human saying yes.** A provider that
-   sends data somewhere else (a cloud API, a third-party index) cannot be used
-   until a person explicitly consents. That consent is recorded, not assumed.
+   says it sends data somewhere else (a cloud API, a third-party index), and any
+   provider reached over HTTP, cannot be used until a person explicitly
+   consents. That consent is recorded, not assumed. The one thing a host cannot
+   see is a local (stdio) provider quietly opening its own network connection,
+   so for those the provider's word is all there is. Lying breaks the spec, and
+   operators confine providers they don't trust (see
+   [ADR 0024](./adr/0024-consent-binds-what-the-transport-can-see.md)).
 
 4. **"Conformant" is a test you run, not a claim you make.** We ship a test suite
    (`contextgraph-inspect`) that actively tries to break each rule above. A
@@ -71,17 +76,19 @@ style guide.
 
 10. **The protocol stays small.** CGP only does context retrieval. It does not
     grow into tool-calling, task orchestration, or app-specific features. See
-    [ADR 0007](#adr-0007) for why "the big app-specific bundle" and "the small
-    protocol frame" are kept strictly separate.
+    [ADR 0007](./adr/0007-protocol-product-boundary.md) for why "the big
+    app-specific bundle" and "the small protocol frame" are kept strictly
+    separate.
 
 ### Contribution conventions (the short version)
 
 - Commit messages: [Conventional Commits](https://www.conventionalcommits.org/),
   scoped to the crate you touched (e.g. `feat(contextgraph-types): ...`).
 - Sign off commits (`git commit -s`) — this is DCO, not a CLA. You keep your
-  copyright.
+  copyright. CI checks every commit a pull request adds
+  ([ADR 0025](./adr/0025-the-dco-is-enforced-not-requested.md)).
 - One logical change per PR. CI must be green (`fmt`, `clippy -D warnings`,
-  `test`). Include a test that proves the change (a "witness"), or say why one
+  `test`, `rustdoc -D warnings`). Include a test that proves the change (a "witness"), or say why one
   isn't possible.
 - Update docs in the same PR as the code change.
 - Dual-licensed MIT OR Apache-2.0.
@@ -89,7 +96,7 @@ style guide.
   link to `raw.githubusercontent.com` or the prefixes this repo actually
   publishes to the public site (`/schema/`, `/schema/v1/`, `/spec/`).
   `.github/scripts/check-deploy-hygiene.py` enforces it. See
-  [ADR 0008](#adr-0008), amended by ADR 0013 for the schemas' `$id`.
+  [ADR 0008](./adr/0008-deploy-topology-and-advertised-urls.md), amended by [ADR 0013](./adr/0013-schema-identity-on-a-branded-versioned-url.md) for the schemas' `$id`.
 
 ---
 
@@ -134,7 +141,7 @@ A **frame** ("ContextFrame") is one piece of context. It always has:
 - **citation label** — human-readable, always present.
 - **relations** — optional graph edges to other frames.
 
-A frame can carry its content three ways (see [ADR 0005](#adr-0005)):
+A frame can carry its content three ways (see [ADR 0005](./adr/0005-frame-representations.md)):
 
 - **full** — the whole thing, inline.
 - **compact** — a shrunk/summarized version inline, plus a way to fetch the original.
@@ -184,7 +191,7 @@ code, start here.
 - `ContextUse`, `AttributionReport` (in `attribution.rs`) — did a frame get selected, actually shown to the model, and actually cited? Separate from cost — this answers "did it matter?"
 - `token.rs` — the token-cost formula (`ceil(bytes / 4)`).
 
-**The optional lifecycle-record profile** (durable memory, not part of frozen 1.0 core — see [ADR 0006](#adr-0006) and the [profile doc](./profiles/context-exchange-provider.md)):
+**The optional lifecycle-record profile** (durable memory, not part of frozen 1.0 core — see [ADR 0006](./adr/0006-prompt-ingestion-as-a-local-provider.md) and the [profile doc](./profiles/context-exchange-provider.md)):
 - `ContextRecord`, `RecordBody` — an immutable, hash-addressed note: one of 12 kinds
   (`observation`, `knowledge`, `memory`, `directive`, `record_proposal`,
   `evidence`, `artifact_contract`, `contract_validation`, `outcome_assessment`,
@@ -202,6 +209,14 @@ code, start here.
 Full text lives in [`docs/adr/`](./adr/). Every entry below is **Accepted**
 unless the row says it was superseded.
 Read the full ADR before changing anything it covers.
+A new ADR takes the next free number as `docs/adr/NNNN-<slug>.md` and a row in
+this table. `python3 .github/scripts/check-adr-numbers.py --against origin/main`
+checks both against the merge with the current base, because two open pull
+requests can pick the same number and each look fine on its own (#123).
+
+Adding an ADR? Add its row here in the same PR, in number order.
+`.github/scripts/check-adr-log.py` fails CI when a file in `docs/adr/` has no
+row, a row names no file, or two ADRs share a number.
 
 | # | Title | One-line takeaway |
 |---|---|---|
@@ -216,13 +231,20 @@ Read the full ADR before changing anything it covers.
 | [0010](./adr/0010-provenance-attestation.md) | Provenance attestation | A digest only proves nothing changed since someone wrote it down. A frame's provenance now folds into a signed hash chain bound to the frame's identity, so a third party can check a citation offline. |
 | [0011](./adr/0011-open-frame-kind-vocabulary.md) | `FrameKind` is an open vocabulary | A provider can name a frame kind this crate has never heard of and the frame still parses, so a new kind is an additive change rather than a wire break. |
 | [0012](./adr/0012-sdk-version-pins-share-a-major.md) | A version pin names its manifest's major | The scaffolder's default SDK pins had drifted a whole major behind the packages they name, invisibly, because every CI job overrides them with a local path. A guard now compares them. |
-| [0013](./adr/0013-schema-identity-on-a-branded-versioned-url.md) | Schema identity on a branded, versioned URL | The JSON Schemas are now known by a URL on the protocol's own domain, numbered by wire family (`/schema/v1/`) rather than tracking a git branch. The old URLs keep working and implementers need do nothing. |
+| [0013](./adr/0013-schema-identity-on-a-branded-versioned-url.md) | Schema identity on a branded, versioned URL | The JSON Schemas are now known by a URL on the protocol's own domain, numbered by wire family (`/schema/v1/`) rather than tracking a git branch. The old URLs keep working and implementers need do nothing. Amended by #111: the reference vectors are published beside them under `/schema/v1/`. |
 | [0014](./adr/0014-attestations-on-the-wire.md) | Attestations on the wire | A signed answer finally has somewhere to put the signature: beside the frames on the `frames` result, never inside a frame. Inclusion proofs are optional to send, and a host that keeps only part of a signed answer has to save them before it drops the rest. |
 | [0015](./adr/0015-cross-provider-ranking-strategies.md) | Cross-provider ranking is the host's policy | Two providers returning `0.8` are not making the same claim, so any ordering across them is a decision the host owns and must be able to name. One seam, three shipped strategies, and no pretence that the protocol decided it. |
 | [0016](./adr/0016-attestation-trust-roots.md) | Trust roots for provenance attestation | A host learns a provider's signing key from the person running it, the same way `ssh` learns a host key — no registry, no directory, nothing you have to be part of an organization to reach. A signature it cannot check makes the evidence *unsigned*, never missing. |
 | [0017](./adr/0017-record-hash-and-record-attestation.md) | `record_hash` and `RecordAttestation` | The record layer's identity, implemented: RFC 8785 canonicalization with the record's own hash removed from the preimage, and a domain-separated Ed25519 signature over it. Says why JCS is right here and wrong at the frame layer. |
 | [0018](./adr/0018-signing-a-frame-requires-a-content-digest.md) | Signing a frame requires a content digest | A signature over a frame that declares no `content_digest` covers its name and its provenance and nothing it says, so the provider can serve different bytes tomorrow and the signature still verifies. The verifier now returns a separate verdict instead of calling it valid. |
 | [0019](./adr/0019-one-home-for-an-attestation.md) | One `FrameAttestation`, one wire home | Three types of that name and two wire places for one signature, with no rule for which wins when they disagree. The canonical type is the types crate's, the home is the result, and `handshake_ack.attester_keys` is written down as a construction anchor rather than a trust one. |
+| [0020](./adr/0020-provenance-range-grammar.md) | The `range` of `file` provenance is a published line grammar | Which bytes `L120-160` names was an unwritten convention, so a provider guessing differently got its honest digests reported as tampering. The grammar is now in the spec with reference vectors, an end past the last line clamps (the reference examples depend on it), and every other spelling is reserved. |
+| [0021](./adr/0021-attestation-metadata-outside-the-signature.md) | Attestation metadata stays outside the signature, and says so | An attestation's `attester_id` and `issued_at` can be rewritten in transit and the signature still verifies. The spec now says so and forbids presenting them as signed; whether a future major family should sign `issued_at` depends on first deciding what a verifier does with it. |
+| [0022](./adr/0022-as-of-is-a-point-in-window-predicate.md) | `as_of` is a point-in-window predicate | A query pinned to an instant gets only frames whose `[valid_from, valid_to)` window contains it — nothing not yet true, nothing no longer true. The conformance suite used to enforce half of that without the spec saying any of it; now the spec says all of it and the suite checks both halves. |
+| [0023](./adr/0023-frame-identity-names-two-provider-ids.md) | A frame identity names two provider ids | Every host knows a provider by the name the operator gave it and the name the provider gave itself. On the wire an identity carries the provider's own name, which is the only one it knows. Inside the host it carries the operator's, because anyone can claim any name. The host translates at the connection. |
+| [0024](./adr/0024-consent-binds-what-the-transport-can-see.md) | Consent binds what the transport can see | Over HTTP the host knows a query leaves the machine. Over stdio it sees a pipe, not the child's sockets. The README now claims only what is enforced, lying about egress is a MUST-level violation even though no one can detect it, confining a stdio child is left to the deployment, and the reference host's treatment of loopback HTTP as egress is policy rather than a bug. |
+| [0025](./adr/0025-the-dco-is-enforced-not-requested.md) | The DCO is enforced, not requested | Contributors were told their sign-off is what licenses their contribution, and nothing checked it, so most commits had none. A CI check now requires every commit a pull request adds to be signed off by its author (a bot's by the person behind it), from this change forward, without rewriting history. |
+| [0026](./adr/0026-versions-in-prose-and-the-go-sdk-tag.md) | Versions in prose, and the Go SDK's tag | A version written in a README could go stale where no manifest check could see it. Now it is held to its manifest like any other pin. The Go SDK has its own version line, because Go ties a module's major to its import path, so prose never pins a Go version nothing offline can check. |
 
 
 ---

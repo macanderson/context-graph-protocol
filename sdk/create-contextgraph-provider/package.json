@@ -3,6 +3,15 @@
   "version": "2.0.0",
   "description": "Scaffold a conformant Context Graph Protocol provider (TypeScript or Python) with contextgraph-inspect running in its CI from day one.",
   "license": "MIT OR Apache-2.0",
+  "homepage": "https://contextgraphprotocol.org",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/macanderson/context-graph-protocol.git",
+    "directory": "sdk/create-contextgraph-provider"
+  },
+  "bugs": {
+    "url": "https://github.com/macanderson/context-graph-protocol/issues"
+  },
   "type": "module",
   "bin": {
     "create-contextgraph-provider": "./index.js"

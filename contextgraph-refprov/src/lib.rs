@@ -16,7 +16,7 @@
 //! digest equal to the on-disk bytes a host re-reads at `uri`+`range`, `SPEC.md`
 //! §6.2). The kit then enforces the query contract on top: it filters by
 //! `kinds` (§Q1), sorts anchored frames first (§G4), drops content not yet true
-//! at an `as_of` pin (§6.1), respects `max_frames`/`max_tokens` with honest
+//! at an `as_of` pin (§5.3 Q2), respects `max_frames`/`max_tokens` with honest
 //! `truncated`/`dropped_estimate` (§B1/§B4), rejects a wrong-dimension query
 //! embedding (§E1), echoes correlation ids (§H4), and answers `context/verify`
 //! from the digests it actually served (§4).
@@ -46,7 +46,7 @@ pub const EMBEDDING_FINGERPRINT: &str = "contextgraph-reference/8/none";
 
 /// Provider identity plus the frame kinds it serves. The rest of the capability
 /// set is identical across the reference providers, so the kit fills it in
-/// ([`capabilities`]).
+/// (`capabilities`).
 pub struct ProviderConfig {
     /// Stable provider name, surfaced at the handshake.
     pub name: &'static str,
@@ -169,11 +169,16 @@ fn handle_query(
     if !query.anchors.is_empty() {
         frames.sort_by_key(|frame| !is_anchored(frame, &query.anchors));
     }
-    // §6.1: honor an `as_of` pin — content not yet true then is not returned.
-    // The timestamp profile is one spelling per instant, so a lexicographic
-    // compare on the UTC strings is a chronological one.
+    // §5.3 Q2: honor an `as_of` pin — return only frames whose half-open
+    // window `[valid_from, valid_to)` contains it: nothing not yet true, and
+    // nothing no longer true, at the pinned instant. Every timestamp this
+    // provider emits is whole-second §F4, so a lexicographic compare on the UTC
+    // strings is a chronological one here.
     if let Some(as_of) = query.as_of.as_deref() {
-        frames.retain(|frame| !frame.valid_from.as_deref().is_some_and(|vf| vf > as_of));
+        frames.retain(|frame| {
+            !frame.valid_from.as_deref().is_some_and(|vf| vf > as_of)
+                && !frame.valid_to.as_deref().is_some_and(|vt| vt <= as_of)
+        });
     }
 
     let (frames, truncated, dropped_estimate) =

@@ -188,6 +188,15 @@ impl Host {
     /// boundaries. When to re-verify is the host's policy (§4 gives informative
     /// guidance); the protocol's job is only to answer the question when asked.
     /// No frame body travels in either direction.
+    ///
+    /// `held` carries **host-local** identities — [`FrameId::provider_id`] is
+    /// the id each provider was registered under, as every other host surface
+    /// uses it. The request on the wire carries the provider's
+    /// handshake-declared `provider.name` instead, because that is the only
+    /// provider id the provider has ever seen, and each verdict is resolved
+    /// back to the local identity by the connection it arrived on (`SPEC.md`
+    /// §6.3 D5, §9 V5). The returned [`VerifyOutcome`] is in local identities,
+    /// exactly as passed in.
     pub async fn verify_frames(&self, held: &[FrameId]) -> VerifyOutcome {
         use futures_util::future::join_all;
 
@@ -243,7 +252,19 @@ impl Host {
             return outcome;
         }
 
-        let request = VerifyRequest::new(verifiable.clone());
+        // D5: translate at the connection boundary. `verifiable` is keyed on
+        // this host's local id; the provider has never seen that string, and a
+        // provider that checks the id against its own name (V5 lets it) would
+        // answer `unknown` to every entry. So the wire carries the name the
+        // provider declared at handshake, and each verdict is matched back
+        // below through the same substitution — never by looking the declared
+        // name up across providers, which H2 does not make unique.
+        let declared = provider.info().name.as_str();
+        let on_wire = |frame: &FrameId| FrameId {
+            provider_id: declared.to_string(),
+            ..frame.clone()
+        };
+        let request = VerifyRequest::new(verifiable.iter().map(on_wire).collect());
         let response = match tokio::time::timeout(
             self.per_provider_timeout,
             provider.verify(&request),
@@ -267,8 +288,10 @@ impl Host {
 
         for frame in verifiable {
             // Correlate by full identity, never by position. A provider that
-            // omits an answer gets `Unknown` — silence is not validity.
-            match response.verdict_for(&frame) {
+            // omits an answer gets `Unknown` — silence is not validity. The
+            // identity it echoes is the wire one, so match on that and record
+            // the local one.
+            match response.verdict_for(&on_wire(&frame)) {
                 Some(Verdict::Valid) => outcome.retained.push(frame),
                 Some(Verdict::Stale { replacement_digest }) => outcome.drop_one(
                     frame,
@@ -298,7 +321,7 @@ impl Host {
 
     /// [`query_provider`](Self::query_provider), plus what the host found when
     /// it checked the provider's attestations against its
-    /// [`TrustStore`](crate::TrustStore) (`SPEC.md` §6.5,
+    /// [`TrustStore`] (`SPEC.md` §6.5,
     /// [ADR 0016](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0016-attestation-trust-roots.md)).
     ///
     /// Returns the result exactly as the provider served it and one
@@ -783,7 +806,7 @@ pub struct ProviderOutcome {
     pub provider_id: String,
     pub result: ProviderResult,
     /// What the host found when it checked this provider's attestations
-    /// against its [`TrustStore`](crate::TrustStore) — one entry per accepted
+    /// against its [`TrustStore`] — one entry per accepted
     /// frame, including the frames no attestation covered (`SPEC.md` §6.5,
     /// [ADR 0016](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0016-attestation-trust-roots.md)).
     ///
@@ -819,7 +842,7 @@ pub enum ProviderResult {
         dropped_frames: usize,
     },
     /// The provider returned more frames than `max_frames` — a frame-count
-    /// overspend. Dropped whole and reported, symmetric to a [`BudgetLie`]
+    /// overspend. Dropped whole and reported, symmetric to a [`BudgetLie`](ProviderResult::BudgetLie)
     /// (SPEC.md §7, B4).
     FrameFlood {
         returned_frames: usize,
@@ -1514,6 +1537,13 @@ mod tests {
     use std::collections::HashMap as StdHashMap;
 
     /// A provider that answers `context/verify` from a scripted verdict table.
+    ///
+    /// Every instance declares the name `"verifier"` at "handshake" and is
+    /// registered under some other local id (`"docs"`, `"healthy"`, …), and it
+    /// answers `unknown` to any identity naming a provider id other than its
+    /// declared name — which `SPEC.md` V5 permits. So every verify test below
+    /// also witnesses D5: a host that put its local id on the wire would have
+    /// every frame dropped as `Unknown`.
     struct VerifyingProvider {
         id: String,
         capabilities: Capabilities,
@@ -1590,6 +1620,11 @@ mod tests {
                     .frames
                     .iter()
                     .filter_map(|frame| {
+                        // V5: an identity naming another provider is not one
+                        // this provider served, so it cannot vouch for it.
+                        if frame.provider_id != static_info().name {
+                            return Some(FrameVerdict::new(frame.clone(), Verdict::Unknown));
+                        }
                         self.verdicts
                             .get(&frame.frame_id)
                             .map(|verdict| FrameVerdict::new(frame.clone(), verdict.clone()))
@@ -1731,9 +1766,71 @@ mod tests {
         let asked = asked.lock().unwrap().clone();
         assert_eq!(
             asked,
-            vec![digested],
-            "only verifiable identities go on the wire"
+            vec![held("verifier", "digested", Some("sha256:a"))],
+            "only verifiable identities go on the wire, under the declared name"
         );
+    }
+
+    #[tokio::test]
+    async fn a_verify_request_carries_the_declared_name_and_verdicts_resolve_to_the_local_id() {
+        // D5/V5. The provider is registered as `docs` and declares `verifier`.
+        // The host holds local identities; the wire must carry the declared
+        // name, since `docs` is a string the provider has never seen; and the
+        // outcome must come back in the local identities the caller passed.
+        let mut host = Host::new();
+        let provider = VerifyingProvider::new(
+            "docs",
+            true,
+            &[("fresh", Verdict::Valid), ("gone", Verdict::Gone)],
+        );
+        let asked = provider.asked.clone();
+        host.register(Box::new(provider));
+        assert_ne!(
+            host.provider("docs").unwrap().info().name,
+            "docs",
+            "the witness needs a local id that differs from the declared name"
+        );
+
+        let fresh = held("docs", "fresh", Some("sha256:a"));
+        let gone = held("docs", "gone", Some("sha256:b"));
+        let outcome = host.verify_frames(&[fresh.clone(), gone.clone()]).await;
+
+        let asked = asked.lock().unwrap().clone();
+        assert!(
+            asked.iter().all(|frame| frame.provider_id == "verifier"),
+            "every identity on the wire must name the declared provider: {asked:?}"
+        );
+        assert_eq!(
+            outcome.retained,
+            vec![fresh],
+            "resolved back to the local id"
+        );
+        assert_eq!(outcome.drop_reason(&gone), Some(&DropReason::Gone));
+    }
+
+    #[tokio::test]
+    async fn two_providers_declaring_one_name_verify_independently() {
+        // D5: the declared name is resolved per connection, never looked up
+        // across providers, so two configured providers that both declare
+        // `verifier` cannot answer for each other's frames. Each is asked only
+        // about its own, and each verdict lands on the right local identity.
+        let mut host = Host::new();
+        let left = VerifyingProvider::new("left", true, &[("same-id", Verdict::Valid)]);
+        let right = VerifyingProvider::new("right", true, &[("same-id", Verdict::Gone)]);
+        let (left_asked, right_asked) = (left.asked.clone(), right.asked.clone());
+        host.register(Box::new(left));
+        host.register(Box::new(right));
+
+        let from_left = held("left", "same-id", Some("sha256:a"));
+        let from_right = held("right", "same-id", Some("sha256:a"));
+        let outcome = host
+            .verify_frames(&[from_left.clone(), from_right.clone()])
+            .await;
+
+        assert_eq!(outcome.retained, vec![from_left]);
+        assert_eq!(outcome.drop_reason(&from_right), Some(&DropReason::Gone));
+        assert_eq!(left_asked.lock().unwrap().len(), 1);
+        assert_eq!(right_asked.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]

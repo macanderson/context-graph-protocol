@@ -83,9 +83,10 @@ pub struct ProviderInfo {
 /// `subscribe` were removed in the pre-freeze sweep because neither had a wire
 /// method, a host API, a schema entry, or a conformance check — a provider
 /// could declare a capability no host on earth could use. See
-/// [ADR 0004](../../docs/adr/0004-dead-capability-surface.md), and the design
-/// sketches under `docs/sketches/` that keep both doors open for a 1.x
-/// additive minor.
+/// [ADR 0004](../../docs/adr/0004-dead-capability-surface.md), which also
+/// records why both doors stay open for a 1.x additive minor: a write method
+/// once a provider needs one, and push invalidation as a notification (an
+/// envelope with no `id`, ADR 0002) beside pull-based `context/verify`.
 ///
 /// Unknown fields are ignored on deserialization, so a provider still emitting
 /// the removed flags handshakes successfully — the removal breaks the Rust API,
@@ -115,7 +116,7 @@ pub struct Capabilities {
     ///
     /// Format: `<model-id>/<dimensions>[/<normalization>]`, e.g.
     /// `bge-small-en-v1.5/384/l2`. Matching is exact — see
-    /// [`embedding_fingerprints_match`](crate::embedding_fingerprints_match)
+    /// [`embedding_fingerprints_match`]
     /// and `SPEC.md` §E1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embeddings_fingerprint: Option<String>,

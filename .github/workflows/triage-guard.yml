@@ -1,46 +1,68 @@
-# Triage separation of duties (SCR-005): issue creators get exactly one
-# label — `triage`. Priority labels come only from the triage identity.
-# Invariant: every open issue carries a P-label or `triage`, never neither,
-# never both.
+# Triage separation of duties (SCR-005,
+# https://github.com/macanderson/oxagen/blob/main/.oxagen/rules/ctx.scr.005-triage-separation.toml):
+# issue creators get exactly one label — `triage`. Priority (`P0`, `P1`, …)
+# and size (`size/*`) labels come only from the triage identity.
+# Invariant: every open issue carries a priority or `triage`, never neither.
+#
+# The decision lives in .github/scripts/triage-guard.cjs, a pure function
+# with its own tests (.github/scripts/tests/triage-guard.test.cjs, run by
+# CI's `guard-self-tests` job). This file only does the GitHub I/O.
 name: triage-guard
 on:
   issues:
     types: [opened, labeled]
 permissions:
+  contents: read # the sparse checkout of .github/scripts
   issues: write
 jobs:
   guard:
     runs-on: ubuntu-latest
     steps:
+      # `issues` events run on the default branch, so this is main's code.
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
       - uses: actions/github-script@v7
         env:
-          # Logins allowed to set P-labels. `macanderson` is the interim
-          # triage authority until the dedicated triage-agent identity
-          # stands up (SCR-005, the interim-authority clause in
+          # Logins allowed to set priority and size labels. `macanderson` is
+          # the interim triage authority until the dedicated triage-agent
+          # identity stands up (SCR-005, the interim-authority clause in
           # https://github.com/macanderson/oxagen/blob/main/.oxagen/rules/ctx.scr.005-triage-separation.toml).
           # Remove it then.
           TRIAGE_LOGINS: triage-bot macanderson
         with:
           script: |
+            const { decide, TRIAGE } = require(
+              `${process.env.GITHUB_WORKSPACE}/.github/scripts/triage-guard.cjs`);
             const issue = context.payload.issue;
-            const P = /^P[0-4]$/;
-            const allowed = process.env.TRIAGE_LOGINS.split(/\s+/);
-            const names = issue.labels.map(l => (typeof l === 'string' ? l : l.name));
-            if (context.payload.action === 'opened'
-                && !names.includes('triage')
-                && !names.some(n => P.test(n))) {
-              await github.rest.issues.addLabels({
-                ...context.repo, issue_number: issue.number, labels: ['triage'] });
+            const target = { ...context.repo, issue_number: issue.number };
+            const nameOf = (l) => (typeof l === 'string' ? l : l.name);
+            // `labeled` reads the labels fresh: several `labeled` events for
+            // one issue run concurrently, and the payload is a snapshot.
+            const labels = context.payload.action === 'labeled'
+              ? (await github.paginate(github.rest.issues.listLabelsOnIssue,
+                  { ...target, per_page: 100 })).map(nameOf)
+              : issue.labels.map(nameOf);
+            const d = decide({
+              action: context.payload.action,
+              sender: context.payload.sender.login,
+              allowed: process.env.TRIAGE_LOGINS.split(/\s+/).filter(Boolean),
+              labels,
+              label: context.payload.label && context.payload.label.name,
+            });
+            core.info(`decision: ${JSON.stringify(d)}`);
+            for (const name of d.remove) {
+              try {
+                await github.rest.issues.removeLabel({ ...target, name });
+              } catch (e) {
+                // Already gone (a concurrent run removed it): nothing to do.
+                if (e.status !== 404) throw e;
+              }
             }
-            if (context.payload.action === 'labeled'
-                && P.test(context.payload.label.name)
-                && !allowed.includes(context.payload.sender.login)) {
-              await github.rest.issues.removeLabel({
-                ...context.repo, issue_number: issue.number,
-                name: context.payload.label.name });
-              await github.rest.issues.addLabels({
-                ...context.repo, issue_number: issue.number, labels: ['triage'] });
-              await github.rest.issues.createComment({
-                ...context.repo, issue_number: issue.number,
-                body: 'Priority labels are assigned only by the triage agent (SCR-005). Re-queued as `triage`.' });
+            if (d.addTriage) {
+              await github.rest.issues.addLabels({ ...target, labels: [TRIAGE] });
+            }
+            if (d.comment) {
+              await github.rest.issues.createComment({ ...target, body: d.comment });
             }

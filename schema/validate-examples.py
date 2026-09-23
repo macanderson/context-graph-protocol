@@ -34,6 +34,10 @@ The four example surfaces are deliberately different in kind:
     to the spec's own schema.
   * each schema's `$id` is its public identity — pinned because a schema that
     resolves to the wrong document is worse than one that 404s.
+
+`examples/README.md` is held to more than the schema: its annotated session
+must quote the transcript line for line (section 8), because a walkthrough a
+provider author diffs against is wrong in ways a schema cannot see (#144).
 """
 import hashlib
 import json
@@ -283,32 +287,71 @@ RECORD_SCHEMA = json.loads(RECORD_SCHEMA_SOURCE.read_text())
 ATTESTATION_FIXTURE = "record-attestation.json"
 ATTESTATION_KEY_FIXTURE = "record-attestation-key.json"
 HASH_VECTORS_FIXTURE = "record-hash-vectors.json"
-# Everything else in tests/fixtures/ is a record named for its record_kind. An
-# explicit list rather than a naming convention, so a new non-record fixture is
-# a deliberate entry here instead of something a glob quietly swallows.
+# The fixtures in tests/fixtures/ that are not records. Each one is checked by
+# a section of its own below, against the rule that fits it.
 NON_RECORD_FIXTURES = {
     ATTESTATION_FIXTURE,
     ATTESTATION_KEY_FIXTURE,
     HASH_VECTORS_FIXTURE,
 }
 
+# Which files are records is decided by the convention tests/fixtures/README.md
+# states: "the filename stem **is** the `record_kind`". The script used to
+# glob every `*.json` and validate it as a record unless a hand-kept list
+# excluded it. So any other JSON placed there failed with a record-schema
+# error that said nothing about the real problem (#126).
+#
+# Now a fixture is a record if and only if its stem is a `record_kind` the
+# schema declares. A file listed above is not a record, and its own section
+# checks it. Anything else fails, with a message that names the convention.
+# The kinds come from the schema's `recordKind` enum, so a new kind is picked
+# up when the schema grows. Nobody has to remember to add it here as well.
+RECORD_KIND_DOC = "tests/fixtures/README.md: the filename stem is the record_kind"
+record_kinds = set(RECORD_SCHEMA.get("$defs", {}).get("recordKind", {}).get("enum", []))
+check("the record schema declares its record kinds", bool(record_kinds))
+if not record_kinds:
+    print("        no $defs.recordKind.enum in the record schema — without it no")
+    print("        fixture can be recognised as a record. Did the schema's shape change?")
+
 fixtures_dir = ROOT / "tests" / "fixtures"
-record_fixtures = sorted(
-    p for p in fixtures_dir.glob("*.json") if p.name not in NON_RECORD_FIXTURES
-)
+record_fixtures, strays = [], []
+for path in sorted(fixtures_dir.glob("*.json")):
+    if path.stem in record_kinds:
+        record_fixtures.append(path)
+    elif path.name not in NON_RECORD_FIXTURES:
+        strays.append(path.name)
+
 if not record_fixtures:
     check("tests/fixtures holds lifecycle record examples", False)
     print("        no record fixtures found — did the fixture home move?")
 
+check("every JSON file in tests/fixtures is a record kind or a declared non-record",
+      not strays)
+for name in strays:
+    print(f"        tests/fixtures/{name}: '{name.removesuffix('.json')}' is not a record_kind")
+if strays:
+    print(f"        convention: {RECORD_KIND_DOC}.")
+    print("        remedy: rename it to its record_kind, move a non-record file to a")
+    print("        directory of its own (as tests/vectors/ did), or declare it in")
+    print("        NON_RECORD_FIXTURES here, beside the section that checks it.")
+
+missing_kinds = sorted(record_kinds - {p.stem for p in record_fixtures})
+check("every record_kind the schema declares has a fixture", not missing_kinds)
+for kind in missing_kinds:
+    print(f"        tests/fixtures/{kind}.json is missing")
+
 for path in record_fixtures:
     try:
-        jsonschema.validate(json.loads(path.read_text()), RECORD_SCHEMA)
+        record = json.loads(path.read_text())
+        jsonschema.validate(record, RECORD_SCHEMA)
     except (json.JSONDecodeError, jsonschema.ValidationError) as e:
         check(f"tests/fixtures/{path.name}", False)
         print(f"        {getattr(e, 'message', e)}")
         continue
-    kind = json.loads(path.read_text()).get("record_kind")
-    check(f"tests/fixtures/{path.name} ({kind})", True)
+    kind = record.get("record_kind")
+    check(f"tests/fixtures/{path.name} ({kind})", kind == path.stem)
+    if kind != path.stem:
+        print(f"        its record_kind is {kind!r} — convention: {RECORD_KIND_DOC}.")
 
 # The detached attestation validates against its own $def, never the root record
 # schema — it is ledger metadata beside a record, not a record kind.
@@ -382,6 +425,72 @@ check(f"{ATTESTATION_KEY_FIXTURE}: signed_message_hex is the domain tag then the
 check(f"{ATTESTATION_KEY_FIXTURE}: the key signs the record it names",
       attestation["signed_record_hash"]
       == json.loads((fixtures_dir / key_fixture["signs"]).read_text())["record_hash"])
+
+# 8. examples/README.md's quoted blocks.
+#
+#    The README invites provider authors to diff their output against it, and
+#    its annotated session was hand-copied from the transcript and then left
+#    behind as the transcript grew: quoted `query`/`frames` lines with no `id`
+#    (so the walkthrough failed to demonstrate correlation, H4), frames missing
+#    `content_digest`, `token_cost` values the file no longer carried, and no
+#    step at all for `verify`/`verified` (#144). Schema validation alone cannot
+#    see that — every stale block was a well-formed envelope.
+#
+#    So the walkthrough is held to EQUALITY, not just validity: its fenced
+#    blocks, in order, must be exactly the transcript's lines as parsed JSON —
+#    same count, same members, same values. Whitespace is free so the README
+#    can print compact JSON. Every other ```json block in the README (the
+#    egress variant, the error reply) is not in the transcript, and is held to
+#    the schema instead.
+print("\nChecking examples/README.md against the transcript and the schema\n")
+
+readme_path = ROOT / "examples" / "README.md"
+WALKTHROUGH_HEADING = "## A complete stdio session (annotated)"
+readme_blocks, current, start, in_walkthrough, section = [], None, 0, False, None
+for number, line in enumerate(readme_path.read_text().splitlines(), 1):
+    if current is None and line.startswith("## "):
+        section = line.rstrip()
+    if current is None:
+        if line.rstrip() == "```json":
+            current, start = [], number
+    elif line.rstrip() == "```":
+        readme_blocks.append((start, section == WALKTHROUGH_HEADING, "\n".join(current)))
+        current = None
+    else:
+        current.append(line)
+
+walkthrough = []
+for start, is_walkthrough, block in readme_blocks:
+    try:
+        value = json.loads(block)
+    except json.JSONDecodeError as e:
+        check(f"README.md:{start} parses as one JSON value", False)
+        print(f"        {e}")
+        continue
+    if is_walkthrough:
+        walkthrough.append((start, value))
+        continue
+    try:
+        jsonschema.validate(value, SCHEMA)
+        check(f"README.md:{start} ({value.get('type')})", True)
+    except jsonschema.ValidationError as e:
+        check(f"README.md:{start} ({value.get('type') if isinstance(value, dict) else '?'})", False)
+        print(f"        {e.message}")
+
+transcript = [json.loads(l) for l in ndjson_path.read_text().splitlines() if l.strip()]
+check(
+    f"README.md walkthrough quotes all {len(transcript)} transcript lines "
+    f"(found {len(walkthrough)} blocks under '{WALKTHROUGH_HEADING}')",
+    len(walkthrough) == len(transcript),
+)
+for index, ((start, quoted), expected) in enumerate(zip(walkthrough, transcript), 1):
+    same = quoted == expected
+    check(f"README.md:{start} is transcript line {index} ({expected.get('type')})", same)
+    if not same and isinstance(quoted, dict):
+        differing = sorted(
+            key for key in set(quoted) | set(expected) if quoted.get(key) != expected.get(key)
+        )
+        print(f"        top-level members that differ: {', '.join(differing)}")
 
 print(f"\n{'OK — all examples validate' if failures == 0 else f'{failures} failure(s)'}")
 sys.exit(1 if failures else 0)

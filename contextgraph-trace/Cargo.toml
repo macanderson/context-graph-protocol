@@ -1,6 +1,9 @@
 [package]
 name = "contextgraph-trace"
-description = "Host execution trace (journal) wire types and replay oracles for the Context Graph Protocol — sketch stage, see docs/sketches/host-trace.md."
+# No path in the description: crates.io and `cargo search` print it with no
+# repository beside it, so a repo-relative path there resolves nowhere (#153).
+# The specification is linked from README.md and the crate docs instead.
+description = "Host execution trace (journal) wire types and replay oracles for the Context Graph Protocol — sketch stage, not part of the contextgraph/1.0 stable surface."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,8 +15,8 @@ readme = "README.md"
 keywords = ["contextgraph", "trace", "replay", "agents", "llm"]
 categories = ["encoding", "development-tools::debugging"]
 # Published as of 0.1.2 — the open question the sketch recorded is now answered.
-# This crate still implements docs/sketches/host-trace.md, which is a sketch and
-# NOT part of the contextgraph/1.0 stable surface: the journal wire format may
+# This crate implements docs/host-trace.md, which is sketch stage and NOT part
+# of the contextgraph/1.0 stable surface: the journal wire format may
 # change in any 0.x release, and `TRACE_FORMAT` is what downstreams should gate
 # on, not the crate version. It is published anyway because leaving it out
 # forced its only downstream (stella's `stella arena`) to pin the whole
