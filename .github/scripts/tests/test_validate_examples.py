@@ -181,6 +181,57 @@ class ValidateExamplesTest(GateTestCase):
             self.gate(),
             "FAIL  observation.json: the published record_hash is the one the fixture stores")
 
+    # --- which fixtures are records (#126) ----------------------------------
+
+    def test_a_non_record_json_fails_naming_the_convention(self):
+        self.build()
+        self.write("tests/fixtures/scratch.json", '{"hello": "world"}')
+        result = self.run_gate()
+        self.assertFailsWith(
+            result,
+            "FAIL  every JSON file in tests/fixtures is a record kind or a declared non-record",
+            "tests/fixtures/scratch.json: 'scratch' is not a record_kind",
+            "the filename stem is the record_kind",
+        )
+        # Reported as a stray, never validated as a record: the old failure
+        # mode was a record-schema error blaming the wrong thing.
+        self.assertNotIn("FAIL  tests/fixtures/scratch.json", result.stdout)
+
+    def test_the_declared_non_record_fixtures_are_not_validated_as_records(self):
+        result = self.gate()
+        self.assertPasses(result)
+        self.assertNotIn("tests/fixtures/record-hash-vectors.json (", result.stdout)
+
+    def test_a_record_fixture_that_disappears_is_caught(self):
+        self.build()
+        self.remove("tests/fixtures/knowledge.json")
+        self.assertFailsWith(
+            self.run_gate(),
+            "FAIL  every record_kind the schema declares has a fixture",
+            "tests/fixtures/knowledge.json is missing",
+        )
+
+    def test_every_record_fixture_disappearing_is_caught(self):
+        self.build()
+        for kind in RECORD_KINDS:
+            self.remove(f"tests/fixtures/{kind}.json")
+        self.assertFailsWith(
+            self.run_gate(), "FAIL  tests/fixtures holds lifecycle record examples")
+
+    def test_a_record_filed_under_another_kind_fails(self):
+        self.records["knowledge"]["record_kind"] = "observation"
+        self.assertFailsWith(
+            self.gate(),
+            "FAIL  tests/fixtures/knowledge.json (observation)",
+            "the filename stem is the record_kind",
+        )
+
+    def test_a_record_schema_without_its_kind_enum_is_reported(self):
+        del self.record_schema["$defs"]["recordKind"]["enum"]
+        self.record_schema["$defs"]["recordKind"]["type"] = "string"
+        self.assertFailsWith(
+            self.gate(), "FAIL  the record schema declares its record kinds")
+
     # --- SPEC.md ------------------------------------------------------------
 
     def test_a_spec_block_with_an_undeclared_member_fails(self):
