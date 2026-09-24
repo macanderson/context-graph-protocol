@@ -53,6 +53,21 @@ enum Misbehave {
     /// Exit on receiving a malformed line (trips
     /// `malformed-input-tolerance`).
     CrashOnGarbage,
+    /// Exit on a well-formed `query` or `verify` envelope whose payload is
+    /// missing, as the Python SDK once did with a bare `envelope["query"]`
+    /// (trips `malformed-input-tolerance`).
+    ///
+    /// Such a line is valid JSON, so a probe that only ever sent unparseable
+    /// garbage could not reach this crash — which is how that SDK passed the
+    /// check while dying mid-session on an ordinary host mistake (#146).
+    CrashOnMissingPayload,
+    /// Stay alive on a `query` envelope whose payload is missing, but answer
+    /// it with nothing at all (trips `malformed-input-tolerance`).
+    ///
+    /// Ignoring an unparseable line is fine — it carries no id to answer. A
+    /// request does, and silence leaves the host waiting on that id until it
+    /// times out, so the check requires a reply.
+    IgnoreMissingPayload,
     /// Stay alive on a malformed line but answer it with `internal` instead of
     /// the `bad_request` §R1 recommends — a structured error that is not the
     /// right one (trips `malformed-input-tolerance`).
@@ -178,7 +193,24 @@ enum Misbehave {
     /// peer a denial-of-service primitive — attach garbage, watch the evidence
     /// disappear.
     MalformedAttestation,
+    /// Sign every frame honestly, then relabel each attestation's `algorithm`
+    /// as a scheme this build cannot check, `dilithium3` (trips
+    /// `attestation`).
+    ///
+    /// F8 is the verifier's rule: "I cannot check this" is never "this is
+    /// good", and never "this is forged" either, so the verdict is
+    /// `UnknownAlgorithm` and the frames are still served (F9). The check
+    /// *fails* rather than skipping because a conformance verdict certifies
+    /// only what the suite checked — a provider whose every signature is in a
+    /// scheme nobody here can verify has had none of them verified, and a
+    /// skip is a pass to `ConformanceReport::passed()` (ADR 0027).
+    UnknownAlgorithm,
 }
+
+/// The scheme [`Misbehave::UnknownAlgorithm`] claims: a real post-quantum
+/// signature name, so the mode reads as a provider ahead of this build rather
+/// than as garbage — which is the case F8 exists for.
+const UNCHECKABLE_ALGORITHM: &str = "dilithium3";
 
 #[derive(Parser)]
 #[command(
@@ -215,6 +247,17 @@ fn main() {
                 // "I am broken" without sniffing message strings.
                 if args.misbehave == Some(Misbehave::CrashOnGarbage) {
                     std::process::exit(1);
+                }
+                // The two missing-payload modes act only on a line that is a
+                // well-formed request envelope in every respect but its
+                // payload; any other malformed line is answered honestly, so
+                // each mode trips the check on the input it claims to.
+                if is_payloadless_request(&line) {
+                    match args.misbehave {
+                        Some(Misbehave::CrashOnMissingPayload) => std::process::exit(1),
+                        Some(Misbehave::IgnoreMissingPayload) => continue,
+                        _ => {}
+                    }
                 }
                 // §R1 recommends `bad_request`; `mislabel-malformed` answers
                 // with `internal` instead, to prove the malformed-input check
@@ -358,6 +401,21 @@ fn main() {
             _ => {}
         }
     }
+}
+
+/// Whether `line` is a `query` or `verify` envelope with its payload member
+/// (`query` / `request`) absent or `null` — the shape the two missing-payload
+/// misbehaviour modes act on.
+fn is_payloadless_request(line: &str) -> bool {
+    let Ok(serde_json::Value::Object(envelope)) = serde_json::from_str(line.trim_end()) else {
+        return false;
+    };
+    let payload = match envelope.get("type").and_then(serde_json::Value::as_str) {
+        Some("query") => "query",
+        Some("verify") => "request",
+        _ => return false,
+    };
+    envelope.get(payload).is_none_or(serde_json::Value::is_null)
 }
 
 fn write_envelope(stdout: &mut std::io::Stdout, envelope: &Envelope) {
@@ -534,8 +592,9 @@ fn summarisation_link() -> Provenance {
 ///
 /// Honest modes sign each frame exactly as served, so every misbehaviour that
 /// is *not* about attestation leaves the `attestation` check green and stays
-/// attributable to the check that owns it. The five attestation modes each sign
-/// one thing and serve another.
+/// attributable to the check that owns it. Five attestation modes each sign one
+/// thing and serve another; the sixth, `unknown-algorithm`, serves exactly what
+/// it signed under a scheme name no verifier here recognises (F8).
 fn attestations_for(
     frames: &[ContextFrame],
     misbehave: Option<Misbehave>,
@@ -620,6 +679,18 @@ fn attestations_for(
                 } else {
                     staple(frame, attest(frame, &ATTESTER_SEED))
                 }
+            })
+            .collect(),
+        // An honest signature under a label no verifier here recognises. The
+        // commitment and the signature bytes are exactly the honest ones, so
+        // the only thing standing between this and `Valid` is the scheme name
+        // — which is what makes the verdict attributable to F8 alone.
+        Some(Misbehave::UnknownAlgorithm) => frames
+            .iter()
+            .map(|frame| {
+                let mut attestation = attest(frame, &ATTESTER_SEED);
+                attestation.algorithm = UNCHECKABLE_ALGORITHM.into();
+                staple(frame, attestation)
             })
             .collect(),
         _ => frames

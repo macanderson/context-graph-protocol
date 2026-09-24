@@ -11,6 +11,14 @@
 #
 # Pairs with conformance-red.sh, which proves the SUITE catches cheaters using
 # the Rust fixture; a conformant external provider only needs to be GREEN.
+#
+# "Green" here is every check `pass`, which is stricter than
+# `ConformanceReport::passed()` (a skip passes there) on purpose: every
+# provider CI points this at declares every capability the suite probes, so a
+# skip would mean a check stopped running. The one case where the two bars
+# could have disagreed on a real provider — every attestation in a scheme the
+# suite cannot check — is a `fail` in the report itself (ADR 0027), so the
+# library, this script and conformance-red.sh all give it the same answer.
 set -euo pipefail
 
 BIN="${BIN:-./target/debug}"

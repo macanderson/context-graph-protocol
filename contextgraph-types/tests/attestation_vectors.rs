@@ -184,6 +184,18 @@ fn the_published_empty_versus_absent_vectors_hold() {
         "without the presence byte a link's uri could be deleted from a signed \
          chain without disturbing the hash"
     );
+    // "These two differ" is a weaker claim than "these two are these exact
+    // bytes": two ports can both satisfy the first while disagreeing about
+    // which is which (#125). `uri` is presence byte 0x01 then a zero length
+    // when present-and-empty, and a bare 0x00 when absent.
+    assert_eq!(
+        hex(&encode_provenance_link(&empty_uri_link())),
+        "0000000466696c65010000000000000000"
+    );
+    assert_eq!(
+        hex(&encode_provenance_link(&absent_uri_link())),
+        "0000000466696c650000000000"
+    );
     assert_eq!(
         digest_string(&provenance_chain_head(&[empty_uri_link()])),
         "sha256:616d4fa60a91420472f7fcc1ebb49ff503a05104e3762570b67011dbbcd22152"

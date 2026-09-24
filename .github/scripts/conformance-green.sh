@@ -5,6 +5,14 @@
 # Pairs with conformance-red.sh: green alone would be satisfied by a suite that
 # never fails, and red alone by a suite that never passes. Both together are
 # what make "CGP conformant" a checkable claim.
+#
+# Deliberately stricter than `ConformanceReport::passed()`, which counts a skip
+# as a pass (ADR 0027). A skip means "this check does not bind what you
+# declared", and the reference provider declares every capability the suite
+# probes — so a skip here can only mean a check silently stopped running, and
+# that is treated as the failure it would hide. A check that applies but cannot
+# be decided (an attestation in a scheme the suite cannot check) reports `fail`
+# itself, so all three consumers agree on it.
 set -euo pipefail
 
 BIN="${BIN:-./target/debug}"
