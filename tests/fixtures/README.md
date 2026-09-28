@@ -105,6 +105,11 @@ sha256:b45eebfdfe7e6e5056bf25d84864cf9acd731eef120a1f6de129fb788c3b34dc
 which is exactly the `record_hash` stored in `observation.json`, and the entry
 `record-hash-vectors.json` publishes for it.
 
+`contextgraph-inspect record preimage tests/fixtures/observation.json` prints
+the Step 2 bytes and `contextgraph-inspect record hash` prints the Step 3
+digest, for this fixture or for a record of your own
+([running conformance](../../docs/running-conformance.md#checking-a-record-and-its-attestation)).
+
 Reproducing those bytes without a JCS library is possible for *these* fixtures
 and is not the same thing as implementing RFC 8785. A Python
 `json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False)` matches
