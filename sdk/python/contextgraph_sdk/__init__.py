@@ -23,6 +23,7 @@ from .attest import (
     InclusionProof,
     InclusionStep,
     ProvenanceAttestation,
+    SigningUnavailableError,
     Verdict,
     digest_string,
     encode_provenance_link,
@@ -31,13 +32,32 @@ from .attest import (
     merkle_root,
     parse_digest,
     provenance_chain_head,
+    public_key_for,
     root_from_proof,
+    sign_commitment,
+    sign_frame_attestation,
     verify_commitment,
     verify_frame_attestation,
 )
 from .budget import BYTES_PER_BUDGET_TOKEN, budget_tokens
 from .http import handle_envelope, make_wsgi_app, respond_to_body
 from .provider import Provider, ProviderError, run_stdio_provider
+from .record import (
+    RECORD_ATTESTATION_DOMAIN,
+    RECORD_HASH_MEMBER,
+    CanonicalizationError,
+    RecordAttestation,
+    RecordHashError,
+    canonicalize,
+    record_attestation_message,
+    record_hash,
+    record_hash_is_current,
+    record_hash_preimage,
+    sign_record,
+    sign_record_attestation,
+    verify_record_attestation,
+    verify_signed_record_hash,
+)
 from .types import PROTOCOL_VERSION
 
 __all__ = [
@@ -56,6 +76,7 @@ __all__ = [
     "InclusionProof",
     "InclusionStep",
     "ProvenanceAttestation",
+    "SigningUnavailableError",
     "Verdict",
     "digest_string",
     "encode_provenance_link",
@@ -64,7 +85,24 @@ __all__ = [
     "merkle_root",
     "parse_digest",
     "provenance_chain_head",
+    "public_key_for",
     "root_from_proof",
+    "sign_commitment",
+    "sign_frame_attestation",
     "verify_commitment",
     "verify_frame_attestation",
+    "RECORD_ATTESTATION_DOMAIN",
+    "RECORD_HASH_MEMBER",
+    "CanonicalizationError",
+    "RecordAttestation",
+    "RecordHashError",
+    "canonicalize",
+    "record_attestation_message",
+    "record_hash",
+    "record_hash_is_current",
+    "record_hash_preimage",
+    "sign_record",
+    "sign_record_attestation",
+    "verify_record_attestation",
+    "verify_signed_record_hash",
 ]

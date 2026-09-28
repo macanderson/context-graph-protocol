@@ -12,6 +12,13 @@ license = { text = "MIT OR Apache-2.0" }
 keywords = ["context-graph-protocol", "cgp", "context", "provider", "sdk"]
 dependencies = []
 
+# Optional, and only for producing attestations. Verification, hashing and the
+# provider runtime stay zero-dependency; without this extra the signing
+# functions raise SigningUnavailableError rather than answering differently.
+# See contextgraph_sdk/_signing.py for why the SDK never signs in pure Python.
+[project.optional-dependencies]
+signing = ["cryptography>=41"]
+
 [project.urls]
 Homepage = "https://contextgraphprotocol.org"
 Repository = "https://github.com/macanderson/context-graph-protocol"

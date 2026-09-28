@@ -246,8 +246,19 @@ jobs:
           python-version: "3.12"
       - name: Python example provider passes the conformance suite
         run: ./.github/scripts/conformance-external.sh -- python3 sdk/python/examples/example_docs.py
-      - name: Python attestation port reproduces the published vectors
+      # The optional `[signing]` extra, installed from this checkout so the
+      # declared extra is what gets exercised (#127). With it present and
+      # CONTEXTGRAPH_REQUIRE_SIGNING=1, tests/test_signing.py pins the signers
+      # to the published signatures byte for byte and cannot skip. The
+      # interpreter matrix below runs without it, which is what proves the
+      # zero-dependency path (#119's record_hash and RecordAttestation
+      # verification included) needs nothing installed.
+      - name: Install the optional signing backend
+        run: python3 -m pip install "./sdk/python[signing]"
+      - name: Python attestation, record-hash and signing ports reproduce the published vectors
         working-directory: sdk/python
+        env:
+          CONTEXTGRAPH_REQUIRE_SIGNING: "1"
         run: python3 -m unittest discover -s tests -v
 
   sdk-go:
