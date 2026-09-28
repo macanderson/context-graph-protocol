@@ -40,7 +40,8 @@
 //!   verifier that consumes them (SPEC.md §6.5). The operator is the trust
 //!   root: nothing is discovered and nothing is trusted on first use. An
 //!   attestation the host cannot check degrades its frame to *unattested* and
-//!   never removes it (F9).
+//!   never removes it (F9). [`trust_file`] reads and writes the store as a
+//!   documented file at a path the operator names.
 //! - [`verify`] — the *bytes* half of F5: re-reads the local source a `file`
 //!   provenance addresses and checks its declared digest against the actual
 //!   bytes (SPEC.md §6.2). A host API, not an automatic re-read of any provider
@@ -81,6 +82,7 @@ pub mod ingest;
 pub mod provider;
 pub mod stdio;
 pub mod trust;
+pub mod trust_file;
 pub mod verify;
 pub mod wire;
 
@@ -115,6 +117,7 @@ pub use stdio::{RawStdioConnection, StdioProvider};
 pub use trust::{
     AttestationLedger, AttestationState, FrameAttestationOutcome, TrustStore, TrustedKey,
 };
+pub use trust_file::{MAX_TRUST_FILE_BYTES, TRUST_FILE_FORMAT, TrustFileError, TrustFileProblem};
 pub use verify::{DigestVerification, verify_file_provenance, verify_provenance_digest};
 pub use wire::{
     AttesterKey, Envelope, decode_line, encode_line, envelope_kind, versions_compatible,

@@ -255,6 +255,20 @@ impl TrustStore {
             .flat_map(|k| k.values())
     }
 
+    /// Every provider this store trusts at least one key for, in id order —
+    /// what a host renders when it shows an operator what they have trusted,
+    /// and what [`to_trust_file_json`](Self::to_trust_file_json) walks.
+    pub fn providers(&self) -> impl Iterator<Item = &str> {
+        let mut ids: Vec<&str> = self
+            .keys
+            .iter()
+            .filter(|(_, keys)| !keys.is_empty())
+            .map(|(id, _)| id.as_str())
+            .collect();
+        ids.sort_unstable();
+        ids.into_iter()
+    }
+
     /// Whether this store trusts no key at all.
     pub fn is_empty(&self) -> bool {
         self.keys.values().all(|keys| keys.is_empty())

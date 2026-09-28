@@ -265,6 +265,69 @@ declares none has a valid signature over its identity and its provenance and
 **nothing over its text**. The flag is `false` there, and a host should not
 present such a frame as though its words were signed.
 
+#### Where the trusted keys come from, and how they survive a restart
+
+The store is filled by the operator and nobody else. Keep it in a **trust
+file** at a path the operator names
+([ADR 0029](adr/0029-the-trust-store-file.md)) — there is no default location
+and no discovery — and load it when the host starts:
+
+```rust
+use contextgraph_host::{Host, TrustStore};
+
+let mut host = Host::new();
+// A missing, unreadable or malformed file is a named TrustFileError — never a
+// silently empty store that verifies nothing.
+host.set_trust_store(TrustStore::load(&operator_named_path)?);
+```
+
+The file is a small JSON document:
+
+```json
+{
+  "format": "contextgraph-trust/1",
+  "providers": {
+    "docs": [
+      {
+        "key_id": "docs-2026-08",
+        "algorithm": "ed25519",
+        "public_key": "<64 hex characters>",
+        "fingerprint": "sha256:<64 hex characters>",
+        "not_before": "2026-08-01T00:00:00Z",
+        "not_after": "2027-07-31T23:59:59Z"
+      }
+    ]
+  }
+}
+```
+
+`providers` is keyed by the id the operator registered the provider under — the
+same id consent is recorded under. `fingerprint` is optional when you write the
+file by hand and must match the key when present; `not_before` / `not_after` are
+the key's optional, inclusive validity window, evaluated at the instant each
+answer arrives ([ADR 0028](adr/0028-key-validity-windows-are-evaluated-at-receipt.md)).
+Any other member is an error. `TrustStore::save(path)` writes the file back
+atomically after the operator trusts or revokes a key.
+
+**Show the fingerprint in the consent flow.** "I consent to this provider" and
+"I trust this key" are one decision about one party (ADR 0016 §2), so a host
+that prompts for consent shows the keys it trusts for that provider beside the
+prompt:
+
+```rust
+for key in host.trust().keys_for(provider_id) {
+    println!(
+        "  signing key {}  fingerprint {}",
+        key.key_id,
+        key.fingerprint().unwrap_or_else(|| "(malformed key)".into()),
+    );
+}
+```
+
+The fingerprint is `sha256:` over the key bytes, the same string the trust file
+records beside the key, so a person can compare it with the one the provider's
+operator published before they say yes.
+
 [trust]: https://docs.rs/contextgraph-host/latest/contextgraph_host/trust/struct.TrustStore.html
 
 ---

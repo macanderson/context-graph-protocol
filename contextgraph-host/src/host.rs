@@ -145,6 +145,13 @@ impl Host {
     }
 
     /// Replace the whole trust store — for a host restoring one it persisted.
+    ///
+    /// The documented way to persist one is the trust file
+    /// ([ADR 0029](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0029-the-trust-store-file.md)):
+    /// `host.set_trust_store(TrustStore::load(path)?)` at startup, with a path
+    /// the operator named, and [`TrustStore::save`] after the operator trusts
+    /// or revokes a key. A file that cannot be read or parsed is a named
+    /// [`TrustFileError`](crate::TrustFileError), never an empty store.
     pub fn set_trust_store(&mut self, trust: TrustStore) {
         self.trust = trust;
     }
