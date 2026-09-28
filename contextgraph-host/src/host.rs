@@ -24,7 +24,7 @@ use contextgraph_types::{
 use crate::consent::{ConsentDecision, ConsentRecord, ConsentStore};
 use crate::error::HostError;
 use crate::provider::{ContextProvider, capability_matches};
-use crate::stdio::StdioProvider;
+use crate::stdio::{DEFAULT_HANDSHAKE_TIMEOUT, StdioProvider};
 use crate::trust::{AttestationLedger, FrameAttestationOutcome, TrustStore, TrustedKey};
 
 /// Default per-provider query budget — a slow or hung provider is cut off at
@@ -39,6 +39,10 @@ pub struct Host {
     consent: ConsentStore,
     trust: TrustStore,
     per_provider_timeout: Duration,
+    /// Bound on each stdio provider's handshake in [`Host::add_stdio`].
+    /// Separate from `per_provider_timeout`: the handshake covers a provider's
+    /// startup, a query covers one answer.
+    handshake_timeout: Duration,
 }
 
 impl Default for Host {
@@ -55,6 +59,7 @@ impl Host {
             consent: ConsentStore::new(),
             trust: TrustStore::new(),
             per_provider_timeout: DEFAULT_PROVIDER_TIMEOUT,
+            handshake_timeout: DEFAULT_HANDSHAKE_TIMEOUT,
         }
     }
 
@@ -66,20 +71,41 @@ impl Host {
         }
     }
 
+    /// Bound how long [`Host::add_stdio`] waits for a provider's
+    /// `handshake_ack` (default [`DEFAULT_HANDSHAKE_TIMEOUT`], 10s). A provider
+    /// that misses it is refused with [`HostError::Timeout`], so a silent
+    /// provider is still never a hang.
+    ///
+    /// The bound covers the provider's whole startup, not one line of I/O: a
+    /// bridge such as `contextgraph-mcp-bridge` spawns and initializes the
+    /// server it wraps before it can ack. A host whose providers start slowly,
+    /// or a test launching several cold processes at once, raises it here for
+    /// itself instead of the default changing for every host (issue #142).
+    pub fn set_handshake_timeout(&mut self, handshake_timeout: Duration) {
+        self.handshake_timeout = handshake_timeout;
+    }
+
+    /// The bound [`Host::add_stdio`] puts on a provider's handshake.
+    pub fn handshake_timeout(&self) -> Duration {
+        self.handshake_timeout
+    }
+
     /// Register an in-process provider (a built-in, e.g. the code graph).
     pub fn register(&mut self, provider: Box<dyn ContextProvider>) {
         self.providers.push(provider);
     }
 
     /// Spawn and register a child-process provider over stdio, completing the
-    /// handshake (`SPEC.md` §3).
+    /// handshake (`SPEC.md` §3) within [`Host::handshake_timeout`].
     pub async fn add_stdio(
         &mut self,
         id: impl Into<String>,
         program: &str,
         args: &[String],
     ) -> Result<(), HostError> {
-        let provider = StdioProvider::spawn(id, program, args).await?;
+        let provider =
+            StdioProvider::spawn_with_handshake_timeout(id, program, args, self.handshake_timeout)
+                .await?;
         self.providers.push(Box::new(provider));
         Ok(())
     }
@@ -1514,6 +1540,25 @@ mod tests {
         assert_eq!(failures.len(), 1);
         assert_eq!(failures[0].0, "slow");
         assert!(matches!(failures[0].1, HostError::Timeout { .. }));
+    }
+
+    /// Issue #142: the stdio handshake bound is a per-host setting whose
+    /// default is unchanged, and it is independent of the query timeout.
+    #[test]
+    fn the_handshake_timeout_defaults_to_the_stdio_default_and_is_per_host() {
+        let host = Host::new();
+        assert_eq!(host.handshake_timeout(), DEFAULT_HANDSHAKE_TIMEOUT);
+        assert_eq!(
+            Host::with_timeout(Duration::from_millis(50)).handshake_timeout(),
+            DEFAULT_HANDSHAKE_TIMEOUT,
+            "the query timeout must not move the handshake bound"
+        );
+
+        let mut patient = Host::new();
+        patient.set_handshake_timeout(Duration::from_secs(60));
+        assert_eq!(patient.handshake_timeout(), Duration::from_secs(60));
+        // Raising one host's bound leaves every other host on the default.
+        assert_eq!(Host::new().handshake_timeout(), DEFAULT_HANDSHAKE_TIMEOUT);
     }
 
     #[tokio::test]

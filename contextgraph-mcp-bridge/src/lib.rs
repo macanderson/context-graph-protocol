@@ -636,6 +636,12 @@ fn embedding_dimension_error(query: &ContextQuery, id: Option<String>) -> Option
 /// The MCP resources are fetched once, up front, and cached — so composition
 /// stays byte-stable across turns (`docs/context-reuse.md` §1) and a repeated
 /// query does not re-hit the wrapped server.
+///
+/// Because the fetch happens before the first line of stdin is read, a host's
+/// handshake wait covers the wrapped server's launch and the whole MCP
+/// exchange, not just the bridge's reply. A host that runs the bridge where
+/// process launch is slow sets its own bound with
+/// `Host::set_handshake_timeout` (issue #142).
 pub fn run_stdio(config: &BridgeConfig) -> Result<(), String> {
     let mut mcp = McpClient::spawn(&config.program, &config.args)?;
     let resources = mcp.fetch_resources()?;
