@@ -810,6 +810,23 @@ can be shown a proof from a differently-shaped tree. This is what makes a signed
 answer selectively disclosable: a host proves one frame was in the set without
 revealing the others.
 
+Honoring the leaf count is a rule, not an aside. A verifier **MUST** refuse a
+proof whose `leaf_index` is not below its `leaf_count`, or whose `path` does not
+have exactly the length and the `sibling_is_left` sides the split above gives
+leaf `leaf_index` of a tree of `leaf_count` leaves — and **MUST** refuse it on
+that arithmetic, before hashing anything: the shape is at most
+⌈log₂ `leaf_count`⌉ steps of index arithmetic, while a walk costs a hash per
+step of a path the provider chose. A host checking an answer as it arrived
+**MUST** also refuse a proof whose `leaf_count` is not the number of frames the
+answer carries, because F12 puts exactly those frames under the root. Each
+refusal degrades that frame to unattested (F9); it never removes it.
+
+A host checking a whole answer **SHOULD** verify the root's signature once per
+answer and then check each frame's proof against the verified root, rather than
+verify the signature once per frame — one signature for *n* frames is the
+reason to sign a root at all. The reference host does; the reasoning is
+[ADR 0031](./docs/adr/0031-result-set-attestation-is-checked-once-per-answer.md).
+
 #### 6.5.4 Verification
 
 Verification is **offline and pure**: a commitment, an attestation, and a public

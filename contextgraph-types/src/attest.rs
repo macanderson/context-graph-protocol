@@ -289,6 +289,105 @@ pub struct InclusionProof {
     pub path: Vec<InclusionStep>,
 }
 
+impl InclusionProof {
+    /// Whether this proof has exactly the shape RFC 6962 gives the path for
+    /// leaf `leaf_index` of a tree of `leaf_count` leaves: the index inside
+    /// the tree, one step per level, and each step's side where the tree puts
+    /// it (`SPEC.md` §6.5.3).
+    ///
+    /// This is what honoring `leaf_count` means. A proof whose path is longer
+    /// or shorter than its stated tree allows, or whose sides disagree with its
+    /// stated index, came from a differently-shaped tree — or was assembled to
+    /// look as if it did — and is refused **before any hashing**: the check is
+    /// index arithmetic over at most `ceil(log2(leaf_count))` levels, never a
+    /// walk of the provider's path.
+    ///
+    /// ```
+    /// use contextgraph_types::{InclusionProof, InclusionStep};
+    ///
+    /// let step = |left| InclusionStep { sibling: format!("sha256:{}", "0".repeat(64)), sibling_is_left: left };
+    /// // Leaf 3 of 7: sibling leaf 2 on the left, then the pair (0, 1) on the
+    /// // left, then the subtree (4, 5, 6) on the right.
+    /// let proof = InclusionProof { leaf_index: 3, leaf_count: 7, path: vec![step(true), step(true), step(false)] };
+    /// assert!(proof.is_well_shaped());
+    ///
+    /// // The same path presented as coming from a four-leaf tree is refused:
+    /// // leaf 3 of 4 sits two levels down, not three.
+    /// assert!(!InclusionProof { leaf_count: 4, ..proof.clone() }.is_well_shaped());
+    /// // So is one step too many.
+    /// let mut longer = proof.clone();
+    /// longer.path.push(step(false));
+    /// assert!(!longer.is_well_shaped());
+    /// ```
+    pub fn is_well_shaped(&self) -> bool {
+        if self.path.len() > MAX_INCLUSION_PATH_STEPS {
+            return false;
+        }
+        match inclusion_path_sides(self.leaf_index, self.leaf_count) {
+            Some(sides) => {
+                sides.len() == self.path.len()
+                    && sides
+                        .iter()
+                        .zip(&self.path)
+                        .all(|(left, step)| *left == step.sibling_is_left)
+            }
+            None => false,
+        }
+    }
+}
+
+/// The RFC 6962 inclusion-path shape for leaf `leaf_index` of a tree of
+/// `leaf_count` leaves: one entry per step, **leaf upward**, each `true` when
+/// that step's sibling is the left operand — exactly the `sibling_is_left`
+/// sequence [`inclusion_proof`] emits (`SPEC.md` §6.5.3).
+///
+/// `None` when `leaf_index >= leaf_count`, including for an empty tree, which
+/// has no leaves to prove. The walk descends the tree's split points from the
+/// root, so it takes at most `ceil(log2(leaf_count))` steps — 64 for any
+/// `usize` — and hashes nothing.
+///
+/// ```
+/// use contextgraph_types::inclusion_path_sides;
+///
+/// assert_eq!(inclusion_path_sides(0, 1), Some(vec![]));
+/// assert_eq!(inclusion_path_sides(3, 7), Some(vec![true, true, false]));
+/// assert_eq!(inclusion_path_sides(6, 7), Some(vec![true, true]));
+/// assert_eq!(inclusion_path_sides(7, 7), None);
+/// ```
+pub fn inclusion_path_sides(leaf_index: usize, leaf_count: usize) -> Option<Vec<bool>> {
+    if leaf_index >= leaf_count {
+        return None;
+    }
+    let mut sides = Vec::new();
+    let (mut index, mut count) = (leaf_index, leaf_count);
+    while count > 1 {
+        let split = largest_power_of_two_below(count);
+        if index < split {
+            // In the left subtree: the sibling is the right one.
+            sides.push(false);
+            count = split;
+        } else {
+            sides.push(true);
+            index -= split;
+            count -= split;
+        }
+    }
+    // Collected root-downward; a proof lists its steps leaf-upward.
+    sides.reverse();
+    Some(sides)
+}
+
+/// RFC 6962's split point: the largest power of two strictly less than `n`,
+/// for `n >= 2`. Bit arithmetic rather than a doubling loop, so it cannot
+/// overflow for an `n` near `usize::MAX` — a `leaf_count` is provider-supplied.
+fn largest_power_of_two_below(n: usize) -> usize {
+    if n.is_power_of_two() {
+        n / 2
+    } else {
+        1 << (usize::BITS - 1 - n.leading_zeros())
+    }
+}
+
 /// What a result set says about one frame's attestation — the wire carrier that
 /// keeps a [`ProvenanceAttestation`] *beside* the frame it covers
 /// (`SPEC.md` §6.5.5, F11).
@@ -807,9 +906,16 @@ mod crypto {
     ///
     /// This is the whole offline story: an auditor holding one frame, its proof,
     /// and a signed root needs nothing else — no network, no host, no provider.
-    /// `None` if any sibling in the path is malformed.
+    ///
+    /// `None` if any sibling in the path is malformed, or if the proof is not
+    /// [well-shaped](InclusionProof::is_well_shaped) for the tree it states:
+    /// an index outside `leaf_count`, or a path whose length or sides are not
+    /// the ones RFC 6962 gives that `(leaf_index, leaf_count)`. That check runs
+    /// first and hashes nothing, and it is what makes `leaf_count` mean
+    /// something — a verifier that ignored it could be shown a proof from a
+    /// differently-shaped tree (`SPEC.md` §6.5.3).
     pub fn root_from_proof(commitment: &[u8; 32], proof: &InclusionProof) -> Option<[u8; 32]> {
-        if proof.leaf_index >= proof.leaf_count {
+        if !proof.is_well_shaped() {
             return None;
         }
         let mut acc = leaf_hash(commitment);
@@ -885,7 +991,9 @@ mod crypto {
         result_attestation: &ProvenanceAttestation,
         public_key: &[u8],
     ) -> AttestationVerdict {
-        if proof.path.len() > MAX_INCLUSION_PATH_STEPS {
+        // Both refusals are structural and hash nothing: the cap first, then the
+        // shape `leaf_count` and `leaf_index` dictate.
+        if proof.path.len() > MAX_INCLUSION_PATH_STEPS || !proof.is_well_shaped() {
             return AttestationVerdict::MalformedCommitment;
         }
         let commitment = frame_commitment(provider_id, frame);
@@ -900,6 +1008,52 @@ mod crypto {
                 AttestationVerdict::ValidIdentityOnly
             }
             other => other,
+        }
+    }
+
+    /// The per-frame half of [`verify_frame_inclusion`]: whether `frame` is a
+    /// leaf of the tree whose root is `verified_root`, under the same
+    /// content-binding rule (#128).
+    ///
+    /// **`verified_root` must be a root whose signature the caller has already
+    /// checked**, with [`verify_commitment`] over the answer's
+    /// `result_attestation`. This function checks no signature. It exists so a
+    /// host checking a whole answer verifies the root's signature **once per
+    /// result** and then pays only a proof walk per frame, rather than one
+    /// signature verification per frame — the whole reason a provider signs a
+    /// root instead of every frame.
+    ///
+    /// [`Valid`](AttestationVerdict::Valid) and
+    /// [`ValidIdentityOnly`](AttestationVerdict::ValidIdentityOnly) here mean
+    /// "a leaf of that root", with the second saying the leaf binds no content.
+    /// A proof that is not [well-shaped](InclusionProof::is_well_shaped), or
+    /// whose path is longer than [`MAX_INCLUSION_PATH_STEPS`], is
+    /// [`MalformedCommitment`](AttestationVerdict::MalformedCommitment) before
+    /// anything is hashed; one that recomputes a different root is
+    /// [`CommitmentMismatch`](AttestationVerdict::CommitmentMismatch).
+    pub fn frame_inclusion_under_verified_root(
+        provider_id: &str,
+        frame: &ContextFrame,
+        proof: &InclusionProof,
+        verified_root: &[u8; 32],
+    ) -> AttestationVerdict {
+        if proof.path.len() > MAX_INCLUSION_PATH_STEPS || !proof.is_well_shaped() {
+            return AttestationVerdict::MalformedCommitment;
+        }
+        let commitment = frame_commitment(provider_id, frame);
+        let Some(root) = root_from_proof(&commitment, proof) else {
+            return AttestationVerdict::MalformedCommitment;
+        };
+        if root != *verified_root {
+            return AttestationVerdict::CommitmentMismatch {
+                expected: digest_string(&root),
+                signed: digest_string(verified_root),
+            };
+        }
+        if frame.content_digest.is_none() {
+            AttestationVerdict::ValidIdentityOnly
+        } else {
+            AttestationVerdict::Valid
         }
     }
 
@@ -1009,9 +1163,10 @@ mod crypto {
 
 #[cfg(feature = "attestation")]
 pub use crypto::{
-    frame_commitment, inclusion_proof, merkle_root, provenance_chain_head, public_key_for,
-    result_set_commitments, result_set_root, root_from_proof, sign_commitment,
-    sign_frame_attestation, verify_commitment, verify_frame_attestation, verify_frame_inclusion,
+    frame_commitment, frame_inclusion_under_verified_root, inclusion_proof, merkle_root,
+    provenance_chain_head, public_key_for, result_set_commitments, result_set_root,
+    root_from_proof, sign_commitment, sign_frame_attestation, verify_commitment,
+    verify_frame_attestation, verify_frame_inclusion,
 };
 
 #[cfg(all(test, feature = "attestation"))]
@@ -1569,6 +1724,143 @@ mod tests {
                 &public_key_for(&SEED)
             ),
             AttestationVerdict::MalformedCommitment
+        );
+    }
+
+    /// The shape function and the proof builder agree for every leaf of every
+    /// tree up to 40 leaves — including the odd sizes where RFC 6962's split
+    /// and the duplicate-the-last-leaf shortcut part ways.
+    #[test]
+    fn every_honest_proof_is_well_shaped_and_its_sides_are_predicted() {
+        for count in 1..=40usize {
+            let commitments: Vec<[u8; 32]> = (0..count)
+                .map(|i| frame_commitment("repo-graph", &frame_with(&format!("f{i}"), vec![])))
+                .collect();
+            for index in 0..count {
+                let proof = inclusion_proof(&commitments, index).expect("in range");
+                let sides: Vec<bool> = proof.path.iter().map(|s| s.sibling_is_left).collect();
+                assert_eq!(
+                    inclusion_path_sides(index, count),
+                    Some(sides),
+                    "leaf {index} of {count}"
+                );
+                assert!(proof.is_well_shaped(), "leaf {index} of {count}");
+            }
+        }
+        assert_eq!(
+            inclusion_path_sides(0, 0),
+            None,
+            "an empty tree has no leaf"
+        );
+        // A provider-supplied count near the top of `usize` is arithmetic, not
+        // an overflow and not a loop.
+        assert_eq!(
+            inclusion_path_sides(0, usize::MAX).map(|s| s.len()),
+            Some(64)
+        );
+    }
+
+    /// `leaf_count` is honored: an honest path presented under a tree size, or
+    /// an index, that does not produce it is refused before anything is hashed
+    /// — even though the sibling hashes themselves are genuine.
+    #[test]
+    fn a_proof_is_refused_when_its_stated_tree_does_not_produce_its_path() {
+        let frames: Vec<ContextFrame> = (0..7)
+            .map(|i| frame_with(&format!("f{i}"), vec![]))
+            .collect();
+        let (root, proofs) = root_signed("repo-graph", &frames);
+        let key = public_key_for(&SEED);
+        let ordered = result_set_commitments("repo-graph", &frames);
+        let (id, commitment) = &ordered[3];
+        let frame = frames
+            .iter()
+            .find(|f| &f.identity("repo-graph") == id)
+            .expect("the leaf's frame");
+        let honest = proofs[3].clone();
+        assert_eq!(
+            verify_frame_inclusion("repo-graph", frame, &honest, &root, &key),
+            AttestationVerdict::Valid
+        );
+
+        // Claimed to be from a four-leaf tree: leaf 3 of 4 sits two levels
+        // down, not three.
+        let resized = InclusionProof {
+            leaf_count: 4,
+            ..honest.clone()
+        };
+        assert!(!resized.is_well_shaped());
+        assert_eq!(root_from_proof(commitment, &resized), None);
+        assert_eq!(
+            verify_frame_inclusion("repo-graph", frame, &resized, &root, &key),
+            AttestationVerdict::MalformedCommitment
+        );
+
+        // A side flipped: the walk would compute a different root, and the
+        // shape check refuses it before it does.
+        let mut flipped = honest.clone();
+        flipped.path[0].sibling_is_left = !flipped.path[0].sibling_is_left;
+        assert_eq!(root_from_proof(commitment, &flipped), None);
+
+        // An index outside the tree.
+        let outside = InclusionProof {
+            leaf_index: 7,
+            ..honest
+        };
+        assert_eq!(root_from_proof(commitment, &outside), None);
+    }
+
+    /// The per-frame half a host uses after verifying the root's signature
+    /// once: membership, the content-binding rule, and named failures — with
+    /// no signature check of its own.
+    #[test]
+    fn inclusion_under_a_verified_root_is_the_per_frame_half() {
+        let frames = vec![frame_with("a", vec![]), frame_with("b", vec![])];
+        let (root, proofs) = root_signed("repo-graph", &frames);
+        let signed_root = parse_digest(&root.signed_commitment).expect("a root");
+        let ordered = result_set_commitments("repo-graph", &frames);
+        for (index, (id, _)) in ordered.iter().enumerate() {
+            let frame = frames
+                .iter()
+                .find(|f| &f.identity("repo-graph") == id)
+                .expect("the leaf's frame");
+            assert_eq!(
+                frame_inclusion_under_verified_root(
+                    "repo-graph",
+                    frame,
+                    &proofs[index],
+                    &signed_root
+                ),
+                AttestationVerdict::Valid
+            );
+        }
+
+        // A different root: a mismatch naming both.
+        let other_root = [9u8; 32];
+        assert!(matches!(
+            frame_inclusion_under_verified_root("repo-graph", &frames[0], &proofs[0], &other_root),
+            AttestationVerdict::CommitmentMismatch { .. }
+        ));
+
+        // A frame with no content digest is a leaf, and binds no content.
+        let mut bare = frames.clone();
+        for frame in &mut bare {
+            frame.content_digest = None;
+        }
+        let (bare_root, bare_proofs) = root_signed("repo-graph", &bare);
+        let bare_signed = parse_digest(&bare_root.signed_commitment).expect("a root");
+        let first = result_set_commitments("repo-graph", &bare)[0].0.clone();
+        let first_frame = bare
+            .iter()
+            .find(|f| f.identity("repo-graph") == first)
+            .expect("the leaf's frame");
+        assert_eq!(
+            frame_inclusion_under_verified_root(
+                "repo-graph",
+                first_frame,
+                &bare_proofs[0],
+                &bare_signed
+            ),
+            AttestationVerdict::ValidIdentityOnly
         );
     }
 

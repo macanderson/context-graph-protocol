@@ -1,6 +1,6 @@
 //! Attestation verification, end to end: a signing provider, a host that holds
 //! its key, and the composition audit that says what was found
-//! (`SPEC.md` §6.5, F8–F9; issues #88 and #91;
+//! (`SPEC.md` §6.5, F8–F9; issues #88, #91, #130, #133 and #136;
 //! [ADR 0016](../../docs/adr/0016-attestation-trust-roots.md)).
 //!
 //! The unit tests in `contextgraph_host::trust` cover the verifier's verdicts.
@@ -15,7 +15,10 @@ use contextgraph_host::{
     AttestationState, AttesterKey, ContextProvider, FrameAttestation, Host, HostError, PinOutcome,
     ProviderResult, RoundRobinByRank, TrustTier, TrustedKey,
 };
-use contextgraph_types::attest::{ProvenanceAttestation, public_key_for, sign_frame_attestation};
+use contextgraph_types::attest::{
+    ProvenanceAttestation, inclusion_proof, merkle_root, public_key_for, result_set_commitments,
+    sign_commitment, sign_frame_attestation,
+};
 use contextgraph_types::capability::QueryCapability;
 use contextgraph_types::{
     Capabilities, ContextFrame, ContextQuery, ContextQueryResult, DataFlow, FrameId, FrameKind,
@@ -700,6 +703,188 @@ async fn pinning_an_unknown_provider_is_an_error() {
         host.pin_attester_keys("nobody"),
         Err(HostError::UnknownProvider(_))
     ));
+}
+
+/// Sign `frames` the cheap way (`SPEC.md` §6.5.3): one signature over the
+/// result-set Merkle root, and one inclusion proof per frame with no per-frame
+/// signature at all. Entries come back in canonical `FrameId` order, which is
+/// the order the leaves were hashed in.
+fn root_signed(
+    frames: &[ContextFrame],
+    seed: &[u8; 32],
+) -> (Vec<FrameAttestation>, ProvenanceAttestation) {
+    let ordered = result_set_commitments(PROVIDER, frames);
+    let commitments: Vec<[u8; 32]> = ordered.iter().map(|(_, commitment)| *commitment).collect();
+    let entries = ordered
+        .iter()
+        .enumerate()
+        .map(|(index, (id, _))| {
+            FrameAttestation::proven(
+                id.clone(),
+                inclusion_proof(&commitments, index).expect("index is in range"),
+            )
+        })
+        .collect();
+    let root = sign_commitment(
+        &merkle_root(&commitments),
+        seed,
+        KEY_ID,
+        "docs-provider",
+        "2026-08-29T00:00:00Z",
+    );
+    (entries, root)
+}
+
+fn three_frames() -> Vec<ContextFrame> {
+    vec![
+        frame("frm_a", "the first proven paragraph"),
+        frame("frm_b", "the second proven paragraph"),
+        frame("frm_c", "the third proven paragraph"),
+    ]
+}
+
+/// #133's first witness: a provider that signs its whole answer once gets
+/// credit for every frame it proves, through the same `AttestationState` and
+/// the same audit field as a per-frame signature — no second vocabulary.
+#[tokio::test]
+async fn every_frame_proven_under_a_signed_root_is_attested_in_the_audit() {
+    let frames = three_frames();
+    let (entries, root) = root_signed(&frames, &SEED);
+    let host =
+        host_trusting(SigningProvider::new(frames.clone(), entries).with_result_attestation(root));
+
+    let fanout = host.query_all(&query()).await;
+    let composed = fanout.compose_for_prompt(1_000);
+    assert_eq!(composed.audit.entries.len(), 3);
+    for entry in &composed.audit.entries {
+        assert_eq!(
+            entry.attestation,
+            AttestationState::Attested {
+                key_id: KEY_ID.to_string(),
+                attester_id: "docs-provider".to_string(),
+                covers_content: true,
+            },
+            "{} is attested through its inclusion proof",
+            entry.frame.frame_id
+        );
+    }
+    assert_eq!(composed.audit.attested().count(), 3);
+    assert!(fanout.any_attested());
+}
+
+/// #133's second witness: `leaf_count` is part of the proof so a verifier
+/// cannot be shown a proof from a differently-shaped tree, and the host honors
+/// it. A provider that hands one frame a proof taken from a four-leaf tree —
+/// the candidate set before it truncated one away — gets that frame reported
+/// as malformed evidence, not attested, while its correctly-proven siblings
+/// stay attested. Every frame is served.
+#[tokio::test]
+async fn a_proof_from_a_differently_shaped_tree_is_not_attested() {
+    let frames = three_frames();
+    let (mut entries, root) = root_signed(&frames, &SEED);
+
+    let mut candidates = frames.clone();
+    candidates.push(frame("frm_d", "a candidate the provider truncated away"));
+    let (wider_entries, _) = root_signed(&candidates, &SEED);
+    let wider_proof = wider_entries[0].inclusion_proof.clone().expect("a proof");
+    assert_eq!(wider_proof.leaf_count, 4);
+    entries[0].inclusion_proof = Some(wider_proof);
+
+    let host =
+        host_trusting(SigningProvider::new(frames.clone(), entries).with_result_attestation(root));
+    let fanout = host.query_all(&query()).await;
+    assert_eq!(fanout.accepted_frames().count(), 3, "F9");
+    let composed = fanout.compose_for_prompt(1_000);
+    let state_of = |id: &str| {
+        composed
+            .audit
+            .entries
+            .iter()
+            .find(|entry| entry.frame.frame_id == id)
+            .expect("in the audit")
+            .attestation
+            .clone()
+    };
+    assert_eq!(
+        state_of("frm_a"),
+        AttestationState::Invalid {
+            verdict: contextgraph_types::AttestationVerdict::MalformedCommitment
+        }
+    );
+    assert!(state_of("frm_b").is_attested());
+    assert!(state_of("frm_c").is_attested());
+    assert!(composed.prompt.contains("the first proven paragraph"));
+}
+
+/// #133's F9 witness: a malformed root, a root signed by somebody else, and a
+/// malformed proof each leave every frame served, included and quoted —
+/// degraded to not-attested, never removed.
+#[tokio::test]
+async fn a_malformed_root_or_proof_leaves_every_frame_served() {
+    let frames = three_frames();
+
+    // 1. A root that is garbage from end to end.
+    let (entries, mut garbage_root) = root_signed(&frames, &SEED);
+    garbage_root.signed_commitment = "not a digest".into();
+    garbage_root.signature = "\u{0}definitely not hex".into();
+    assert_all_served_and_none_attested(
+        SigningProvider::new(frames.clone(), entries).with_result_attestation(garbage_root),
+    )
+    .await;
+
+    // 2. A well-formed root signed by an impostor under the trusted key_id.
+    let (entries, forged_root) = root_signed(&frames, &IMPOSTOR_SEED);
+    assert_all_served_and_none_attested(
+        SigningProvider::new(frames.clone(), entries).with_result_attestation(forged_root),
+    )
+    .await;
+
+    // 3. Honest root, every proof's first sibling replaced with garbage.
+    let (mut entries, root) = root_signed(&frames, &SEED);
+    for entry in &mut entries {
+        if let Some(proof) = entry.inclusion_proof.as_mut() {
+            proof.path[0].sibling = "sha256:zz".into();
+        }
+    }
+    assert_all_served_and_none_attested(
+        SigningProvider::new(frames.clone(), entries).with_result_attestation(root),
+    )
+    .await;
+
+    async fn assert_all_served_and_none_attested(provider: SigningProvider) {
+        let host = host_trusting(provider);
+        let fanout = host.query_all(&query()).await;
+        assert!(matches!(
+            fanout.outcomes[0].result,
+            ProviderResult::Frames(_)
+        ));
+        assert_eq!(fanout.accepted_frames().count(), 3, "F9: nothing removed");
+        let composed = fanout.compose_for_prompt(1_000);
+        assert_eq!(composed.audit.entries.len(), 3);
+        for entry in &composed.audit.entries {
+            assert!(
+                matches!(
+                    entry.disposition,
+                    contextgraph_host::FrameDisposition::Included { .. }
+                ),
+                "F9: {} is included",
+                entry.frame.frame_id
+            );
+            assert!(
+                matches!(entry.attestation, AttestationState::Invalid { .. }),
+                "named, not silently unattested: {:?}",
+                entry.attestation
+            );
+        }
+        assert_eq!(composed.audit.attested().count(), 0);
+        for content in [
+            "the first proven paragraph",
+            "the second proven paragraph",
+            "the third proven paragraph",
+        ] {
+            assert!(composed.prompt.contains(content), "F9: {content} is quoted");
+        }
+    }
 }
 
 /// The single-provider door verifies too, and reports the same states — a host

@@ -75,8 +75,9 @@ use std::collections::{BTreeMap, HashMap};
 
 use contextgraph_types::{
     ALGORITHM_ED25519, AttestationVerdict, ContextFrame, ContextQueryResult, FrameAttestation,
-    FrameId, InclusionProof, KeyValidity, ProvenanceAttestation, WindowPosition,
-    verify_frame_attestation, verify_frame_inclusion,
+    FrameId, InclusionProof, KeyValidity, MAX_INCLUSION_PATH_STEPS, ProvenanceAttestation,
+    WindowPosition, frame_inclusion_under_verified_root, verify_commitment,
+    verify_frame_attestation,
 };
 use serde::{Deserialize, Serialize};
 
@@ -670,7 +671,7 @@ impl TrustStore {
         // is the only provider identifier both ends of the wire observe.
         match verify_frame_attestation(signing_id, frame, attestation, &public_key) {
             verdict @ (AttestationVerdict::Valid | AttestationVerdict::ValidIdentityOnly) => {
-                verified(key, attestation, verdict.binds_content())
+                verified(key.tier, attestation, verdict.binds_content())
             }
             verdict => AttestationState::Invalid { verdict },
         }
@@ -816,6 +817,21 @@ impl TrustStore {
             offered.entry(&entry.frame).or_insert(entry);
         }
 
+        // The answer-level root signature is checked at most once for the
+        // whole result, and only if some entry actually leans on it: `None`
+        // until the first proof-only entry asks, then the one verdict every
+        // later entry reuses. This is the bound that makes a signed root worth
+        // having — n frames cost one signature verification plus n proof walks,
+        // never n signature verifications (#133).
+        let mut root_check: Option<RootCheck> = None;
+        let answer = ResultContext {
+            local_id,
+            signing_id,
+            received_at,
+            root: result.result_attestation.as_ref(),
+            leaf_count: result.frames.len(),
+        };
+
         result
             .frames
             .iter()
@@ -828,14 +844,7 @@ impl TrustStore {
                 // method's doc comment for why.
                 let signing_identity = frame.identity(signing_id);
                 let state = match offered.get(&signing_identity) {
-                    Some(entry) => self.check_entry(
-                        local_id,
-                        signing_id,
-                        frame,
-                        entry,
-                        result.result_attestation.as_ref(),
-                        received_at,
-                    ),
+                    Some(entry) => self.check_entry(&answer, frame, entry, &mut root_check),
                     None => AttestationState::Unattested,
                 };
                 FrameAttestationOutcome {
@@ -862,19 +871,26 @@ impl TrustStore {
     /// and checking it costs one verification rather than a walk plus one.
     fn check_entry(
         &self,
-        local_id: &str,
-        signing_id: &str,
+        answer: &ResultContext<'_>,
         frame: &ContextFrame,
         entry: &FrameAttestation,
-        result_attestation: Option<&ProvenanceAttestation>,
-        received_at: &str,
+        root_check: &mut Option<RootCheck>,
     ) -> AttestationState {
         if let Some(attestation) = &entry.attestation {
-            return self.check_signed_as_at(local_id, signing_id, frame, attestation, received_at);
+            return self.check_signed_as_at(
+                answer.local_id,
+                answer.signing_id,
+                frame,
+                attestation,
+                answer.received_at,
+            );
         }
-        match (&entry.inclusion_proof, result_attestation) {
+        match (&entry.inclusion_proof, answer.root) {
             (Some(proof), Some(root)) => {
-                self.check_inclusion(local_id, signing_id, frame, proof, root, received_at)
+                let checked = root_check.get_or_insert_with(|| {
+                    self.check_root(answer.local_id, root, answer.received_at)
+                });
+                check_inclusion(answer, frame, proof, root, checked)
             }
             // A proof of membership of a root the answer never carried, or an
             // entry naming a frame and asserting nothing about it. Neither can
@@ -884,67 +900,165 @@ impl TrustStore {
         }
     }
 
-    /// Check one frame's membership of the signed result-set root
-    /// (`SPEC.md` §6.5.3, F13).
+    /// Check the answer-level `result_attestation` — the signature over the
+    /// §6.5.3 Merkle root — **once**, for every proof-only entry in the result
+    /// to share.
     ///
     /// Ordered exactly as [`check`](Self::check) is, and for the same reason:
-    /// the scheme, then the key, then the structural lengths, and only then any
-    /// hashing. The key lookup in particular is the bound that keeps an
-    /// untrusted peer from spending this host's CPU walking a Merkle path —
-    /// reaching the walk at all requires an operator to have trusted a key
-    /// under the root attestation's exact `key_id`.
-    /// [`check_inclusion`](Self::check_inclusion) — same two-id split as
-    /// [`check_signed_as`](Self::check_signed_as) and for the same reason:
-    /// `local_id` keys the trust lookup, `signing_id` recomputes the root
-    /// (`frame_commitment` inside [`verify_frame_inclusion`]), because the
-    /// root was built over commitments the provider signed under its own
-    /// declared name.
-    fn check_inclusion(
+    /// the scheme, then the key (and its window), then the structural lengths,
+    /// and only then any cryptography. The key lookup in particular is the
+    /// bound that keeps an untrusted peer from spending this host's CPU:
+    /// reaching the signature check, or any proof walk, requires an operator
+    /// to have trusted a key under the root's exact `key_id`, in service when
+    /// the answer arrived.
+    ///
+    /// A failure here is every proof-only frame's state: a root that does not
+    /// verify attests nothing, and F9 serves each of those frames regardless.
+    fn check_root(
         &self,
         local_id: &str,
-        signing_id: &str,
-        frame: &ContextFrame,
-        proof: &InclusionProof,
         root: &ProvenanceAttestation,
         received_at: &str,
-    ) -> AttestationState {
+    ) -> RootCheck {
         if root.algorithm != ALGORITHM_ED25519 {
-            return AttestationState::UnknownAlgorithm {
+            return RootCheck::Failed(AttestationState::UnknownAlgorithm {
                 algorithm: echoed(&root.algorithm),
-            };
+            });
         }
         let key = match self.key_in_service(local_id, &root.key_id, received_at) {
             Ok(key) => key,
-            Err(state) => return state,
+            Err(state) => return RootCheck::Failed(state),
         };
+        let invalid = |verdict| RootCheck::Failed(AttestationState::Invalid { verdict });
         if root.signed_commitment.len() != COMMITMENT_LEN {
-            return AttestationState::Invalid {
-                verdict: AttestationVerdict::MalformedCommitment,
-            };
+            return invalid(AttestationVerdict::MalformedCommitment);
         }
         if root.signature.len() != ED25519_SIGNATURE_HEX_LEN {
-            return AttestationState::Invalid {
-                verdict: AttestationVerdict::MalformedSignature,
-            };
+            return invalid(AttestationVerdict::MalformedSignature);
         }
         let Some(public_key) = decode_hex(&key.public_key) else {
-            return AttestationState::Invalid {
-                verdict: AttestationVerdict::MalformedKey,
-            };
+            return invalid(AttestationVerdict::MalformedKey);
+        };
+        // The root's own bytes. `verify_commitment` below re-parses
+        // `signed_commitment` under the protocol's lowercase-only grammar and
+        // compares it with these, so a spelling this lenient decode accepts
+        // and the grammar does not still ends as `MalformedCommitment`.
+        let Some(signed_root) = root
+            .signed_commitment
+            .strip_prefix("sha256:")
+            .and_then(decode_hex)
+            .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+        else {
+            return invalid(AttestationVerdict::MalformedCommitment);
         };
 
-        // `covers_content` is read off the verdict rather than re-derived, for
-        // the reason `check` gives: the rule for what a commitment binds lives
-        // in `frame_commitment`, and both call sites stay downstream of it
-        // (#128).
-        match verify_frame_inclusion(signing_id, frame, proof, root, &public_key) {
-            verdict @ (AttestationVerdict::Valid | AttestationVerdict::ValidIdentityOnly) => {
-                verified(key, root, verdict.binds_content())
-            }
-            verdict => AttestationState::Invalid { verdict },
+        note_root_signature_check();
+        match verify_commitment(&signed_root, root, &public_key) {
+            AttestationVerdict::Valid => RootCheck::Verified {
+                root: signed_root,
+                tier: key.tier,
+            },
+            verdict => invalid(verdict),
         }
     }
 }
+
+/// What checking a result's `result_attestation` found — computed at most once
+/// per result by [`TrustStore::check_result_signed_as_at`] and shared by every
+/// proof-only entry in it.
+enum RootCheck {
+    /// The root's signature verified against a key this host trusts, in
+    /// service when the answer arrived.
+    Verified {
+        /// The signed root's 32 bytes, which each proof must recompute.
+        root: [u8; 32],
+        /// The tier of the key that verified it.
+        tier: TrustTier,
+    },
+    /// The root did not verify, or could not be checked. This state is every
+    /// proof-only frame's state.
+    Failed(AttestationState),
+}
+
+/// The per-result facts every entry's check reads, gathered once so the
+/// per-entry functions take one argument rather than six.
+struct ResultContext<'a> {
+    /// The operator's id for the provider: what trust is keyed on.
+    local_id: &'a str,
+    /// The provider's declared name: what the commitments were built under.
+    signing_id: &'a str,
+    /// The instant the answer was received, for key validity windows.
+    received_at: &'a str,
+    /// The answer-level root signature, if the answer carried one.
+    root: Option<&'a ProvenanceAttestation>,
+    /// How many frames the answer carries — the only `leaf_count` a proof of
+    /// membership of its root may state (F12).
+    leaf_count: usize,
+}
+
+/// Check one frame's membership of the signed result-set root
+/// (`SPEC.md` §6.5.3, F13), given the root's already-computed [`RootCheck`].
+///
+/// Everything that can be refused without hashing is refused first, in this
+/// order: a root that did not verify, a proof whose `leaf_count` is not the
+/// number of frames the answer carries (F12: the root is over *exactly* those
+/// frames), a path longer than [`MAX_INCLUSION_PATH_STEPS`], and a path whose
+/// length or sides are not the RFC 6962 shape for its
+/// `(leaf_index, leaf_count)` ([`InclusionProof::is_well_shaped`]). Only a
+/// proof that passes all of them costs a commitment and a walk of at most
+/// `ceil(log2(leaf_count))` hashes.
+///
+/// `signing_id` recomputes the leaf, not `local_id`, for the reason
+/// [`TrustStore::check_signed_as`] gives: the root was built over commitments
+/// the provider made under its own declared name.
+fn check_inclusion(
+    answer: &ResultContext<'_>,
+    frame: &ContextFrame,
+    proof: &InclusionProof,
+    root: &ProvenanceAttestation,
+    checked: &RootCheck,
+) -> AttestationState {
+    let (signed_root, tier) = match checked {
+        RootCheck::Verified { root, tier } => (root, *tier),
+        RootCheck::Failed(state) => return state.clone(),
+    };
+    if proof.leaf_count != answer.leaf_count
+        || proof.path.len() > MAX_INCLUSION_PATH_STEPS
+        || !proof.is_well_shaped()
+    {
+        return AttestationState::Invalid {
+            verdict: AttestationVerdict::MalformedCommitment,
+        };
+    }
+
+    // `covers_content` is read off the verdict rather than re-derived, for the
+    // reason `check` gives: the rule for what a commitment binds lives in
+    // `contextgraph_types::attest`, and this stays downstream of it (#128).
+    match frame_inclusion_under_verified_root(answer.signing_id, frame, proof, signed_root) {
+        verdict @ (AttestationVerdict::Valid | AttestationVerdict::ValidIdentityOnly) => {
+            verified(tier, root, verdict.binds_content())
+        }
+        verdict => AttestationState::Invalid { verdict },
+    }
+}
+
+/// How many times this thread has checked a result-set root's signature — the
+/// witness for the once-per-result bound (#133). Test builds only, and
+/// per-thread so parallel tests cannot see each other's counts.
+#[cfg(test)]
+thread_local! {
+    static ROOT_SIGNATURE_CHECKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Count one root signature check, in a test build; nothing otherwise.
+#[cfg(test)]
+fn note_root_signature_check() {
+    ROOT_SIGNATURE_CHECKS.with(|checks| checks.set(checks.get() + 1));
+}
+
+/// Count one root signature check, in a test build; nothing otherwise.
+#[cfg(not(test))]
+fn note_root_signature_check() {}
 
 /// What a host found when it checked one frame's attestation (ADR 0016 §4).
 ///
@@ -1231,19 +1345,19 @@ impl FromIterator<FrameAttestationOutcome> for AttestationLedger {
     }
 }
 
-/// The state for a signature that verified against `key`:
+/// The state for a signature that verified against a key of `tier`:
 /// [`Attested`](AttestationState::Attested) for an operator-configured key,
 /// [`Pinned`](AttestationState::Pinned) for one pinned on first use. The one
 /// place a tier becomes a state, so no path can report a pinned key as
 /// configured.
 fn verified(
-    key: &TrustedKey,
+    tier: TrustTier,
     attestation: &ProvenanceAttestation,
     covers_content: bool,
 ) -> AttestationState {
     let key_id = attestation.key_id.clone();
     let attester_id = echoed(&attestation.attester_id);
-    match key.tier {
+    match tier {
         TrustTier::Configured => AttestationState::Attested {
             key_id,
             attester_id,
@@ -1919,7 +2033,7 @@ mod tests {
     fn an_unbounded_inclusion_path_is_rejected_on_its_length() {
         // Every step of the path costs a hash and the path comes from the
         // provider. `MAX_INCLUSION_PATH_STEPS` caps the walk before it starts.
-        use contextgraph_types::{InclusionStep, MAX_INCLUSION_PATH_STEPS};
+        use contextgraph_types::InclusionStep;
 
         let one = frame("frm_1");
         let mut result = root_signed_result(vec![one.clone()], &SEED);
@@ -1937,6 +2051,104 @@ mod tests {
 
         assert_eq!(
             store_trusting(&SEED).check_result(PROVIDER, &result)[0].state,
+            AttestationState::Invalid {
+                verdict: AttestationVerdict::MalformedCommitment
+            }
+        );
+    }
+
+    /// The bound #133 names: a signed root is verified **once per result**,
+    /// however many frames lean on it, and only when a proof-only entry
+    /// actually needs it. Counted, not asserted in a comment.
+    #[test]
+    fn a_result_set_root_signature_is_verified_once_per_result_not_once_per_frame() {
+        let checks = || ROOT_SIGNATURE_CHECKS.with(|count| count.get());
+        let frames: Vec<ContextFrame> = (0..12).map(|i| frame(&format!("frm_{i:02}"))).collect();
+        let result = root_signed_result(frames.clone(), &SEED);
+
+        let before = checks();
+        let outcomes = store_trusting(&SEED).check_result(PROVIDER, &result);
+        assert_eq!(outcomes.len(), 12);
+        assert!(outcomes.iter().all(|outcome| outcome.state.is_attested()));
+        assert_eq!(checks() - before, 1, "twelve frames, one signature check");
+
+        // A forged root is also checked once, and its failure is every
+        // proof-only frame's state — each still served (F9).
+        let root = contextgraph_types::result_set_root(PROVIDER, &frames);
+        let mut forged = result.clone();
+        forged.result_attestation = Some(sign_commitment(
+            &root,
+            &OTHER_SEED,
+            KEY_ID,
+            "docs-provider",
+            "2026-08-29T00:00:00Z",
+        ));
+        let before = checks();
+        let outcomes = store_trusting(&SEED).check_result(PROVIDER, &forged);
+        assert_eq!(checks() - before, 1);
+        assert_eq!(
+            outcomes.len(),
+            12,
+            "F9: every frame has a state and is kept"
+        );
+        assert!(outcomes.iter().all(|outcome| {
+            outcome.state
+                == AttestationState::Invalid {
+                    verdict: AttestationVerdict::BadSignature,
+                }
+        }));
+
+        // No trusted key: nothing is verified at all.
+        let before = checks();
+        let _ = TrustStore::new().check_result(PROVIDER, &result);
+        assert_eq!(checks() - before, 0);
+
+        // Per-frame signatures only: the root is never consulted.
+        let per_frame = ContextQueryResult {
+            frame_attestations: frames
+                .iter()
+                .map(|f| FrameAttestation::signed(f.identity(PROVIDER), signed(f, &SEED)))
+                .collect(),
+            ..ContextQueryResult::unattested(frames.clone(), false, None)
+        };
+        let before = checks();
+        let _ = store_trusting(&SEED).check_result(PROVIDER, &per_frame);
+        assert_eq!(checks() - before, 0);
+    }
+
+    /// `leaf_count` is honored: F12 puts exactly the answer's frames under
+    /// the root, so a proof stating any other tree size is refused on that
+    /// fact, before a hash is spent — and so is a proof whose path does not
+    /// have the shape its own `(leaf_index, leaf_count)` dictates.
+    #[test]
+    fn a_proof_from_a_differently_shaped_tree_is_refused_before_hashing() {
+        let frames = vec![frame("frm_1"), frame("frm_2"), frame("frm_3")];
+        let mut resized = root_signed_result(frames.clone(), &SEED);
+        let proof = resized.frame_attestations[0]
+            .inclusion_proof
+            .as_mut()
+            .expect("a proof");
+        proof.leaf_count = 4;
+        let outcomes = store_trusting(&SEED).check_result(PROVIDER, &resized);
+        assert_eq!(
+            outcomes[0].state,
+            AttestationState::Invalid {
+                verdict: AttestationVerdict::MalformedCommitment
+            }
+        );
+        assert!(
+            outcomes[1].state.is_attested(),
+            "its siblings are unaffected"
+        );
+
+        let mut reshaped = root_signed_result(frames, &SEED);
+        let proof = reshaped.frame_attestations[2]
+            .inclusion_proof
+            .as_mut()
+            .expect("a proof");
+        proof.path[0].sibling_is_left = !proof.path[0].sibling_is_left;
+        assert_eq!(
+            store_trusting(&SEED).check_result(PROVIDER, &reshaped)[2].state,
             AttestationState::Invalid {
                 verdict: AttestationVerdict::MalformedCommitment
             }
