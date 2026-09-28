@@ -1,16 +1,16 @@
 //! Cross-provider ranking policy, driven through the public host API only
-//! (`SPEC.md` §6.6, F10; issue #95).
+//! (`SPEC.md` §6.6, F10; issues #95, #115, #116).
 //!
 //! An integration test rather than a unit one, because the thing under test is
 //! precisely that a host *outside* this crate can bring its own cross-provider
 //! ranking. Everything here is reachable from `contextgraph_host`'s root.
 
 use contextgraph_host::{
-    ComposedPrompt, ExclusionReason, FrameDisposition, PerProviderQuota, RankingStrategy,
-    RoundRobinByRank, ScoreDescending, compose_for_prompt_with, is_ranking_permutation, rank_with,
-    rendered_token_cost,
+    ComposedPrompt, ExclusionReason, FrameDisposition, PerProviderQuota, PrecomputedOrder,
+    RankingStrategy, RoundRobinByRank, ScoreDescending, TrustWeighted, compose_for_prompt,
+    compose_for_prompt_with, is_ranking_permutation, rank_with, rendered_token_cost,
 };
-use contextgraph_types::{ContextFrame, FrameKind, budget_tokens};
+use contextgraph_types::{ContextFrame, FrameId, FrameKind, budget_tokens};
 
 /// A frame whose `token_cost` is the canonical cost of its content, with a
 /// digest unique to `(provider, id)` so no two test frames are ever taken
@@ -156,10 +156,14 @@ fn every_strategy_is_a_pure_function_of_the_set() {
     // Two runs over the same frames must produce the same order, or a
     // host's prompt stops being reproducible. Arrival order must not
     // matter either: the same set shuffled ranks identically.
-    let strategies: [&dyn RankingStrategy; 3] = [
+    let trust = lex_trusted();
+    let reranked = reranked_lex_first();
+    let strategies: [&dyn RankingStrategy; 5] = [
         &ScoreDescending,
         &RoundRobinByRank,
         &PerProviderQuota::new(2),
+        &trust,
+        &reranked,
     ];
     for strategy in strategies {
         let first = ids(strategy, generous_and_conservative());
@@ -190,10 +194,14 @@ fn a_composed_prompt_is_byte_identical_across_two_runs_of_the_same_strategy() {
     let frames = generous_and_conservative();
     let borrowed: Vec<(&str, &ContextFrame)> =
         frames.iter().map(|(p, f)| (p.as_str(), f)).collect();
-    let strategies: [&dyn RankingStrategy; 3] = [
+    let trust = lex_trusted();
+    let reranked = reranked_lex_first();
+    let strategies: [&dyn RankingStrategy; 5] = [
         &ScoreDescending,
         &RoundRobinByRank,
         &PerProviderQuota::new(3),
+        &trust,
+        &reranked,
     ];
     for strategy in strategies {
         let first = compose_for_prompt_with(borrowed.iter().copied(), 1000, strategy);
@@ -204,7 +212,7 @@ fn a_composed_prompt_is_byte_identical_across_two_runs_of_the_same_strategy() {
             "{}: the same set must compose to the same bytes",
             strategy.policy_name()
         );
-        assert_eq!(first.audit.entries, second.audit.entries);
+        assert_eq!(first.audit, second.audit);
     }
 }
 
@@ -267,14 +275,33 @@ fn with_one_provider_every_strategy_agrees_with_raw_score() {
     assert_eq!(ids(&RoundRobinByRank, single()), baseline);
     assert_eq!(ids(&PerProviderQuota::new(1), single()), baseline);
     assert_eq!(ids(&PerProviderQuota::new(7), single()), baseline);
+    // Trust weights scale allocation between providers; with one provider
+    // there is nothing to allocate between, whatever the weight — including
+    // a last-resort zero.
+    assert_eq!(ids(&TrustWeighted::default(), single()), baseline);
+    assert_eq!(
+        ids(&TrustWeighted::default().with_weight("only", 3), single()),
+        baseline
+    );
+    assert_eq!(ids(&TrustWeighted::new(0), single()), baseline);
+    // A precomputed order that names nothing falls back to round robin,
+    // which with one provider is score order.
+    assert_eq!(
+        ids(&PrecomputedOrder::new("empty-rerank", Vec::new()), single()),
+        baseline
+    );
 }
 
 #[test]
 fn an_empty_set_ranks_to_an_empty_set() {
+    let trust = TrustWeighted::default();
+    let reranked = reranked_lex_first();
     for strategy in [
         &ScoreDescending as &dyn RankingStrategy,
         &RoundRobinByRank,
         &PerProviderQuota::default(),
+        &trust,
+        &reranked,
     ] {
         assert!(rank_with(strategy, Vec::new()).is_empty());
     }
@@ -312,11 +339,28 @@ fn every_shipped_strategy_returns_a_permutation() {
     // tests should assert it.
     let frames = generous_and_conservative();
     let n = frames.len();
+    let trust = lex_trusted();
+    let last_resort = TrustWeighted::default().with_weight("sem", 0);
+    let reranked = reranked_lex_first();
+    // A partial order with a repeat and an identity matching no frame: the
+    // shapes a real reranker's output takes when it times out or misfires.
+    let partial = PrecomputedOrder::new(
+        "partial-rerank",
+        [
+            id_of("sem", "sem-3"),
+            id_of("sem", "sem-3"),
+            FrameId::new("nowhere", "ghost", None),
+        ],
+    );
     for strategy in [
         &ScoreDescending as &dyn RankingStrategy,
         &RoundRobinByRank,
         &PerProviderQuota::new(2),
         &PerProviderQuota::default(),
+        &trust,
+        &last_resort,
+        &reranked,
+        &partial,
     ] {
         assert!(
             is_ranking_permutation(&strategy.order(&frames), n),
@@ -378,11 +422,15 @@ fn no_strategy_can_select_a_set_that_exceeds_the_budget() {
     // could push the composition over budget that would be a bug, not a
     // policy choice — so the bound is re-proved for each of them, and the
     // audit stays a total partition that explains every drop.
-    let strategies: [&dyn RankingStrategy; 4] = [
+    let trust = TrustWeighted::default()
+        .with_weight("prov0", 3)
+        .with_weight("prov1", 0);
+    let strategies: [&dyn RankingStrategy; 5] = [
         &ScoreDescending,
         &RoundRobinByRank,
         &PerProviderQuota::new(1),
         &PerProviderQuota::new(3),
+        &trust,
     ];
     let mut rng = Lcg(0x5EED_1234_ABCD_9876);
     for iter in 0..300u64 {
@@ -409,10 +457,29 @@ fn no_strategy_can_select_a_set_that_exceeds_the_budget() {
             .collect();
         let borrowed: Vec<(&str, &ContextFrame)> =
             frames.iter().map(|(p, f)| (p.as_str(), f)).collect();
+        // A reranker's order over this iteration's frames — reversed arrival,
+        // an order no shipped strategy would produce — naming only every
+        // other frame, so the unnamed fallback is exercised too.
+        let reranked = PrecomputedOrder::new(
+            "reverse-arrival-rerank",
+            frames
+                .iter()
+                .rev()
+                .step_by(2)
+                .map(|(p, f)| f.identity(p.as_str())),
+        );
 
-        for strategy in strategies {
+        for strategy in strategies
+            .into_iter()
+            .chain([&reranked as &dyn RankingStrategy])
+        {
             let composed = compose_for_prompt_with(borrowed.iter().copied(), budget, strategy);
             let audit = &composed.audit;
+            assert_eq!(
+                audit.ranking_policy,
+                strategy.policy_name(),
+                "iter {iter}: the audit names the policy that ran"
+            );
             assert!(
                 audit.tokens_used <= budget,
                 "iter {iter} / {}: tokens_used {} > budget {budget}",
@@ -446,4 +513,319 @@ fn no_strategy_can_select_a_set_that_exceeds_the_budget() {
             }
         }
     }
+}
+
+// ---- trust weights (issue #115) ----
+
+/// The canonical identity `mk` gives a frame, for naming frames in a
+/// precomputed order.
+fn id_of(provider: &str, id: &str) -> FrameId {
+    FrameId::new(provider, id, Some(format!("sha256:{provider}-{id}")))
+}
+
+/// A host that trusts the conservative provider twice as much as it trusts
+/// anyone else.
+fn lex_trusted() -> TrustWeighted {
+    TrustWeighted::default().with_weight("lex", 2)
+}
+
+/// A reranker's verdict over `generous_and_conservative`, naming three of
+/// its seven frames — the shape a reranker that timed out partway produces.
+fn reranked_lex_first() -> PrecomputedOrder {
+    PrecomputedOrder::new(
+        "test-reranker:lex-first",
+        [
+            id_of("lex", "lex-3"),
+            id_of("sem", "sem-4"),
+            id_of("lex", "lex-1"),
+        ],
+    )
+}
+
+#[test]
+fn a_trust_weight_deals_a_provider_that_many_frames_per_round() {
+    // `lex` weight 2, `sem` the default 1: `lex`'s best two, `sem`'s best,
+    // `lex`'s third, then `sem`'s remainder one per round.
+    assert_eq!(
+        ids(&lex_trusted(), generous_and_conservative()),
+        [
+            "lex-1", "lex-2", "sem-1", "lex-3", "sem-2", "sem-3", "sem-4"
+        ],
+    );
+    // Move the trust and the allocation moves with it.
+    assert_eq!(
+        ids(
+            &TrustWeighted::default().with_weight("sem", 3),
+            generous_and_conservative()
+        ),
+        [
+            "lex-1", "sem-1", "sem-2", "sem-3", "lex-2", "sem-4", "lex-3"
+        ],
+    );
+}
+
+#[test]
+fn a_trust_weight_scales_allocation_never_score() {
+    // F10: a weighted score is still a score. The witness is that the
+    // strategy is blind to the *scale* of a provider's scores — rescale
+    // `sem` from the 0.9 band to the 0.05 band, keeping its internal order,
+    // and the trust-weighted ranking does not move. Raw score ordering
+    // moves completely, which is the control.
+    let rescaled = || -> Vec<(String, ContextFrame)> {
+        generous_and_conservative()
+            .into_iter()
+            .map(|(provider, mut frame)| {
+                if provider == "sem" {
+                    frame.score /= 18.0;
+                }
+                (provider, frame)
+            })
+            .collect()
+    };
+    for trust in [
+        lex_trusted(),
+        TrustWeighted::default().with_weight("sem", 3),
+        TrustWeighted::new(2).with_weight("lex", 0),
+    ] {
+        assert_eq!(
+            ids(&trust, rescaled()),
+            ids(&trust, generous_and_conservative()),
+            "weights {:?}: a provider's score scale must not reach the ranking",
+            trust.weights().collect::<Vec<_>>()
+        );
+    }
+    assert_ne!(
+        ids(&ScoreDescending, rescaled()),
+        ids(&ScoreDescending, generous_and_conservative()),
+        "the control: raw score is exactly what the rescale moves"
+    );
+}
+
+#[test]
+fn a_trust_weight_decides_how_much_of_a_tight_budget_each_provider_gets() {
+    // The consequence a host actually buys: under the four-frame budget of
+    // the starvation scenario, the weight decides each provider's share —
+    // and both providers are seated, which raw score cannot promise.
+    let frames = generous_and_conservative();
+    let borrowed: Vec<(&str, &ContextFrame)> =
+        frames.iter().map(|(p, f)| (p.as_str(), f)).collect();
+    let budget: u32 = 4 * rendered_token_cost("sem", &frames[0].1);
+    let share = |strategy: &TrustWeighted| -> (usize, usize) {
+        let composed = compose_for_prompt_with(borrowed.iter().copied(), budget, strategy);
+        let cited = |provider: &str| {
+            composed
+                .citations
+                .iter()
+                .filter(|c| c.frame.provider_id == provider)
+                .count()
+        };
+        (cited("lex"), cited("sem"))
+    };
+    assert_eq!(share(&TrustWeighted::default()), (2, 2), "equal trust");
+    assert_eq!(
+        share(&TrustWeighted::default().with_weight("sem", 3)),
+        (1, 3)
+    );
+    assert_eq!(
+        share(&TrustWeighted::default().with_weight("lex", 3)),
+        (3, 1)
+    );
+}
+
+#[test]
+fn a_zero_weight_is_a_last_resort_not_an_exclusion() {
+    // A strategy ranks; it never filters. A provider the host does not
+    // trust still has its frames ranked — after everyone else's — and a
+    // budget that runs out first records them as over-budget in the audit.
+    let distrust_sem = TrustWeighted::default().with_weight("sem", 0);
+    assert_eq!(
+        ids(&distrust_sem, generous_and_conservative()),
+        [
+            "lex-1", "lex-2", "lex-3", "sem-1", "sem-2", "sem-3", "sem-4"
+        ],
+    );
+
+    let frames = generous_and_conservative();
+    let borrowed: Vec<(&str, &ContextFrame)> =
+        frames.iter().map(|(p, f)| (p.as_str(), f)).collect();
+    let budget: u32 = 4 * rendered_token_cost("sem", &frames[0].1);
+    let composed = compose_for_prompt_with(borrowed.iter().copied(), budget, &distrust_sem);
+    assert_eq!(composed.audit.entries.len(), frames.len());
+    let excluded_sem = composed
+        .audit
+        .excluded()
+        .filter(|entry| entry.frame.provider_id == "sem")
+        .count();
+    assert_eq!(
+        excluded_sem, 3,
+        "sem-1 fits; the rest are dropped with a reason"
+    );
+    assert!(composed.audit.explains_every_drop());
+}
+
+#[test]
+fn trust_weighting_degenerates_to_the_unweighted_strategies() {
+    // Unconfigured is a round robin; uniform weight `k` is a quota of `k`.
+    // The weighted strategy generalizes the two; it does not compete with
+    // them.
+    assert_eq!(
+        ids(&TrustWeighted::default(), generous_and_conservative()),
+        ids(&RoundRobinByRank, generous_and_conservative()),
+    );
+    for k in [2u32, 3, 5] {
+        assert_eq!(
+            ids(&TrustWeighted::new(k), generous_and_conservative()),
+            ids(
+                &PerProviderQuota::new(k as usize),
+                generous_and_conservative()
+            ),
+            "uniform weight {k}"
+        );
+    }
+    let trust = TrustWeighted::new(2)
+        .with_weight("sem", 4)
+        .with_weight("lex", 1);
+    assert_eq!(trust.weight_for("sem"), 4);
+    assert_eq!(trust.weight_for("unlisted"), 2);
+    assert_eq!(trust.default_weight(), 2);
+    assert_eq!(
+        trust.weights().collect::<Vec<_>>(),
+        [("lex", 1), ("sem", 4)],
+        "the table is reported in provider-id order, whatever the build order"
+    );
+}
+
+// ---- a host's own reranker, run before composition (issue #115) ----
+
+#[test]
+fn a_precomputed_order_leads_and_the_unnamed_frames_follow_in_round_robin() {
+    // The three named frames lead in the reranker's order; the four it did
+    // not name follow in `RoundRobinByRank` order (restricted to them), so
+    // the fallback makes no cross-provider score comparison of its own.
+    assert_eq!(
+        ids(&reranked_lex_first(), generous_and_conservative()),
+        [
+            "lex-3", "sem-4", "lex-1", "sem-1", "lex-2", "sem-2", "sem-3"
+        ],
+    );
+    let reranked = reranked_lex_first();
+    assert_eq!(reranked.position_of(&id_of("sem", "sem-4")), Some(1));
+    assert_eq!(reranked.position_of(&id_of("sem", "sem-1")), None);
+}
+
+#[test]
+fn a_precomputed_order_survives_repeats_and_strangers() {
+    // A repeated identity keeps its first position; an identity that names
+    // no offered frame is ignored. Neither moves or drops anything else.
+    let messy = PrecomputedOrder::new(
+        "messy",
+        [
+            id_of("sem", "sem-2"),
+            FrameId::new("nowhere", "ghost", None),
+            id_of("lex", "lex-2"),
+            id_of("sem", "sem-2"),
+        ],
+    );
+    assert_eq!(messy.position_of(&id_of("sem", "sem-2")), Some(0));
+    let ranked = ids(&messy, generous_and_conservative());
+    assert_eq!(&ranked[..2], &["sem-2", "lex-2"]);
+    assert_eq!(ranked.len(), 7);
+}
+
+#[test]
+fn a_reranked_order_is_keyed_by_identity_so_dedup_cannot_shift_it() {
+    // The host reranks everything it received, before composition — and
+    // composition then de-duplicates, which changes the slice (and every
+    // index) the strategy sees. Keyed by `FrameId`, the host's order still
+    // lands exactly: the dropped duplicate simply is not there to place.
+    let shared = |provider: &str, id: &str, score: f32| {
+        let (provider, mut frame) = mk(provider, id, score, "same");
+        frame.content_digest = Some("sha256:shared".to_string());
+        (provider, frame)
+    };
+    let frames = [
+        shared("sem", "shared-a", 0.9),
+        shared("lex", "shared-b", 0.3),
+        mk("lex", "lex-x", 0.2, "xxxx"),
+        mk("sem", "sem-y", 0.5, "yyyy"),
+    ];
+    // The reranker preferred the copy dedup is about to discard.
+    let reranked = PrecomputedOrder::new(
+        "test-reranker",
+        [
+            FrameId::new("lex", "shared-b", Some("sha256:shared".to_string())),
+            id_of("lex", "lex-x"),
+            id_of("sem", "sem-y"),
+            FrameId::new("sem", "shared-a", Some("sha256:shared".to_string())),
+        ],
+    );
+    let borrowed: Vec<(&str, &ContextFrame)> =
+        frames.iter().map(|(p, f)| (p.as_str(), f)).collect();
+    let composed = compose_for_prompt_with(borrowed.iter().copied(), 10_000, &reranked);
+    let included: Vec<String> = composed
+        .audit
+        .included()
+        .map(|id| id.frame_id.clone())
+        .collect();
+    assert_eq!(included, ["lex-x", "sem-y", "shared-a"]);
+    assert_eq!(composed.audit.excluded().count(), 1, "the duplicate");
+    assert_eq!(composed.audit.ranking_policy, "test-reranker");
+}
+
+// ---- the audit names the policy (issue #116) ----
+
+#[test]
+fn the_audit_records_which_ranking_policy_ordered_the_frames() {
+    // F10 says a host that orders frames across providers must document the
+    // choice as its own. The choice is made per call, so the audit of the
+    // call is where it is recorded.
+    let frames = generous_and_conservative();
+    let borrowed: Vec<(&str, &ContextFrame)> =
+        frames.iter().map(|(p, f)| (p.as_str(), f)).collect();
+    let budget: u32 = 4 * rendered_token_cost("sem", &frames[0].1);
+
+    let by_score = compose_for_prompt_with(borrowed.iter().copied(), budget, &ScoreDescending);
+    let interleaved = compose_for_prompt_with(borrowed.iter().copied(), budget, &RoundRobinByRank);
+    assert_eq!(by_score.audit.ranking_policy, "score-descending");
+    assert_eq!(interleaved.audit.ranking_policy, "round-robin-by-rank");
+    assert_ne!(
+        by_score.audit.ranking_policy,
+        interleaved.audit.ranking_policy
+    );
+
+    // The default entry point records its default, rather than nothing.
+    let defaulted = compose_for_prompt(borrowed.iter().copied(), budget);
+    assert_eq!(defaulted.audit, by_score.audit);
+
+    // A host-named strategy records the host's name for it.
+    let rerank_strategy = reranked_lex_first();
+    let reranked = compose_for_prompt_with(borrowed.iter().copied(), budget, &rerank_strategy);
+    assert_eq!(reranked.audit.ranking_policy, "test-reranker:lex-first");
+    let trust = lex_trusted();
+    let trusted = compose_for_prompt_with(borrowed.iter().copied(), budget, &trust);
+    assert_eq!(trusted.audit.ranking_policy, "trust-weighted");
+}
+
+#[test]
+fn two_policies_that_agree_on_every_frame_still_leave_different_audits() {
+    // With one provider every strategy selects and orders the same frames,
+    // so every entry matches — and the audits still differ, because the
+    // rule that produced the composition is part of the record.
+    let single = [
+        mk("only", "a", 0.9, "aaaa"),
+        mk("only", "b", 0.5, "bbbb"),
+        mk("only", "c", 0.7, "cccc"),
+    ];
+    let borrowed: Vec<(&str, &ContextFrame)> =
+        single.iter().map(|(p, f)| (p.as_str(), f)).collect();
+    let budget: u32 = 2 * rendered_token_cost("only", &single[0].1);
+    let quota_of_two = PerProviderQuota::new(2);
+    let by_score = compose_for_prompt_with(borrowed.iter().copied(), budget, &ScoreDescending);
+    let quota = compose_for_prompt_with(borrowed.iter().copied(), budget, &quota_of_two);
+    assert_eq!(by_score.audit.entries, quota.audit.entries);
+    assert_eq!(by_score.prompt, quota.prompt);
+    assert_ne!(
+        by_score.audit, quota.audit,
+        "the same frames under two policies are two different compositions"
+    );
 }

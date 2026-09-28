@@ -1,6 +1,8 @@
 # 0015 — Cross-provider ranking is a seam, not a function
 
-**Status:** Accepted (`contextgraph/1.0`; additive in Rust, no wire change)
+**Status:** Accepted (`contextgraph/1.0`; additive in Rust, no wire change).
+Amended 2026-09-28 — trust weighting, the reranker hook, and the audited
+ranking policy; see [the amendment](#amendment-trust-weights-a-reranker-and-an-audited-policy).
 
 ## Context
 
@@ -166,3 +168,131 @@ toss; a score comparison would dress one up as a judgement.
   only the packer records a reason.
 - Trust weighting and a reranker hook remain unbuilt, by choice. Their shape is
   now fixed by the trait, so adding one is a new type, not a redesign.
+  *(Superseded by the 2026-09-28 amendment below: both are now built, as new
+  types, with no change to the trait.)*
+
+## Amendment: trust weights, a reranker, and an audited policy
+
+*2026-09-28, [#115](https://github.com/macanderson/context-graph-protocol/issues/115)
+and [#116](https://github.com/macanderson/context-graph-protocol/issues/116).*
+
+The decision above left two of issue #95's four candidate policies unbuilt and
+left the composition audit silent on which policy ran. Both gaps meant a host
+had nothing in the repository to copy — exactly the state #95 described for
+ranking as a whole. This amendment closes them, and records three decisions.
+
+### 1. A trust weight scales allocation, never score
+
+The original objection to shipping trust weights was that this repository has
+no trust model, and inventing one would be a worse artifact than none. That
+objection holds against shipping *weights*; it does not hold against shipping
+the *mechanism* a host's weights plug into. `TrustWeighted` ships the
+mechanism and no numbers: every provider is weight `1` until the host
+configures otherwise, which makes an unconfigured `TrustWeighted` exactly
+`RoundRobinByRank`.
+
+What a weight multiplies was the real decision. Two readings were on the
+table:
+
+- **Weight × score.** Rejected. A weighted score is still a score: it
+  inherits every scale mismatch between two providers' retrievers and
+  multiplies it by a number the host chose, then ranks the union by the
+  product. That is F10's forbidden cross-provider comparison with an extra
+  factor, and it would reintroduce the starvation this ADR exists to remove —
+  a generous scorer with weight `1` still buries a conservative one with
+  weight `2` when its numbers are three times larger.
+- **Weight × allocation.** Chosen. A provider of weight `w` is dealt `w`
+  frames per round: a frame at within-provider rank `r` sits in round
+  `r / w`, rounds go in order, and inside a round providers take the same
+  arbitrary-but-stable provider-id order every strategy here uses. Uniform
+  weight `k` is exactly `PerProviderQuota::new(k)`. The only score
+  comparisons are within one provider; a test rescales one provider's scores
+  by a factor of 18 and asserts the ranking does not move.
+
+Weight `0` means **last resort**, not excluded: a strategy ranks and never
+filters, so a zero-weight provider's frames rank after every positively
+weighted provider's, and a budget that runs out first records them as
+`OverBudget`. Distrust stays visible in the audit rather than becoming a
+silent drop.
+
+`policy_name` is the stable `"trust-weighted"`, not a rendering of the weight
+table: the audit names the rule, and a host that must reproduce a composition
+records its weight table (`TrustWeighted::weights`, in deterministic order)
+beside the audit.
+
+### 2. A reranker runs before composition (option 1)
+
+`RankingStrategy::order` is synchronous and pure. A reranker does I/O. Issue
+#115 laid out three options:
+
+1. the host reranks before calling `compose_for_prompt_with` and passes a
+   strategy that reads a precomputed order;
+2. a second, async `AsyncRankingStrategy` with an async composition entry
+   point;
+3. option 1 as documentation only, with a worked example and no type.
+
+**Option 1, with a type.** The async trait is rejected because composition's
+value is that it is a pure function of its inputs: the same frame set composes
+to the same bytes, which is what keeps a host's prompt reproducible and its
+provider prompt cache hitting. An async strategy makes the composition path
+depend on whatever the strategy awaits, puts an executor and `async-trait` on
+a path that has neither, and still cannot make a remote model deterministic.
+The host already awaits I/O in its fan-out; the reranker belongs beside it.
+This crate's job is placement and accounting, not inference.
+
+Option 3 was close. It is rejected because the precomputed-order strategy is
+not trivial to write correctly, and the incorrect versions are the obvious
+ones:
+
+- **Keyed by index, it breaks.** Composition de-duplicates *before* it ranks,
+  so the slice a strategy sees is not the slice the host reranked, and every
+  index after a dropped duplicate points at the wrong frame. `PrecomputedOrder`
+  is keyed by `FrameId`, which names the same evidence on both sides of dedup;
+  a test reranks a set containing a cross-provider duplicate and asserts the
+  order lands exactly.
+- **A partial verdict must not lose evidence.** A reranker that timed out
+  partway names some frames and not others. Unnamed frames rank after every
+  named one, in `RoundRobinByRank` order — so the fallback itself makes no
+  cross-provider score comparison — and a repeated or unknown identity is
+  tolerated rather than trusted.
+
+A host copying a thirty-line type out of an example would get one of those
+wrong. Shipping it costs one small type and no trait change.
+
+`contextgraph-host/examples/rerank_before_compose.rs` runs the whole flow
+offline: a fan-out's frames, raw score starving the provider that holds the
+answer, an awaited stand-in reranker, `PrecomputedOrder`, and the audit
+naming the reranker. CI runs it, so it stays runnable rather than illustrative.
+
+### 3. The audit records the ranking policy (#116)
+
+`CompositionAudit` gains `ranking_policy: String`, filled from the strategy's
+`policy_name()`. F10 requires a host that orders frames across providers to
+document the choice; once the choice is made per call, the record of the call
+is the only place that documentation is reliably true. The strategy decides
+which frames survive the budget, so an audit without it explained every drop
+but not the rule that caused it.
+
+A `String`, not `&'static str`, because a host's strategy may name itself at
+runtime — `PrecomputedOrder` carries its reranker's model name.
+
+Adding a public field to a public struct is a Rust-semver break for any
+downstream struct literal or exhaustive destructure. The crate's `[Unreleased]`
+section already carries breaking changes, so the cost is taken now rather than
+at a later major. `CompositionAudit` is marked `#[non_exhaustive]` in the same
+change: the audit is built by this crate's composition entry points and only
+read by hosts, so a downstream literal was never a use worth protecting, and
+the next field the record needs lands without another break. Nothing in this
+workspace constructs one outside the crate — the host-conformance check reads
+the audit and builds none.
+
+### Consequences of the amendment
+
+- Five strategies ship. The trait is unchanged; both additions are new types,
+  as the original consequences predicted.
+- `CompositionAudit` gains a field and becomes `#[non_exhaustive]` — a
+  Rust-semver break, named as such in `CHANGELOG.md`. No wire change: the audit
+  is a host-side record, not a protocol message.
+- A reranker remains outside this crate by design. A host that wants one
+  awaits it and passes its verdict; a future proposal for an async strategy
+  has to answer why composition should stop being a pure function.

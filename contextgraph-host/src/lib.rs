@@ -85,8 +85,8 @@ pub mod verify;
 pub mod wire;
 
 pub use compose::ranking::{
-    PerProviderQuota, RankingStrategy, RoundRobinByRank, ScoreDescending, is_ranking_permutation,
-    rank_with,
+    PerProviderQuota, PrecomputedOrder, RankingStrategy, RoundRobinByRank, ScoreDescending,
+    TrustWeighted, is_ranking_permutation, rank_with,
 };
 pub use compose::{
     AuditEntry, Citation, ComposedPrompt, CompositionAudit, DedupDrop, Deduped, ExclusionReason,

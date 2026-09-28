@@ -49,6 +49,10 @@ jobs:
       - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
+      # The reranker hook is shown as a runnable example rather than argued in
+      # prose (ADR 0015, 2026-09-28 amendment). `cargo test` only compiles
+      # examples; running it keeps its assertions true, not just its types.
+      - run: cargo run -p contextgraph-host --example rerank_before_compose
       # `attestation` is off by default, so the line above reaches
       # contextgraph_types::attest and the cross-language vectors the SDK
       # suites reconcile against only through feature unification with
