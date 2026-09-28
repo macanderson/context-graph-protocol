@@ -23,6 +23,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // The named reasons signing is refused.
@@ -51,7 +52,28 @@ var (
 	// not its content, so the signature would still verify after the frame's
 	// content was replaced (ADR 0018).
 	ErrFrameHasNoContentDigest = errors.New("attest: a frame must declare a content_digest before it is signed (§6.5.2, ADR 0018)")
+	// ErrMalformedContentDigest is a frame handed to [SignFrameAttestation]
+	// whose content_digest is not sha256:<64 lowercase hex> (§D1). Such a
+	// value identifies no bytes, so a signature over it would read as
+	// content-bound while the content could change underneath it.
+	ErrMalformedContentDigest = errors.New("attest: a frame's content_digest must be sha256:<64 lowercase hex> before it is signed (§D1, ADR 0018)")
 )
+
+// wellFormedContentDigest reports whether digest follows the §D1 grammar:
+// "sha256:" and 64 lowercase hex digits.
+func wellFormedContentDigest(digest string) bool {
+	hexPart, ok := strings.CutPrefix(digest, "sha256:")
+	if !ok || len(hexPart) != 64 {
+		return false
+	}
+	for i := 0; i < len(hexPart); i++ {
+		c := hexPart[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
 
 // PrivateKeyFromSeed returns the Ed25519 private key a 32-byte RFC 8032 seed
 // derives — the key the Rust reference's SigningKey::from_bytes builds from
@@ -137,7 +159,8 @@ func SignCommitment(commitment [32]byte, signer crypto.Signer, keyID, attesterID
 // (§6.5.2).
 //
 // It refuses a frame with no ContentDigest, returning
-// [ErrFrameHasNoContentDigest]: §6.5.2 requires an attester to populate it,
+// [ErrFrameHasNoContentDigest], and one whose ContentDigest is not
+// sha256:<64 lowercase hex>, returning [ErrMalformedContentDigest]: §6.5.2 requires an attester to populate it,
 // because a digest-less commitment does not bind the frame's content (ADR
 // 0018). [FrameCommitment] itself still computes such a commitment, because a
 // verifier has to be able to check signatures made before that rule, and
@@ -146,6 +169,9 @@ func SignCommitment(commitment [32]byte, signer crypto.Signer, keyID, attesterID
 func SignFrameAttestation(providerID string, frame Frame, signer crypto.Signer, keyID, attesterID, issuedAt string) (ProvenanceAttestation, error) {
 	if frame.ContentDigest == nil {
 		return ProvenanceAttestation{}, ErrFrameHasNoContentDigest
+	}
+	if !wellFormedContentDigest(*frame.ContentDigest) {
+		return ProvenanceAttestation{}, ErrMalformedContentDigest
 	}
 	return SignCommitment(FrameCommitment(providerID, frame), signer, keyID, attesterID, issuedAt)
 }

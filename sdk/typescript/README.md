@@ -154,8 +154,9 @@ const attestation = signFrameAttestation(
 
 `signCommitment(commitment, signingKey, keyId, attesterId, issuedAt)` signs any
 32-byte commitment, including a `merkleRoot(...)` over a whole result set.
-`signFrameAttestation` refuses a frame with no `content_digest`, because ADR
-0018 forbids signing a frame whose bytes the signature would not bind.
+`signFrameAttestation` refuses a frame with no `content_digest`, or one that is
+not `sha256:<64 lowercase hex>` (§D1), because ADR 0018 forbids signing a frame
+whose bytes the signature would not bind.
 
 The test suite signs the published commitment with the published seed from
 `tests/vectors/attestation-vectors.json` and compares the result to the

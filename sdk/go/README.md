@@ -206,7 +206,9 @@ the signature is verified under it — so a faulty backend, or one that hashed
 the message first, is an error here rather than a `bad_signature` at a
 consumer. `SignFrameAttestation` refuses a frame with no `ContentDigest`: its
 commitment binds identity and provenance but not content, so the signature
-would outlive a change to the frame's content (§6.5.2, ADR 0018).
+would outlive a change to the frame's content (§6.5.2, ADR 0018). It refuses a
+`ContentDigest` that is not `sha256:<64 lowercase hex>` (§D1) for the same
+reason, with `ErrMalformedContentDigest`.
 
 Signing is pinned to the published vector byte for byte. Ed25519 is
 deterministic, and `tests/vectors/attestation-vectors.json` publishes the seed,

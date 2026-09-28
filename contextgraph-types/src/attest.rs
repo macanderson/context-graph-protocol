@@ -1111,9 +1111,8 @@ mod crypto {
     /// `signFrameAttestation`, and the Python SDK's `ValueError` from
     /// `sign_frame_attestation`.
     ///
-    /// `#[non_exhaustive]` because a signer may yet refuse for another reason —
-    /// a declared digest that fails the `sha256:<64 lowercase hex>` grammar is
-    /// the obvious candidate — and adding that must not break a caller's match.
+    /// `#[non_exhaustive]` because a signer may yet refuse for another reason,
+    /// and adding one must not break a caller's match.
     #[derive(Debug, Clone, PartialEq, Eq)]
     #[non_exhaustive]
     pub enum FrameSigningError {
@@ -1126,6 +1125,14 @@ mod crypto {
             /// The `id` of the frame that was refused, so the caller can find it.
             frame_id: String,
         },
+        /// The frame declares a `content_digest` that is not
+        /// `sha256:<64 lowercase hex>` (`SPEC.md` §D1). Such a value identifies
+        /// no bytes, so a signature over it would read as content-bound while
+        /// the content could change underneath it.
+        MalformedContentDigest {
+            /// The `id` of the frame that was refused.
+            frame_id: String,
+        },
     }
 
     impl core::fmt::Display for FrameSigningError {
@@ -1136,6 +1143,12 @@ mod crypto {
                     "refusing to sign frame `{frame_id}`: it declares no content_digest, so the \
                      signature would cover its identity but none of its content \
                      (SPEC.md §6.5.2, ADR 0018)"
+                ),
+                Self::MalformedContentDigest { frame_id } => write!(
+                    f,
+                    "refusing to sign frame `{frame_id}`: its content_digest is not \
+                     sha256:<64 lowercase hex>, so it identifies no content bytes \
+                     (SPEC.md §D1, ADR 0018)"
                 ),
             }
         }
@@ -1161,7 +1174,10 @@ mod crypto {
     /// # Errors
     ///
     /// [`FrameSigningError::NoContentDigest`] if `frame.content_digest` is
-    /// `None`. Nothing is signed in that case.
+    /// `None`, and [`FrameSigningError::MalformedContentDigest`] if it is
+    /// present but not `sha256:<64 lowercase hex>`
+    /// ([`ContextFrame::has_usable_content_digest`]). Nothing is signed in
+    /// either case.
     pub fn try_sign_frame_attestation(
         provider_id: &str,
         frame: &ContextFrame,
@@ -1172,6 +1188,11 @@ mod crypto {
     ) -> Result<ProvenanceAttestation, FrameSigningError> {
         if frame.content_digest.is_none() {
             return Err(FrameSigningError::NoContentDigest {
+                frame_id: frame.id.clone(),
+            });
+        }
+        if !frame.has_usable_content_digest() {
+            return Err(FrameSigningError::MalformedContentDigest {
                 frame_id: frame.id.clone(),
             });
         }
@@ -2131,7 +2152,8 @@ mod content_binding_tests {
     /// the same attestation, and it verifies as content-bound.
     #[test]
     fn the_checked_signer_matches_the_unchecked_one_when_a_digest_is_declared() {
-        let bound = frame("f5", "retry three times", Some("sha256:aaaa"));
+        let digest = format!("sha256:{}", "ab".repeat(32));
+        let bound = frame("f5", "retry three times", Some(digest.as_str()));
         let checked = try_sign_frame_attestation(
             PROVIDER,
             &bound,
@@ -2147,6 +2169,30 @@ mod content_binding_tests {
             verify_frame_attestation(PROVIDER, &bound, &checked, &key),
             AttestationVerdict::Valid
         );
+    }
+
+    /// Codex review on #222: a declared digest that fails the §D1 grammar
+    /// identifies no bytes, so the checked signer refuses it by name rather
+    /// than produce a signature verifiers would read as content-bound.
+    #[test]
+    fn the_checked_signer_refuses_a_malformed_content_digest() {
+        for bad in ["sha256:aaaa", "sha256:short", "md5:abcd"] {
+            let malformed = frame("f6", "retry three times", Some(bad));
+            assert_eq!(
+                try_sign_frame_attestation(
+                    PROVIDER,
+                    &malformed,
+                    &SEED,
+                    "k1",
+                    "acme",
+                    "2026-09-10T00:00:00Z",
+                ),
+                Err(FrameSigningError::MalformedContentDigest {
+                    frame_id: "f6".into(),
+                }),
+                "{bad}"
+            );
+        }
     }
 }
 

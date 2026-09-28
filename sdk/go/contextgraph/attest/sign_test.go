@@ -14,6 +14,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 )
 
@@ -93,6 +94,22 @@ func TestSigningAFrameWithoutAContentDigestIsRefused(t *testing.T) {
 	_, err := SignFrameAttestation(providerID, frame, publishedKey(t, v), "key-1", "oxagen", "2026-08-27T00:00:00Z")
 	if !errors.Is(err, ErrFrameHasNoContentDigest) {
 		t.Errorf("got %v, want ErrFrameHasNoContentDigest", err)
+	}
+}
+
+// TestSigningAFrameWithAMalformedContentDigestIsRefused holds the SDK to §D1:
+// a declared digest that is not sha256:<64 lowercase hex> identifies no bytes,
+// so a signature over it would read as content-bound without binding content.
+func TestSigningAFrameWithAMalformedContentDigestIsRefused(t *testing.T) {
+	v := loadVectors(t)
+	providerID, frame := publishedFrame(v)
+	for _, bad := range []string{"sha256:short", "sha256:aaaa", "md5:abcd", "sha256:" + strings.Repeat("AB", 32)} {
+		digest := bad
+		frame.ContentDigest = &digest
+		_, err := SignFrameAttestation(providerID, frame, publishedKey(t, v), "key-1", "oxagen", "2026-08-27T00:00:00Z")
+		if !errors.Is(err, ErrMalformedContentDigest) {
+			t.Errorf("%q: got %v, want ErrMalformedContentDigest", bad, err)
+		}
 	}
 }
 

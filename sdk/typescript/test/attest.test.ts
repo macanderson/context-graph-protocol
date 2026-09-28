@@ -391,6 +391,17 @@ test("signFrameAttestation refuses a frame that declares no content_digest (ADR 
   }
 });
 
+test("signFrameAttestation refuses a content_digest that is not sha256:<64 lowercase hex> (SPEC §D1)", () => {
+  for (const digest of ["sha256:short", "sha256:aaaa", "md5:abcd", `sha256:${"AB".repeat(32)}`]) {
+    const frame: AttestableFrame = { id: "malformed-digest", content_digest: digest };
+    assert.throws(
+      () => signFrameAttestation("repo-graph", frame, seed(), "key-1", "oxagen", "2026-08-27T00:00:00Z"),
+      TypeError,
+      digest,
+    );
+  }
+});
+
 test("a verified signature over a digest-less frame is identity-only, not valid (ADR 0018)", () => {
   // Such signatures predate the refusal above and must still be readable —
   // labelled, not rejected, and never mistaken for a binding of the bytes.

@@ -641,6 +641,9 @@ export function verifyFrameInclusion(
   return verdict;
 }
 
+/** The §D1 grammar of a usable `content_digest`: `sha256:` and 64 lowercase hex digits. */
+const WELL_FORMED_CONTENT_DIGEST = /^sha256:[0-9a-f]{64}$/;
+
 /** Whether a frame carries the `content_digest` that binds its bytes into a commitment. */
 function declaresContentDigest(frame: AttestableFrame): boolean {
   // `null` arrives from JSON as readily as a missing member, and both mean absent.
@@ -829,7 +832,13 @@ export function signCommitment(
  * needs to re-sign an old identity-only commitment can still reach it through
  * {@link signCommitment}.
  *
- * @throws TypeError if the frame declares no `content_digest`.
+ * It also refuses a declared `content_digest` that is not
+ * `sha256:<64 lowercase hex>` (SPEC.md §D1): such a value identifies no bytes,
+ * so a signature over it would read as content-bound while the content could
+ * change underneath it.
+ *
+ * @throws TypeError if the frame declares no `content_digest`, or one that is
+ *   not `sha256:<64 lowercase hex>`.
  */
 export function signFrameAttestation(
   providerId: string,
@@ -843,6 +852,12 @@ export function signFrameAttestation(
     throw new TypeError(
       `frame ${JSON.stringify(frame.id)} declares no content_digest; ADR 0018 forbids signing ` +
         "a frame whose bytes the signature would not bind",
+    );
+  }
+  if (!WELL_FORMED_CONTENT_DIGEST.test(frame.content_digest as string)) {
+    throw new TypeError(
+      `frame ${JSON.stringify(frame.id)} declares a content_digest that is not ` +
+        "sha256:<64 lowercase hex> (SPEC.md §D1), so it identifies no content bytes",
     );
   }
   return signCommitment(frameCommitment(providerId, frame), signingKey, keyId, attesterId, issuedAt);

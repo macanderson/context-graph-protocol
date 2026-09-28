@@ -83,7 +83,9 @@ rules, over the domain-separated message of ADR 0017 §3.
 ADR 0018 already says an attester **MUST** populate `content_digest` on any
 frame it signs. A signing entry point is the one place that rule can be
 enforced before a signature exists, so a frame signer refuses such a frame with
-an error instead of signing it. `sign_commitment` stays unconditional: it signs
+an error instead of signing it. It likewise refuses a declared digest that is
+not `sha256:<64 lowercase hex>` (SPEC §D1), which identifies no bytes and so
+binds nothing. `sign_commitment` stays unconditional: it signs
 32 bytes, and it is how a caller re-signs an old identity-only commitment on
 purpose.
 
@@ -186,11 +188,13 @@ Each SDK README carries a key custody section with two parts:
   otherwise returns the same attestation byte for byte. §2 applies through
   that checked entry point, and the unchecked one's documentation says it
   does not enforce ADR 0018 and points providers at the checked one. The
-  reference, TypeScript and Go refuse the same frames: those with no
-  `content_digest`. Python additionally refuses a declared digest that is not
-  `sha256:<64 lowercase hex>` (SPEC D1), which no conformant frame carries;
-  `FrameSigningError` is `#[non_exhaustive]` so the reference can adopt that
-  refusal additively.
+  reference and every SDK refuse the same frames: those with no
+  `content_digest`, and those whose declared digest is not
+  `sha256:<64 lowercase hex>` (SPEC D1), since such a value identifies no
+  bytes and a signature over it would read as content-bound without binding
+  anything (`FrameSigningError::MalformedContentDigest`,
+  `ErrMalformedContentDigest`, and a `TypeError` / `ValueError` in TypeScript
+  and Python).
 - Signing adds a way to misuse a key that did not exist before. The README
   sections are there so that nobody takes on that risk without being told
   what it costs.
