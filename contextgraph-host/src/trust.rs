@@ -81,6 +81,7 @@ use contextgraph_types::{
 use serde::{Deserialize, Serialize};
 
 use crate::consent::now_protocol_timestamp;
+use crate::wire::AttesterKey;
 
 /// The exact length of a `sha256:<64 lowercase hex>` commitment string.
 const COMMITMENT_LEN: usize = "sha256:".len() + 64;
@@ -121,6 +122,155 @@ pub struct TrustedKey {
     /// key did before windows existed.
     #[serde(default, skip_serializing_if = "KeyValidity::is_unbounded")]
     pub validity: KeyValidity,
+    /// How this key came to be trusted: [`Configured`](TrustTier::Configured)
+    /// by an operator (the default, and the only tier ADR 0016 adopted), or
+    /// [`Pinned`](TrustTier::Pinned) on first use from the provider's own
+    /// handshake (ADR 0030). A signature that verifies against a pinned key
+    /// reads as [`AttestationState::Pinned`], never as
+    /// [`Attested`](AttestationState::Attested).
+    ///
+    /// Omitted from the serialized form when configured, so a store written
+    /// before tiers existed reads back identically.
+    #[serde(default, skip_serializing_if = "TrustTier::is_configured")]
+    pub tier: TrustTier,
+}
+
+/// How a [`TrustedKey`] came to be trusted — the two tiers of ADR 0030,
+/// ordered so that `Pinned < Configured`.
+///
+/// The tiers answer different questions. A **configured** key is one a person
+/// put in the trust store: a verification against it says "signed by a key
+/// this operator chose to trust". A **pinned** key is one the host recorded the
+/// first time the provider published it in `handshake_ack.attester_keys`: a
+/// verification against it says only "signed by the same key this provider
+/// used when this host first met it". That is **continuity, never identity** —
+/// an attacker present at first contact is pinned and then trusted for as long
+/// as the pin stands — and the host never presents the second as the first.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum TrustTier {
+    /// Recorded by the host on first use from the provider's handshake. Proves
+    /// continuity with that first contact and nothing more.
+    Pinned,
+    /// Put in the store by the operator. The tier ADR 0016 makes the trust
+    /// root.
+    #[default]
+    Configured,
+}
+
+impl TrustTier {
+    /// Whether this is the operator-configured tier.
+    pub fn is_configured(&self) -> bool {
+        matches!(self, Self::Configured)
+    }
+}
+
+/// The most keys one provider may have **pinned** at once
+/// ([`TrustStore::pin`]). Configured keys do not count against it: they are
+/// an operator's, and an operator is not the party being bounded.
+pub const MAX_PINNED_KEYS_PER_PROVIDER: usize = 16;
+
+/// What [`TrustStore::pin`] did with one published key (ADR 0030).
+///
+/// Two outcomes are **alarms** ([`is_alarm`](Self::is_alarm)):
+/// [`KeyChanged`](Self::KeyChanged) and
+/// [`ConflictsWithConfigured`](Self::ConflictsWithConfigured). Each means a
+/// provider is now publishing different key material under a `key_id` this
+/// host already holds — a rotation done wrong at best, and at worst exactly
+/// the substitution pinning exists to catch. Neither changes the store. A host
+/// that pins **must** surface them to a person; that is why this type is
+/// `#[must_use]`.
+#[must_use = "a changed or conflicting key is an alarm the caller has to surface"]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PinOutcome {
+    /// Nothing was held under this `key_id`; the key is now pinned.
+    Pinned {
+        /// The key pinned.
+        key_id: String,
+        /// Its fingerprint, for the log line or prompt that reports the pin.
+        fingerprint: String,
+    },
+    /// The same key is already pinned. Nothing changed.
+    AlreadyPinned {
+        /// The key.
+        key_id: String,
+    },
+    /// The operator already configured this exact key. Nothing changed, and
+    /// the key keeps its configured tier.
+    AlreadyConfigured {
+        /// The key.
+        key_id: String,
+    },
+    /// **Alarm.** A key is pinned under this `key_id` and the provider now
+    /// publishes different bytes under it. The pin stands; replacing it is an
+    /// operator act.
+    KeyChanged {
+        /// The `key_id` whose bytes changed.
+        key_id: String,
+        /// The fingerprint of the key this host pinned.
+        pinned_fingerprint: String,
+        /// The fingerprint of the key the provider now publishes.
+        offered_fingerprint: String,
+    },
+    /// **Alarm.** The operator configured a key under this `key_id`, and the
+    /// provider publishes different bytes under it. The configured key stands.
+    ConflictsWithConfigured {
+        /// The `key_id` in conflict.
+        key_id: String,
+        /// The fingerprint of the operator's key.
+        configured_fingerprint: String,
+        /// The fingerprint of the key the provider publishes.
+        offered_fingerprint: String,
+    },
+    /// The key could not be pinned.
+    Refused {
+        /// The `key_id` as published (truncated if oversized; empty if empty).
+        key_id: String,
+        /// Why.
+        reason: PinRefusal,
+    },
+}
+
+impl PinOutcome {
+    /// Whether this outcome is one a person must hear about:
+    /// [`KeyChanged`](Self::KeyChanged) or
+    /// [`ConflictsWithConfigured`](Self::ConflictsWithConfigured).
+    pub fn is_alarm(&self) -> bool {
+        matches!(
+            self,
+            Self::KeyChanged { .. } | Self::ConflictsWithConfigured { .. }
+        )
+    }
+
+    /// The `key_id` this outcome is about.
+    pub fn key_id(&self) -> &str {
+        match self {
+            Self::Pinned { key_id, .. }
+            | Self::AlreadyPinned { key_id }
+            | Self::AlreadyConfigured { key_id }
+            | Self::KeyChanged { key_id, .. }
+            | Self::ConflictsWithConfigured { key_id, .. }
+            | Self::Refused { key_id, .. } => key_id,
+        }
+    }
+}
+
+/// Why [`TrustStore::pin`] refused a published key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PinRefusal {
+    /// The `key_id` is empty.
+    EmptyKeyId,
+    /// The `key_id` is longer than this host echoes into an audit record.
+    OversizedKeyId,
+    /// A scheme this build cannot verify with (F8); the named scheme, truncated.
+    UnsupportedAlgorithm(String),
+    /// Not a 32-byte Ed25519 key as 64 hex characters.
+    MalformedKey,
+    /// The provider already has [`MAX_PINNED_KEYS_PER_PROVIDER`] pinned keys,
+    /// or published more than that in one handshake.
+    TooManyKeys,
 }
 
 impl TrustedKey {
@@ -140,6 +290,7 @@ impl TrustedKey {
             key_id: key_id.into(),
             public_key,
             validity: KeyValidity::unbounded(),
+            tier: TrustTier::Configured,
         })
     }
 
@@ -150,6 +301,7 @@ impl TrustedKey {
             key_id: key_id.into(),
             public_key: encode_hex(public_key),
             validity: KeyValidity::unbounded(),
+            tier: TrustTier::Configured,
         }
     }
 
@@ -198,9 +350,11 @@ impl TrustedKey {
 /// Serde-able and persistable, mirroring
 /// [`ConsentStore`](crate::consent::ConsentStore), because it is the same kind
 /// of object: a record of a decision one person made about one provider on one
-/// machine. Nothing populates it implicitly — there is no discovery, no
-/// fetching, and no trust-on-first-use. An empty store is a host that verifies
-/// nothing and loses nothing, which is the default posture.
+/// machine. Nothing populates it implicitly — there is no discovery and no
+/// fetching. Trust-on-first-use exists only as an explicit call,
+/// [`pin`](Self::pin), into a labelled tier strictly below a configured key
+/// (ADR 0030). An empty store is a host that verifies nothing and loses
+/// nothing, which is the default posture.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrustStore {
     /// `provider_id -> key_id -> key`. `BTreeMap` inside so iteration over one
@@ -240,6 +394,136 @@ impl TrustStore {
             self.keys.remove(provider_id);
         }
         removed
+    }
+
+    /// Pin one key a provider published in its handshake
+    /// (`handshake_ack.attester_keys`) — the trust-on-first-use tier of
+    /// [ADR 0030](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0030-a-pinned-trust-tier-below-configured.md).
+    ///
+    /// `local_id` is the operator's id for the provider, the one trust is keyed
+    /// on, so a provider can never pin a key under another provider's name.
+    ///
+    /// A key is pinned only when nothing is held under its `key_id` for this
+    /// provider. Nothing is ever replaced here:
+    ///
+    /// - the same bytes already held → [`AlreadyPinned`](PinOutcome::AlreadyPinned)
+    ///   or [`AlreadyConfigured`](PinOutcome::AlreadyConfigured), and nothing
+    ///   changes;
+    /// - **different bytes under a pinned `key_id`** →
+    ///   [`KeyChanged`](PinOutcome::KeyChanged), an alarm, and the pin stands.
+    ///   Rotation is a new `key_id`, never a reused one (`SPEC.md` §6.5), so a
+    ///   key that changes under the same id is exactly what pinning exists to
+    ///   notice — and silently re-pinning it would hand the pin to whoever
+    ///   changed it. Replacing a pin is an operator act:
+    ///   [`revoke`](Self::revoke) it, or [`trust`](Self::trust) a configured
+    ///   key.
+    /// - different bytes under a *configured* `key_id` →
+    ///   [`ConflictsWithConfigured`](PinOutcome::ConflictsWithConfigured), an
+    ///   alarm, and the operator's key stands. A pin never outranks a person.
+    ///
+    /// A key this host cannot verify with (another algorithm, malformed hex,
+    /// an empty or oversized id) is [`Refused`](PinOutcome::Refused), as is a
+    /// provider that already has [`MAX_PINNED_KEYS_PER_PROVIDER`] pinned keys:
+    /// the handshake is provider-controlled, and pinning must not let it grow
+    /// the store without bound.
+    pub fn pin(&mut self, local_id: &str, offered: &AttesterKey) -> PinOutcome {
+        if offered.key_id.is_empty() {
+            return PinOutcome::Refused {
+                key_id: String::new(),
+                reason: PinRefusal::EmptyKeyId,
+            };
+        }
+        if offered.key_id.len() > MAX_ECHOED_IDENTIFIER {
+            return PinOutcome::Refused {
+                key_id: echoed(&offered.key_id),
+                reason: PinRefusal::OversizedKeyId,
+            };
+        }
+        if offered.algorithm != ALGORITHM_ED25519 {
+            return PinOutcome::Refused {
+                key_id: offered.key_id.clone(),
+                reason: PinRefusal::UnsupportedAlgorithm(echoed(&offered.algorithm)),
+            };
+        }
+        let Some(candidate) = TrustedKey::ed25519_hex(
+            offered.key_id.clone(),
+            offered.public_key.to_ascii_lowercase(),
+        ) else {
+            return PinOutcome::Refused {
+                key_id: offered.key_id.clone(),
+                reason: PinRefusal::MalformedKey,
+            };
+        };
+        // `ed25519_hex` accepted it, so it decodes and has a fingerprint.
+        let offered_fingerprint = candidate.fingerprint().unwrap_or_default();
+        let key_id = offered.key_id.clone();
+
+        if let Some(held) = self.key(local_id, &offered.key_id) {
+            // A held key whose hex does not decode has no fingerprint, and so
+            // matches nothing: it is reported, never quietly overwritten.
+            let held_fingerprint = held.fingerprint().unwrap_or_default();
+            let same = held_fingerprint == offered_fingerprint;
+            return match (held.tier, same) {
+                (TrustTier::Configured, true) => PinOutcome::AlreadyConfigured { key_id },
+                (TrustTier::Pinned, true) => PinOutcome::AlreadyPinned { key_id },
+                (TrustTier::Configured, false) => PinOutcome::ConflictsWithConfigured {
+                    key_id,
+                    configured_fingerprint: held_fingerprint,
+                    offered_fingerprint,
+                },
+                (TrustTier::Pinned, false) => PinOutcome::KeyChanged {
+                    key_id,
+                    pinned_fingerprint: held_fingerprint,
+                    offered_fingerprint,
+                },
+            };
+        }
+
+        let pinned = self
+            .keys_for(local_id)
+            .filter(|key| key.tier == TrustTier::Pinned)
+            .count();
+        if pinned >= MAX_PINNED_KEYS_PER_PROVIDER {
+            return PinOutcome::Refused {
+                key_id,
+                reason: PinRefusal::TooManyKeys,
+            };
+        }
+        self.trust(
+            local_id,
+            TrustedKey {
+                tier: TrustTier::Pinned,
+                ..candidate
+            },
+        );
+        PinOutcome::Pinned {
+            key_id,
+            fingerprint: offered_fingerprint,
+        }
+    }
+
+    /// [`pin`](Self::pin) every key a provider published, in order, and report
+    /// each outcome.
+    ///
+    /// At most [`MAX_PINNED_KEYS_PER_PROVIDER`] entries are considered. A
+    /// handshake publishing more gets one further
+    /// [`Refused`](PinOutcome::Refused) with
+    /// [`TooManyKeys`](PinRefusal::TooManyKeys), naming the first key it
+    /// ignored, so the work a provider can buy is bounded however long the
+    /// list it sends.
+    pub fn pin_all(&mut self, local_id: &str, offered: &[AttesterKey]) -> Vec<PinOutcome> {
+        let mut outcomes: Vec<PinOutcome> = offered
+            .iter()
+            .take(MAX_PINNED_KEYS_PER_PROVIDER)
+            .map(|key| self.pin(local_id, key))
+            .collect();
+        if let Some(first_ignored) = offered.get(MAX_PINNED_KEYS_PER_PROVIDER) {
+            outcomes.push(PinOutcome::Refused {
+                key_id: echoed(&first_ignored.key_id),
+                reason: PinRefusal::TooManyKeys,
+            });
+        }
+        outcomes
     }
 
     /// The key held for `(provider_id, key_id)`, if any.
@@ -386,11 +670,7 @@ impl TrustStore {
         // is the only provider identifier both ends of the wire observe.
         match verify_frame_attestation(signing_id, frame, attestation, &public_key) {
             verdict @ (AttestationVerdict::Valid | AttestationVerdict::ValidIdentityOnly) => {
-                AttestationState::Attested {
-                    key_id: attestation.key_id.clone(),
-                    attester_id: echoed(&attestation.attester_id),
-                    covers_content: verdict.binds_content(),
-                }
+                verified(key, attestation, verdict.binds_content())
             }
             verdict => AttestationState::Invalid { verdict },
         }
@@ -659,11 +939,7 @@ impl TrustStore {
         // (#128).
         match verify_frame_inclusion(signing_id, frame, proof, root, &public_key) {
             verdict @ (AttestationVerdict::Valid | AttestationVerdict::ValidIdentityOnly) => {
-                AttestationState::Attested {
-                    key_id: root.key_id.clone(),
-                    attester_id: echoed(&root.attester_id),
-                    covers_content: verdict.binds_content(),
-                }
+                verified(key, root, verdict.binds_content())
             }
             verdict => AttestationState::Invalid { verdict },
         }
@@ -733,6 +1009,33 @@ pub enum AttestationState {
         /// assume, and assuming it is the mistake this field exists to prevent.
         covers_content: bool,
     },
+    /// The signature verified against a key this host **pinned on first use**
+    /// — the [`TrustTier::Pinned`] tier of ADR 0030 — rather than one an
+    /// operator configured.
+    ///
+    /// This proves **continuity, not identity**: the key that signed this is
+    /// the key the provider published when this host first met it. It does not
+    /// prove who that was — an attacker present at first contact is pinned too
+    /// — so it is deliberately a separate variant from
+    /// [`Attested`](Self::Attested), and [`is_attested`](Self::is_attested)
+    /// is **false** here. Every existing reading of "attested" therefore keeps
+    /// meaning "a key a person checked"; a host that wants to credit
+    /// continuity asks for it by name, through
+    /// [`signature_verified`](Self::signature_verified) or
+    /// [`trust_tier`](Self::trust_tier), and renders it as the weaker claim it
+    /// is.
+    ///
+    /// The fields mean what they mean on [`Attested`](Self::Attested):
+    /// `attester_id` is the attestation's unverified claim (F18), and
+    /// `covers_content` says whether the signature binds the frame's bytes.
+    Pinned {
+        /// The pinned key that verified it.
+        key_id: String,
+        /// The attesting authority the attestation names — unverified.
+        attester_id: String,
+        /// Whether the signature covers the frame's content bytes.
+        covers_content: bool,
+    },
     /// An attestation was offered, but this host holds no trusted key under
     /// that `key_id` for that provider. A configuration gap, **not** a forgery
     /// finding: the signature was never checked, so nothing is known about it.
@@ -795,11 +1098,34 @@ pub enum AttestationState {
 }
 
 impl AttestationState {
-    /// Whether this frame is attested by a key this host trusts. Every other
-    /// state — including [`NotChecked`](Self::NotChecked) — is `false`, because
-    /// "I could not check it" is never "it is good" (`SPEC.md` F8).
+    /// Whether this frame is attested by a key this host's **operator**
+    /// trusts. Every other state — including [`NotChecked`](Self::NotChecked),
+    /// and [`Pinned`](Self::Pinned) — is `false`, because "I could not check
+    /// it" is never "it is good" (`SPEC.md` F8), and "the same key as last
+    /// time" is not "a key a person checked" (ADR 0030).
     pub fn is_attested(&self) -> bool {
         matches!(self, Self::Attested { .. })
+    }
+
+    /// Whether the signature verified against a key this host holds, at
+    /// **either** tier: [`Attested`](Self::Attested) or
+    /// [`Pinned`](Self::Pinned). The question to ask on purpose when
+    /// continuity is worth crediting; read [`trust_tier`](Self::trust_tier)
+    /// beside it to say which claim is being made.
+    pub fn signature_verified(&self) -> bool {
+        matches!(self, Self::Attested { .. } | Self::Pinned { .. })
+    }
+
+    /// The tier of the key that verified the signature —
+    /// [`TrustTier::Configured`] for [`Attested`](Self::Attested),
+    /// [`TrustTier::Pinned`] for [`Pinned`](Self::Pinned) — and `None` for
+    /// every state in which nothing verified.
+    pub fn trust_tier(&self) -> Option<TrustTier> {
+        match self {
+            Self::Attested { .. } => Some(TrustTier::Configured),
+            Self::Pinned { .. } => Some(TrustTier::Pinned),
+            _ => None,
+        }
     }
 
     /// Whether the signature covers the frame's content bytes as well as its
@@ -816,16 +1142,19 @@ impl AttestationState {
         )
     }
 
-    /// The `attester_id` an [`Attested`](Self::Attested) attestation names —
-    /// **unverified**, because the signature does not cover it (`SPEC.md`
-    /// §6.5.2, F18). `None` for every other state.
+    /// The `attester_id` an [`Attested`](Self::Attested) or
+    /// [`Pinned`](Self::Pinned) attestation names — **unverified**, because
+    /// the signature does not cover it (`SPEC.md` §6.5.2, F18). `None` for
+    /// every other state.
     ///
     /// Named for what it is so a caller cannot surface it as signed by
     /// accident: render it beside [`Attested::key_id`](Self::Attested), which
     /// is what verified, and label it as the attestation's claim.
     pub fn unverified_attester_id(&self) -> Option<&str> {
         match self {
-            Self::Attested { attester_id, .. } => Some(attester_id),
+            Self::Attested { attester_id, .. } | Self::Pinned { attester_id, .. } => {
+                Some(attester_id)
+            }
             _ => None,
         }
     }
@@ -899,6 +1228,32 @@ impl FromIterator<FrameAttestationOutcome> for AttestationLedger {
             ledger.record(outcome);
         }
         ledger
+    }
+}
+
+/// The state for a signature that verified against `key`:
+/// [`Attested`](AttestationState::Attested) for an operator-configured key,
+/// [`Pinned`](AttestationState::Pinned) for one pinned on first use. The one
+/// place a tier becomes a state, so no path can report a pinned key as
+/// configured.
+fn verified(
+    key: &TrustedKey,
+    attestation: &ProvenanceAttestation,
+    covers_content: bool,
+) -> AttestationState {
+    let key_id = attestation.key_id.clone();
+    let attester_id = echoed(&attestation.attester_id);
+    match key.tier {
+        TrustTier::Configured => AttestationState::Attested {
+            key_id,
+            attester_id,
+            covers_content,
+        },
+        TrustTier::Pinned => AttestationState::Pinned {
+            key_id,
+            attester_id,
+            covers_content,
+        },
     }
 }
 
@@ -1989,5 +2344,253 @@ mod tests {
         // a store persisted before windows existed reads back identically.
         let plain = serde_json::to_string(&store_trusting(&SEED)).expect("serializable");
         assert!(!plain.contains("validity"), "{plain}");
+    }
+
+    // -- the pinned tier (#130, ADR 0030) ---------------------------------------
+
+    fn published(seed: &[u8; 32]) -> AttesterKey {
+        AttesterKey {
+            key_id: KEY_ID.into(),
+            algorithm: ALGORITHM_ED25519.into(),
+            public_key: encode_hex(&public_key_for(seed)),
+        }
+    }
+
+    #[test]
+    fn a_pinned_key_verifies_as_pinned_never_as_attested() {
+        let frame = frame("frm_1");
+        let attestation = signed(&frame, &SEED);
+        let mut store = TrustStore::new();
+        let outcome = store.pin(PROVIDER, &published(&SEED));
+        assert!(matches!(outcome, PinOutcome::Pinned { .. }), "{outcome:?}");
+        assert!(!outcome.is_alarm());
+        assert_eq!(
+            store.key(PROVIDER, KEY_ID).map(|key| key.tier),
+            Some(TrustTier::Pinned)
+        );
+
+        let state = store.check(PROVIDER, &frame, &attestation);
+        assert_eq!(
+            state,
+            AttestationState::Pinned {
+                key_id: KEY_ID.to_string(),
+                attester_id: "docs-provider".to_string(),
+                covers_content: true,
+            }
+        );
+        assert!(
+            !state.is_attested(),
+            "continuity is not identity: a pin never reads as operator-attested"
+        );
+        assert!(state.signature_verified());
+        assert_eq!(state.trust_tier(), Some(TrustTier::Pinned));
+        assert_eq!(state.unverified_attester_id(), Some("docs-provider"));
+        assert!(state.was_offered());
+    }
+
+    /// The DoD witness for #130: a provider that publishes different bytes
+    /// under a `key_id` this host pinned is reported loudly, the pin is not
+    /// replaced, and the new key's signatures do not verify.
+    #[test]
+    fn a_changed_key_under_a_pinned_key_id_is_an_alarm_and_is_never_re_pinned() {
+        let mut store = TrustStore::new();
+        let first = store.pin(PROVIDER, &published(&SEED));
+        let pinned_fingerprint = match &first {
+            PinOutcome::Pinned { fingerprint, .. } => fingerprint.clone(),
+            other => panic!("expected the first sight to pin, got {other:?}"),
+        };
+
+        let changed = store.pin(PROVIDER, &published(&OTHER_SEED));
+        assert!(changed.is_alarm(), "{changed:?}");
+        match &changed {
+            PinOutcome::KeyChanged {
+                key_id,
+                pinned_fingerprint: held,
+                offered_fingerprint,
+            } => {
+                assert_eq!(key_id, KEY_ID);
+                assert_eq!(held, &pinned_fingerprint);
+                assert_ne!(offered_fingerprint, &pinned_fingerprint);
+            }
+            other => panic!("expected KeyChanged, got {other:?}"),
+        }
+
+        // The pin stands: the original key is still the one held...
+        assert_eq!(
+            store
+                .key(PROVIDER, KEY_ID)
+                .and_then(TrustedKey::fingerprint),
+            Some(pinned_fingerprint)
+        );
+        // ...so the new key's signatures are a bad signature, not attested.
+        let frame = frame("frm_1");
+        assert_eq!(
+            store.check(PROVIDER, &frame, &signed(&frame, &OTHER_SEED)),
+            AttestationState::Invalid {
+                verdict: AttestationVerdict::BadSignature
+            }
+        );
+        // And asking again changes nothing: the alarm repeats rather than
+        // wearing off.
+        assert!(store.pin(PROVIDER, &published(&OTHER_SEED)).is_alarm());
+
+        // Re-pinning is an operator act: revoke, then pin.
+        assert!(store.revoke(PROVIDER, KEY_ID));
+        assert!(matches!(
+            store.pin(PROVIDER, &published(&OTHER_SEED)),
+            PinOutcome::Pinned { .. }
+        ));
+    }
+
+    #[test]
+    fn a_pin_never_outranks_the_operator() {
+        // Same bytes as a configured key: nothing changes, and the key stays
+        // configured.
+        let mut store = store_trusting(&SEED);
+        assert_eq!(
+            store.pin(PROVIDER, &published(&SEED)),
+            PinOutcome::AlreadyConfigured {
+                key_id: KEY_ID.to_string()
+            }
+        );
+        assert_eq!(
+            store.key(PROVIDER, KEY_ID).map(|key| key.tier),
+            Some(TrustTier::Configured)
+        );
+
+        // Different bytes under the configured key_id: an alarm, and the
+        // operator's key stands.
+        let conflict = store.pin(PROVIDER, &published(&OTHER_SEED));
+        assert!(matches!(
+            conflict,
+            PinOutcome::ConflictsWithConfigured { .. }
+        ));
+        assert!(conflict.is_alarm());
+        let frame = frame("frm_1");
+        assert!(
+            store
+                .check(PROVIDER, &frame, &signed(&frame, &SEED))
+                .is_attested()
+        );
+
+        // And an operator trusting a key under a pinned key_id promotes it.
+        let mut promoted = TrustStore::new();
+        let _ = promoted.pin(PROVIDER, &published(&SEED));
+        promoted.trust(
+            PROVIDER,
+            TrustedKey::ed25519_bytes(KEY_ID, &public_key_for(&SEED)),
+        );
+        assert!(
+            promoted
+                .check(PROVIDER, &frame, &signed(&frame, &SEED))
+                .is_attested()
+        );
+    }
+
+    #[test]
+    fn a_pin_is_keyed_by_the_operators_id_for_the_provider() {
+        // A provider cannot reach another provider's pin by publishing under
+        // its name: pins live under the local id the host passed.
+        let mut store = TrustStore::new();
+        let _ = store.pin("docs-a", &published(&SEED));
+        let frame = frame("frm_1");
+        assert!(matches!(
+            store.check("docs-b", &frame, &signed(&frame, &SEED)),
+            AttestationState::NoTrustedKey { .. }
+        ));
+    }
+
+    #[test]
+    fn keys_the_host_cannot_verify_with_are_refused_not_pinned() {
+        let mut store = TrustStore::new();
+        let mut foreign = published(&SEED);
+        foreign.algorithm = "ml-dsa-65".into();
+        assert!(matches!(
+            store.pin(PROVIDER, &foreign),
+            PinOutcome::Refused {
+                reason: PinRefusal::UnsupportedAlgorithm(_),
+                ..
+            }
+        ));
+        let mut garbage = published(&SEED);
+        garbage.public_key = "not hex".into();
+        assert!(matches!(
+            store.pin(PROVIDER, &garbage),
+            PinOutcome::Refused {
+                reason: PinRefusal::MalformedKey,
+                ..
+            }
+        ));
+        let mut anonymous = published(&SEED);
+        anonymous.key_id = String::new();
+        assert!(matches!(
+            store.pin(PROVIDER, &anonymous),
+            PinOutcome::Refused {
+                reason: PinRefusal::EmptyKeyId,
+                ..
+            }
+        ));
+        let mut enormous = published(&SEED);
+        enormous.key_id = "k".repeat(10_000);
+        match store.pin(PROVIDER, &enormous) {
+            PinOutcome::Refused {
+                key_id,
+                reason: PinRefusal::OversizedKeyId,
+            } => assert_eq!(key_id.len(), MAX_ECHOED_IDENTIFIER),
+            other => panic!("expected an oversized refusal, got {other:?}"),
+        }
+        assert!(store.is_empty(), "nothing was pinned");
+    }
+
+    #[test]
+    fn a_handshake_cannot_grow_the_store_without_bound() {
+        let mut store = TrustStore::new();
+        let flood: Vec<AttesterKey> = (0..MAX_PINNED_KEYS_PER_PROVIDER + 50)
+            .map(|index| AttesterKey {
+                key_id: format!("k-{index}"),
+                ..published(&SEED)
+            })
+            .collect();
+        let outcomes = store.pin_all(PROVIDER, &flood);
+        assert_eq!(
+            outcomes.len(),
+            MAX_PINNED_KEYS_PER_PROVIDER + 1,
+            "the tail is refused once, not walked"
+        );
+        assert!(matches!(
+            outcomes.last(),
+            Some(PinOutcome::Refused {
+                reason: PinRefusal::TooManyKeys,
+                ..
+            })
+        ));
+        assert_eq!(
+            store.keys_for(PROVIDER).count(),
+            MAX_PINNED_KEYS_PER_PROVIDER
+        );
+        // And a later handshake adding one more is refused as well.
+        let one_more = AttesterKey {
+            key_id: "k-late".into(),
+            ..published(&SEED)
+        };
+        assert!(matches!(
+            store.pin(PROVIDER, &one_more),
+            PinOutcome::Refused {
+                reason: PinRefusal::TooManyKeys,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn a_pinned_tier_survives_serde_and_a_configured_one_is_unchanged_on_disk() {
+        let mut store = TrustStore::new();
+        let _ = store.pin(PROVIDER, &published(&SEED));
+        let json = serde_json::to_string(&store).unwrap();
+        assert!(json.contains("\"tier\":\"pinned\""), "{json}");
+        assert_eq!(serde_json::from_str::<TrustStore>(&json).unwrap(), store);
+
+        let configured = serde_json::to_string(&store_trusting(&SEED)).unwrap();
+        assert!(!configured.contains("tier"), "{configured}");
     }
 }

@@ -113,7 +113,12 @@ operator which of their providers were verified against a key a person actually
 checked. It is also not implementable today: no wire field carries a public key,
 so adopting it means a normative addition, which is its own ADR and its own
 conformance requirement. Worth having eventually as a **labelled second tier**
-below a configured key, never as the only tier. Tracked as follow-up.
+below a configured key, never as the only tier. *(Amended 2026-09-28: adopted
+on exactly those terms by
+[ADR 0030](./0030-a-pinned-trust-tier-below-configured.md) — opt-in, reported as
+its own `AttestationState::Pinned` rather than `Attested`, never replacing a
+pinned or configured key when the published one changes. The wire half was
+already `handshake_ack.attester_keys`, per ADR 0019.)*
 
 **A key registry, well-known endpoint, or transparency log.** Rejected as out of
 scope, per `GOVERNANCE.md`'s consent boundary. These are the *right* answer for

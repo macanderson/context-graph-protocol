@@ -38,7 +38,8 @@
 //!   consent, and budget honesty (SPEC.md §4 and §7).
 //! - [`trust`] — the keys a host trusts for provenance attestation, and the
 //!   verifier that consumes them (SPEC.md §6.5). The operator is the trust
-//!   root: nothing is discovered and nothing is trusted on first use. An
+//!   root: nothing is discovered, and a key pinned on first use is a separate,
+//!   opt-in tier that is never reported as operator-attested. An
 //!   attestation the host cannot check degrades its frame to *unattested* and
 //!   never removes it (F9). [`trust_file`] reads and writes the store as a
 //!   documented file at a path the operator names.
@@ -115,7 +116,8 @@ pub use ingest::{
 pub use provider::{ContextProvider, capability_matches, frame_kind_name};
 pub use stdio::{RawStdioConnection, StdioProvider};
 pub use trust::{
-    AttestationLedger, AttestationState, FrameAttestationOutcome, TrustStore, TrustedKey,
+    AttestationLedger, AttestationState, FrameAttestationOutcome, MAX_PINNED_KEYS_PER_PROVIDER,
+    PinOutcome, PinRefusal, TrustStore, TrustTier, TrustedKey,
 };
 pub use trust_file::{MAX_TRUST_FILE_BYTES, TRUST_FILE_FORMAT, TrustFileError, TrustFileProblem};
 pub use verify::{DigestVerification, verify_file_provenance, verify_provenance_digest};

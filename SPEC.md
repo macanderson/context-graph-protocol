@@ -869,6 +869,30 @@ own trust store and ignores what the handshake said. It rides the handshake
 rather than the answer because a key republished with every response could be
 swapped by the same forgery that swapped the signature.
 
+`attester_keys` is **optional**. A receiver **MUST** tolerate its absence and
+treat an absent member exactly as an empty list; a provider written before the
+member existed, or one that signs nothing, omits it.
+
+**A host MAY pin a published key on first use** — record it the first time a
+provider publishes it and verify later attestations against it — as a trust
+tier strictly below a key its operator configured
+([ADR 0030](./docs/adr/0030-a-pinned-trust-tier-below-configured.md)). A pinned
+key proves **continuity, never identity**: the key that signs today is the one
+the provider published at first contact, and an attacker present at first
+contact is pinned too. So a host that pins:
+
+* **MUST NOT** present a frame verified against a pinned key as equivalent to
+  one verified against a configured key — the tier travels with the outcome;
+* **MUST NOT** replace a pinned key when the provider later publishes different
+  bytes under the same `key_id`, and **MUST** report the change to whoever
+  operates the host. Rotation is a new `key_id` (§6.5.2); new bytes under an
+  old one are what pinning exists to notice;
+* **MUST NOT** let a pin override a key the operator configured under the same
+  `key_id`.
+
+Pinning is host policy under these rules, never a requirement: a host that pins
+nothing is conformant, and F9 governs every outcome.
+
 **The evidence rides the result.** A `frames` envelope's `result` carries two
 optional members, and the `frames` envelope itself carries **no** attestation
 member of its own. Both are omitted when empty, so an unsigned answer is

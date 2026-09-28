@@ -43,6 +43,11 @@
 //!   the one they compared, and a key that was edited afterwards is refused.
 //! - `not_before` / `not_after` are the optional, inclusive validity window
 //!   ([ADR 0028](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0028-key-validity-windows-are-evaluated-at-receipt.md)).
+//! - `tier` is `"configured"` (the default, omitted on write) or `"pinned"`
+//!   for a key the host recorded on first use
+//!   ([ADR 0030](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0030-a-pinned-trust-tier-below-configured.md)).
+//!   Persisting a pin is what makes a later change of key noticeable after a
+//!   restart; an operator promotes a pinned key by deleting the member.
 //! - **Any other member is an error.** This file decides what a host believes;
 //!   a misspelt `not_afer` silently ignored would widen trust to forever.
 //!
@@ -69,7 +74,7 @@ use std::path::{Path, PathBuf};
 use contextgraph_types::{ALGORITHM_ED25519, KeyValidity, KeyValidityError};
 use serde::{Deserialize, Serialize};
 
-use crate::trust::{TrustStore, TrustedKey};
+use crate::trust::{TrustStore, TrustTier, TrustedKey};
 
 /// The `format` value this build reads and writes.
 pub const TRUST_FILE_FORMAT: &str = "contextgraph-trust/1";
@@ -285,6 +290,8 @@ struct TrustFileKey {
     not_before: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     not_after: Option<String>,
+    #[serde(default, skip_serializing_if = "TrustTier::is_configured")]
+    tier: TrustTier,
 }
 
 impl TrustStore {
@@ -477,7 +484,10 @@ fn trusted_key_from_entry(
             ));
         }
     }
-    Ok(key.with_validity(validity))
+    Ok(TrustedKey {
+        tier: entry.tier,
+        ..key.with_validity(validity)
+    })
 }
 
 /// Turn one [`TrustedKey`] into a file entry, refusing one the loader would
@@ -511,6 +521,7 @@ fn entry_from_trusted_key(
         fingerprint: Some(fingerprint),
         not_before: key.validity.not_before.clone(),
         not_after: key.validity.not_after.clone(),
+        tier: key.tier,
     })
 }
 
@@ -730,6 +741,37 @@ mod tests {
         assert!(text.find("\"k-1\"").unwrap() < text.find("\"k-2\"").unwrap());
         assert_eq!(text.matches("\"fingerprint\"").count(), 4);
         assert_eq!(TrustStore::from_trust_file_json(&text).unwrap(), store);
+    }
+
+    #[test]
+    fn a_pin_survives_the_file_and_a_configured_key_writes_no_tier() {
+        let mut store = TrustStore::new();
+        store.trust(
+            "docs",
+            TrustedKey::ed25519_bytes("configured", &public_key_for(&SEED)),
+        );
+        let _ = store.pin(
+            "docs",
+            &crate::wire::AttesterKey {
+                key_id: "pinned".into(),
+                algorithm: ALGORITHM_ED25519.into(),
+                public_key: key_hex(),
+            },
+        );
+        let text = store.to_trust_file_json().unwrap();
+        assert_eq!(text.matches("\"tier\"").count(), 1, "{text}");
+        assert!(text.contains("\"tier\": \"pinned\""), "{text}");
+
+        let back = TrustStore::from_trust_file_json(&text).unwrap();
+        assert_eq!(back, store);
+        assert_eq!(
+            back.key("docs", "pinned").map(|key| key.tier),
+            Some(TrustTier::Pinned)
+        );
+        assert_eq!(
+            back.key("docs", "configured").map(|key| key.tier),
+            Some(TrustTier::Configured)
+        );
     }
 
     #[test]

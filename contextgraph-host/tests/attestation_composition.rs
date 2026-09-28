@@ -12,8 +12,8 @@
 
 use async_trait::async_trait;
 use contextgraph_host::{
-    AttestationState, ContextProvider, FrameAttestation, Host, HostError, ProviderResult,
-    RoundRobinByRank, TrustedKey,
+    AttestationState, AttesterKey, ContextProvider, FrameAttestation, Host, HostError, PinOutcome,
+    ProviderResult, RoundRobinByRank, TrustTier, TrustedKey,
 };
 use contextgraph_types::attest::{ProvenanceAttestation, public_key_for, sign_frame_attestation};
 use contextgraph_types::capability::QueryCapability;
@@ -38,6 +38,11 @@ struct SigningProvider {
     capabilities: Capabilities,
     frames: Vec<ContextFrame>,
     attestations: Vec<FrameAttestation>,
+    /// The answer-level signature over the §6.5.3 Merkle root, if any.
+    result_attestation: Option<ProvenanceAttestation>,
+    /// The keys this provider publishes, as `handshake_ack.attester_keys`
+    /// would carry them.
+    published: Vec<AttesterKey>,
 }
 
 impl SigningProvider {
@@ -61,7 +66,28 @@ impl SigningProvider {
             },
             frames,
             attestations,
+            result_attestation: None,
+            published: vec![],
         }
+    }
+
+    /// The same provider, publishing `seed`'s public key under [`KEY_ID`].
+    fn publishing(mut self, seed: &[u8; 32]) -> Self {
+        self.published = vec![AttesterKey {
+            key_id: KEY_ID.into(),
+            algorithm: "ed25519".into(),
+            public_key: public_key_for(seed)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+        }];
+        self
+    }
+
+    /// The same provider, signing its answer once over the result-set root.
+    fn with_result_attestation(mut self, root: ProvenanceAttestation) -> Self {
+        self.result_attestation = Some(root);
+        self
     }
 }
 
@@ -76,9 +102,13 @@ impl ContextProvider for SigningProvider {
     fn capabilities(&self) -> &Capabilities {
         &self.capabilities
     }
+    fn attester_keys(&self) -> &[AttesterKey] {
+        &self.published
+    }
     async fn query(&self, _query: &ContextQuery) -> Result<ContextQueryResult, HostError> {
         Ok(ContextQueryResult {
             frame_attestations: self.attestations.clone(),
+            result_attestation: self.result_attestation.clone(),
             ..ContextQueryResult::unattested(self.frames.clone(), false, None)
         })
     }
@@ -575,6 +605,101 @@ async fn a_lapsed_key_degrades_its_frame_to_unattested_and_never_removes_it() {
         host.trust()
             .check_result_signed_as_at(PROVIDER, PROVIDER, result, "2019-06-01T00:00:00Z");
     assert!(replayed[0].state.is_attested(), "{replayed:?}");
+}
+
+/// **The pinned tier, end to end (#130, ADR 0030).** A host that opts in pins
+/// the key a provider published at its handshake; the provider's signed frames
+/// then read as `Pinned` — verified, and labelled as continuity rather than
+/// identity, so the audit never counts them as operator-attested. After a
+/// restart the provider publishes a *different* key under the same `key_id`:
+/// the host is told loudly, the pin is not replaced, the new signatures do not
+/// verify, and every frame is still served (F9).
+#[tokio::test]
+async fn a_pinned_key_is_its_own_tier_and_a_changed_key_is_reported_not_re_pinned() {
+    let subject = frame("frm_1", "evidence from a provider nobody configured");
+
+    // First contact.
+    let mut host = Host::new();
+    host.register(Box::new(
+        SigningProvider::new(
+            vec![subject.clone()],
+            vec![entry("frm_1", sign(&subject, &SEED))],
+        )
+        .publishing(&SEED),
+    ));
+    let outcomes = host.pin_attester_keys(PROVIDER).expect("registered");
+    assert!(
+        matches!(outcomes.as_slice(), [PinOutcome::Pinned { .. }]),
+        "{outcomes:?}"
+    );
+
+    let fanout = host.query_all(&query()).await;
+    let composed = fanout.compose_for_prompt(1_000);
+    let state = &composed.audit.entries[0].attestation;
+    assert!(
+        matches!(state, AttestationState::Pinned { .. }),
+        "{state:?}"
+    );
+    assert_eq!(state.trust_tier(), Some(TrustTier::Pinned));
+    assert!(state.signature_verified());
+    assert!(
+        !state.is_attested(),
+        "a pin is never presented as a configured key"
+    );
+    assert_eq!(composed.audit.attested().count(), 0);
+    assert!(!fanout.any_attested());
+    assert!(
+        composed
+            .prompt
+            .contains("evidence from a provider nobody configured")
+    );
+
+    // Restart: the store is restored, and the provider now publishes and signs
+    // with a different key under the same key_id.
+    let mut restarted = Host::new();
+    restarted.set_trust_store(host.trust().clone());
+    restarted.register(Box::new(
+        SigningProvider::new(
+            vec![subject.clone()],
+            vec![entry("frm_1", sign(&subject, &IMPOSTOR_SEED))],
+        )
+        .publishing(&IMPOSTOR_SEED),
+    ));
+    let outcomes = restarted.pin_attester_keys(PROVIDER).expect("registered");
+    assert!(
+        matches!(outcomes.as_slice(), [PinOutcome::KeyChanged { .. }]),
+        "a changed key is an alarm: {outcomes:?}"
+    );
+    assert!(outcomes[0].is_alarm());
+    assert_eq!(
+        restarted.trust().key(PROVIDER, KEY_ID),
+        host.trust().key(PROVIDER, KEY_ID),
+        "the pin stands; it is never silently replaced"
+    );
+
+    let fanout = restarted.query_all(&query()).await;
+    assert_eq!(fanout.accepted_frames().count(), 1, "F9");
+    let composed = fanout.compose_for_prompt(1_000);
+    assert_eq!(
+        composed.audit.entries[0].attestation,
+        AttestationState::Invalid {
+            verdict: contextgraph_types::AttestationVerdict::BadSignature
+        }
+    );
+    assert!(
+        composed
+            .prompt
+            .contains("evidence from a provider nobody configured")
+    );
+}
+
+#[tokio::test]
+async fn pinning_an_unknown_provider_is_an_error() {
+    let mut host = Host::new();
+    assert!(matches!(
+        host.pin_attester_keys("nobody"),
+        Err(HostError::UnknownProvider(_))
+    ));
 }
 
 /// The single-provider door verifies too, and reports the same states — a host

@@ -124,9 +124,11 @@ impl Host {
     /// Trust `key` for `provider_id`'s provenance attestations
     /// ([ADR 0016](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0016-attestation-trust-roots.md)).
     ///
-    /// The operator is the trust root: there is no discovery and no
-    /// trust-on-first-use, so a key is here because a person put it here, from
-    /// the same material as the provider's own configuration. A host with a UI
+    /// The operator is the trust root: there is no discovery, so a key is here
+    /// because a person put it here, from the same material as the provider's
+    /// own configuration. (A key pinned on first use is a separate, lower tier
+    /// the host opts into with [`pin_attester_keys`](Self::pin_attester_keys),
+    /// and a key trusted here replaces a pin under the same `key_id`.) A host with a UI
     /// shows [`TrustedKey::fingerprint`] beside the consent prompt, so "I
     /// consent to this provider" and "I trust this key" are one decision.
     ///
@@ -136,6 +138,44 @@ impl Host {
     /// served (`SPEC.md` F9).
     pub fn trust_key(&mut self, provider_id: impl Into<String>, key: TrustedKey) {
         self.trust.trust(provider_id, key);
+    }
+
+    /// Pin the attester keys `provider_id` published in its handshake
+    /// (`handshake_ack.attester_keys`) as the **trust-on-first-use** tier —
+    /// strictly below a key the operator configured
+    /// ([ADR 0030](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0030-a-pinned-trust-tier-below-configured.md)).
+    ///
+    /// Opt-in and explicit: nothing pins unless the host calls this, and it is
+    /// never called from a query path, so a fan-out never mutates the store it
+    /// reads. Call it after registering a provider — and again on every later
+    /// connect, which is when a changed key is noticed.
+    ///
+    /// A signature verified against a pinned key reads as
+    /// [`AttestationState::Pinned`](crate::AttestationState::Pinned), never as
+    /// `Attested`: pinning proves **continuity with the first contact, never
+    /// identity**, and an attacker present at first contact is pinned too.
+    ///
+    /// Every outcome is returned, and the host **must** surface the alarms
+    /// ([`PinOutcome::is_alarm`](crate::PinOutcome::is_alarm)) to a person: a
+    /// provider publishing different bytes under a pinned `key_id` is
+    /// [`KeyChanged`](crate::PinOutcome::KeyChanged), and the pin stands rather
+    /// than being silently replaced. Persist the store afterwards
+    /// ([`TrustStore::save`]) so the pin survives a restart.
+    ///
+    /// [`HostError::UnknownProvider`] if no provider is registered under
+    /// `provider_id`.
+    pub fn pin_attester_keys(
+        &mut self,
+        provider_id: &str,
+    ) -> Result<Vec<crate::PinOutcome>, HostError> {
+        let offered = self
+            .providers
+            .iter()
+            .find(|provider| provider.id() == provider_id)
+            .ok_or_else(|| HostError::UnknownProvider(provider_id.to_string()))?
+            .attester_keys()
+            .to_vec();
+        Ok(self.trust.pin_all(provider_id, &offered))
     }
 
     /// The trust store (read-only), e.g. to persist it beside the consent
