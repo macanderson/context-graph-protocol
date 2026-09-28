@@ -5,12 +5,42 @@
 //! for, as an assertion: per-provider outcome, budget audit, and citations that
 //! MCP alone does not carry.
 
+use std::time::Duration;
+
 use contextgraph_host::{Host, ProviderResult};
 use contextgraph_types::{ConsentReceipt, ContextQuery, EgressScope, Grantor};
 
 /// The two bins under test, located by Cargo's per-crate exe env vars.
 const BRIDGE: &str = env!("CARGO_BIN_EXE_contextgraph-mcp-bridge");
 const FIXTURE: &str = env!("CARGO_BIN_EXE_contextgraph-mcp-fixture");
+
+/// The handshake bound these tests give the bridge. It is test-scoped: the
+/// host's production default (`DEFAULT_HANDSHAKE_TIMEOUT`, 10s) is untouched.
+///
+/// Why the default was not enough (issue #142): the bridge cannot ack until it
+/// has spawned the fixture and finished the whole MCP exchange (`initialize`,
+/// `resources/list`, one `resources/read` per resource), because `run_stdio`
+/// builds its frames before it reads its own stdin. So the host's handshake
+/// bound covers two cold process launches plus that exchange, not one line of
+/// I/O. With both tests running at once that is four cold launches of freshly
+/// linked debug binaries competing for a loaded machine (and, on macOS, for the
+/// system's first-launch scan of new executables), which is what ran past 10s.
+///
+/// It is not a pipe deadlock, and this bound does not hide one: no pipe in the
+/// chain is left undrained. Both hops inherit stderr rather than piping it, so
+/// no diagnostics can fill an unread buffer. The host awaits the bridge's
+/// stdout for the ack, the bridge reads the fixture's stdout after every
+/// request, and every exchange is strict request/response with lines far below
+/// a pipe buffer, so no write blocks on a reader that is itself blocked. A real
+/// deadlock would still fail here with `Timeout`, just later.
+const HANDSHAKE_BUDGET: Duration = Duration::from_secs(60);
+
+/// A host that gives a stdio provider [`HANDSHAKE_BUDGET`] to ack.
+fn patient_host() -> Host {
+    let mut host = Host::new();
+    host.set_handshake_timeout(HANDSHAKE_BUDGET);
+    host
+}
 
 fn query(goal: &str) -> ContextQuery {
     ContextQuery {
@@ -28,7 +58,7 @@ fn query(goal: &str) -> ContextQuery {
 
 #[tokio::test]
 async fn a_local_bridge_serves_mcp_resources_as_budgeted_cited_frames() {
-    let mut host = Host::new();
+    let mut host = patient_host();
     host.add_stdio("mcp", BRIDGE, &["--".into(), FIXTURE.into()])
         .await
         .expect("bridge handshake should succeed");
@@ -86,7 +116,7 @@ async fn a_remote_bridge_is_consent_gated_until_a_receipt_is_recorded() {
     // server declares egress and is not queried until consent is granted — even
     // though the wrapped server here is the same local fixture, `--remote` is
     // what the operator asserts about the destination.
-    let mut host = Host::new();
+    let mut host = patient_host();
     host.add_stdio(
         "mcp-remote",
         BRIDGE,
