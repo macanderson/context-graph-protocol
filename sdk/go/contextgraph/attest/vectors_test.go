@@ -52,8 +52,9 @@ type vectorFile struct {
 		} `json:"inclusion_proof"`
 	} `json:"merkle"`
 	Signature struct {
-		PublicKeyHex string                `json:"public_key_hex"`
-		Attestation  ProvenanceAttestation `json:"attestation"`
+		SigningKeySeedHex string                `json:"signing_key_seed_hex"`
+		PublicKeyHex      string                `json:"public_key_hex"`
+		Attestation       ProvenanceAttestation `json:"attestation"`
 	} `json:"signature"`
 	VerifierStrictness struct {
 		SmallOrderPublicKeysHex   []string `json:"small_order_public_keys_hex"`
