@@ -181,7 +181,7 @@ code, start here.
 
 **Queries and errors**
 - `ContextQuery` — a request for frames (goal, keywords, kinds wanted, budget, as-of time).
-- `ContextQueryResult` — the response wrapper (frames + whether truncated).
+- `ContextQueryResult` — the response wrapper: the frames, whether the answer was truncated (and roughly how much was dropped), and the optional detached attestation evidence, `frame_attestations` (per-frame signatures and inclusion proofs) and `result_attestation` (one signature over the whole set of frames returned). An unsigned provider builds it with `ContextQueryResult::unattested`.
 - `ErrorCode` — machine-readable error codes (`bad_request`, `unsupported_kind`, `budget_unsatisfiable`, ...).
 - `HostReaction` — what a host should do in response to a given error code (retry, drop provider, etc.).
 
@@ -246,6 +246,7 @@ row, a row names no file, or two ADRs share a number.
 | [0025](./adr/0025-the-dco-is-enforced-not-requested.md) | The DCO is enforced, not requested | Contributors were told their sign-off is what licenses their contribution, and nothing checked it, so most commits had none. A CI check now requires every commit a pull request adds to be signed off by its author (a bot's by the person behind it), from this change forward, without rewriting history. |
 | [0026](./adr/0026-versions-in-prose-and-the-go-sdk-tag.md) | Versions in prose, and the Go SDK's tag | A version written in a README could go stale where no manifest check could see it. Now it is held to its manifest like any other pin. The Go SDK has its own version line, because Go ties a module's major to its import path, so prose never pins a Go version nothing offline can check. |
 | [0027](./adr/0027-an-attestation-the-suite-cannot-check-is-not-certified.md) | An attestation the suite cannot check is not certified | A signature in a scheme this build does not know now fails the `attestation` check as *uncheckable* rather than skipping, because a skip counts as a pass and would let any provider opt out by renaming its algorithm. A skip means "does not apply", never "could not decide". |
+| [0034](./adr/0034-one-release-tag-per-train.md) | One release tag per release train | Crate versions reached crates.io with no tag naming them, under three disagreeing tag conventions. Each release train now has one tag shape (`contextgraph-v*` for the crates, `sdk/go/v*` as Go requires), the release workflow refuses a tag that misnames the version, points off `main`, or repeats a published release, and every past release gets a retroactive tag on the commit its `.crate` file records. |
 
 
 ---
