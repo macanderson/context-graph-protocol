@@ -289,6 +289,42 @@ the npm and PyPI packages only. The Go SDK has its own version line, because
 Go ties a module's major version to its import path
 ([ADR 0026](./docs/adr/0026-versions-in-prose-and-the-go-sdk-tag.md)).
 
+### 5.7 The trust store: key windows, a pinned tier, and a file
+
+Only affects a host that builds `TrustedKey` values by hand or matches
+`AttestationState` exhaustively. Nothing here changes the wire: `attester_keys`
+was already optional on `handshake_ack`, and a trust store persisted before
+these changes deserializes unchanged.
+
+```rust
+// TrustedKey gained `validity` (ADR 0028) and `tier` (ADR 0030). Prefer the
+// constructors, which fill both with the old behavior:
+TrustedKey::ed25519_bytes(key_id, &public_key)            // unbounded, configured
+    .with_validity(KeyValidity::new(not_before, not_after)?)  // optional window
+// A struct literal needs the two new fields:
+TrustedKey { key_id, public_key, validity: KeyValidity::unbounded(), tier: TrustTier::Configured }
+```
+
+`AttestationState` gained two variants. `KeyNotInService` is a trusted key whose
+validity window did not cover the instant the answer arrived
+([ADR 0028](./docs/adr/0028-key-validity-windows-are-evaluated-at-receipt.md)).
+`Pinned` is a signature verified against a key pinned on first use
+([ADR 0030](./docs/adr/0030-a-pinned-trust-tier-below-configured.md)), and
+`is_attested()` is **false** for it. An exhaustive `match` needs an arm for
+each; F9 still serves every frame. `ProviderOutcome` gained `received_at`, the
+receipt instant key windows were evaluated at — persist it beside the evidence
+if you will ever replay a check. `ContextProvider` gained a defaulted
+`attester_keys()`, so no implementation has to change.
+
+Two things are new rather than changed: `TrustStore::load` / `save` read and
+write the documented trust file
+([ADR 0029](./docs/adr/0029-the-trust-store-file.md)), and
+`contextgraph_types::root_from_proof` now refuses an inclusion proof whose path
+is not the RFC 6962 shape for its `leaf_index` and `leaf_count`
+([ADR 0031](./docs/adr/0031-result-set-attestation-is-checked-once-per-answer.md)).
+Every proof `inclusion_proof` builds has that shape, so honest evidence is
+unaffected.
+
 ## 6. The JSON Schemas moved to a branded `$id` — no action required
 
 **Nothing you have to do.** No bytes changed, no URL stopped working, and no

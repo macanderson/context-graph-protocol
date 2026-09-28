@@ -22,7 +22,8 @@ use contextgraph_types::{
 use crate::error::HostError;
 use crate::provider::ContextProvider;
 use crate::wire::{
-    Envelope, envelope_kind, next_correlation_id, verify_correlation, versions_compatible,
+    AttesterKey, Envelope, envelope_kind, next_correlation_id, verify_correlation,
+    versions_compatible,
 };
 
 /// Total per-request budget for an HTTP exchange (handshake or query).
@@ -159,6 +160,10 @@ pub struct HttpProvider {
     /// Bearer credential attached to every request, if the provider requires
     /// one. Redacted from every rendering (C8).
     credential: Option<Credential>,
+    /// The attester keys the handshake published (`SPEC.md` §6.5.5), kept so
+    /// [`ContextProvider::attester_keys`] can hand them to a host that pins on
+    /// first use (ADR 0030). Empty for a provider that signs nothing.
+    attester_keys: Vec<AttesterKey>,
 }
 
 impl HttpProvider {
@@ -222,7 +227,7 @@ impl HttpProvider {
                 protocol_version,
                 provider,
                 capabilities,
-                ..
+                attester_keys,
             } => {
                 if !versions_compatible(PROTOCOL_VERSION, &protocol_version) {
                     return Err(HostError::VersionMismatch {
@@ -258,6 +263,7 @@ impl HttpProvider {
                     info,
                     capabilities,
                     credential,
+                    attester_keys,
                 })
             }
             other => Err(HostError::UnexpectedEnvelope {
@@ -415,6 +421,10 @@ impl ContextProvider for HttpProvider {
 
     fn capabilities(&self) -> &Capabilities {
         &self.capabilities
+    }
+
+    fn attester_keys(&self) -> &[AttesterKey] {
+        &self.attester_keys
     }
 
     async fn query(&self, query: &ContextQuery) -> Result<ContextQueryResult, HostError> {

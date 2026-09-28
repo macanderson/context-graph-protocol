@@ -751,6 +751,18 @@ well-formed timestamp (F4) is the one part a forger has no reason to get wrong,
 and nothing in `contextgraph/1` supports reasoning about an attestation's age,
 freshness, or expiry.
 
+A verifier that keeps a **validity window** for a key it trusts — an optional
+`not_before` and `not_after`, both inclusive F4 timestamps, held in the
+verifier's own record of the key and never carried on the wire — **MUST**
+evaluate it at the instant the verifier *received* the evidence, and **MUST
+NOT** evaluate it at `issued_at`. The receipt instant is the one the signer
+cannot choose, and it bounds the signing time from above: a signature cannot be
+received before it exists. A verifier replaying archived evidence evaluates the
+window at the receipt instant it recorded, so a retired key keeps vouching for
+what arrived while it was in service. An attestation received outside its key's
+window is not attested, and per F9 its frame is still served. The reasoning is
+[ADR 0028](./docs/adr/0028-key-validity-windows-are-evaluated-at-receipt.md).
+
 * **F18.** A verifier **MUST NOT** present an attestation member outside the
   signed preimage — `attester_id`, `issued_at`, `key_id`, `algorithm` — as
   covered by the signature, and a host **SHOULD** mark `attester_id` and
@@ -797,6 +809,23 @@ because a root alone does not pin the tree's size, and a verifier that ignores i
 can be shown a proof from a differently-shaped tree. This is what makes a signed
 answer selectively disclosable: a host proves one frame was in the set without
 revealing the others.
+
+Honoring the leaf count is a rule, not an aside. A verifier **MUST** refuse a
+proof whose `leaf_index` is not below its `leaf_count`, or whose `path` does not
+have exactly the length and the `sibling_is_left` sides the split above gives
+leaf `leaf_index` of a tree of `leaf_count` leaves — and **MUST** refuse it on
+that arithmetic, before hashing anything: the shape is at most
+⌈log₂ `leaf_count`⌉ steps of index arithmetic, while a walk costs a hash per
+step of a path the provider chose. A host checking an answer as it arrived
+**MUST** also refuse a proof whose `leaf_count` is not the number of frames the
+answer carries, because F12 puts exactly those frames under the root. Each
+refusal degrades that frame to unattested (F9); it never removes it.
+
+A host checking a whole answer **SHOULD** verify the root's signature once per
+answer and then check each frame's proof against the verified root, rather than
+verify the signature once per frame — one signature for *n* frames is the
+reason to sign a root at all. The reference host does; the reasoning is
+[ADR 0031](./docs/adr/0031-result-set-attestation-is-checked-once-per-answer.md).
 
 #### 6.5.4 Verification
 
@@ -856,6 +885,30 @@ audit. A deployment that needs the second answer resolves `key_id` against its
 own trust store and ignores what the handshake said. It rides the handshake
 rather than the answer because a key republished with every response could be
 swapped by the same forgery that swapped the signature.
+
+`attester_keys` is **optional**. A receiver **MUST** tolerate its absence and
+treat an absent member exactly as an empty list; a provider written before the
+member existed, or one that signs nothing, omits it.
+
+**A host MAY pin a published key on first use** — record it the first time a
+provider publishes it and verify later attestations against it — as a trust
+tier strictly below a key its operator configured
+([ADR 0030](./docs/adr/0030-a-pinned-trust-tier-below-configured.md)). A pinned
+key proves **continuity, never identity**: the key that signs today is the one
+the provider published at first contact, and an attacker present at first
+contact is pinned too. So a host that pins:
+
+* **MUST NOT** present a frame verified against a pinned key as equivalent to
+  one verified against a configured key — the tier travels with the outcome;
+* **MUST NOT** replace a pinned key when the provider later publishes different
+  bytes under the same `key_id`, and **MUST** report the change to whoever
+  operates the host. Rotation is a new `key_id` (§6.5.2); new bytes under an
+  old one are what pinning exists to notice;
+* **MUST NOT** let a pin override a key the operator configured under the same
+  `key_id`.
+
+Pinning is host policy under these rules, never a requirement: a host that pins
+nothing is conformant, and F9 governs every outcome.
 
 **The evidence rides the result.** A `frames` envelope's `result` carries two
 optional members, and the `frames` envelope itself carries **no** attestation

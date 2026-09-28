@@ -16,6 +16,7 @@ use contextgraph_types::{
 };
 
 use crate::error::HostError;
+use crate::wire::AttesterKey;
 
 /// A registered Context Graph Protocol provider, queryable behind one handle regardless of
 /// transport. `info()`/`capabilities()` return values cached at handshake
@@ -81,6 +82,24 @@ pub trait ContextProvider: Send + Sync {
     /// since the host only asks providers that declare support.
     async fn verify(&self, request: &VerifyRequest) -> Result<VerifyResponse, HostError> {
         Ok(VerifyResponse::uniform(request, Verdict::Unknown))
+    }
+
+    /// The public keys this provider signs its attestations with, as it
+    /// published them in `handshake_ack.attester_keys` (`SPEC.md` §6.5.5).
+    ///
+    /// Defaults to none, which is conformant — a provider that publishes no
+    /// key offers no attestation — and is what every provider that signs
+    /// nothing returns. The stdio and HTTP transports return what the
+    /// handshake carried; an in-process provider that signs overrides it.
+    ///
+    /// A published key is a **construction anchor, never a trust anchor**
+    /// (ADR 0019): the host consults it only when the operator opts in to
+    /// pinning it on first use, through
+    /// [`Host::pin_attester_keys`](crate::Host::pin_attester_keys), and a
+    /// signature verified against a pinned key is reported as its own, lower
+    /// tier (ADR 0030).
+    fn attester_keys(&self) -> &[AttesterKey] {
+        &[]
     }
 
     /// Shut the provider down cleanly (SPEC.md §3 lifecycle). In-process providers

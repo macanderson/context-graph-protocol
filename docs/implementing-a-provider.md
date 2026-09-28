@@ -49,6 +49,12 @@ pub trait ContextProvider: Send + Sync {
         Ok(VerifyResponse::uniform(request, Verdict::Unknown))
     }
 
+    /// The public keys you sign attestations with, as published in
+    /// `handshake_ack.attester_keys`. Defaults to none — conformant for a
+    /// provider that signs nothing. A host may pin these on first use, as a
+    /// tier below a key its operator configured (ADR 0030).
+    fn attester_keys(&self) -> &[AttesterKey] { &[] }
+
     /// Shut the provider down cleanly. Defaults to a no-op.
     async fn shutdown(&self) -> Result<(), HostError> { Ok(()) }
 }

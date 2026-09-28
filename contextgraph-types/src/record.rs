@@ -267,7 +267,14 @@ pub struct RecordLink {
 pub struct RecordAttestation {
     /// The `sha256:<hex>` `record_hash` this attestation signs.
     pub signed_record_hash: String,
-    /// The signing key's id; validity windows govern rotation.
+    /// The signing key's id; validity windows govern rotation (profile LC3).
+    ///
+    /// A verifier that keeps a [`KeyValidity`](crate::KeyValidity) window for
+    /// this id evaluates it at the instant it *received* the attestation, never
+    /// at [`issued_at`](Self::issued_at) — see
+    /// [`RecordKeyRing`](crate::RecordKeyRing) and
+    /// [ADR 0028](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0028-key-validity-windows-are-evaluated-at-receipt.md).
+    /// **Not signed**: rewriting it selects a different key, which fails safe.
     pub key_id: String,
     /// The signature algorithm, e.g. [`ALGORITHM_ED25519`](crate::ALGORITHM_ED25519).
     ///
@@ -282,7 +289,14 @@ pub struct RecordAttestation {
     /// The detached signature, lowercase hex for `ed25519` — the encoding every
     /// other digest and signature on this wire already uses.
     pub signature: String,
-    /// When the attestation was issued (protocol timestamp).
+    /// When the attestation claims to have been issued (protocol timestamp).
+    ///
+    /// **Not signed, and not verified**: only `signed_record_hash` is in the
+    /// signed message (profile LC4), so anyone relaying the attestation can
+    /// rewrite this to any instant and the signature still verifies — the
+    /// boundary `SPEC.md` F18 states for the frame layer. It therefore decides
+    /// nothing, and in particular it is never the instant a key validity window
+    /// is evaluated at (ADR 0028).
     pub issued_at: String,
 }
 

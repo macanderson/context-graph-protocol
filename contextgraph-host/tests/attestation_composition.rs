@@ -1,6 +1,6 @@
 //! Attestation verification, end to end: a signing provider, a host that holds
 //! its key, and the composition audit that says what was found
-//! (`SPEC.md` §6.5, F8–F9; issues #88 and #91;
+//! (`SPEC.md` §6.5, F8–F9; issues #88, #91, #130, #133 and #136;
 //! [ADR 0016](../../docs/adr/0016-attestation-trust-roots.md)).
 //!
 //! The unit tests in `contextgraph_host::trust` cover the verifier's verdicts.
@@ -12,10 +12,13 @@
 
 use async_trait::async_trait;
 use contextgraph_host::{
-    AttestationState, ContextProvider, FrameAttestation, Host, HostError, ProviderResult,
-    RoundRobinByRank, TrustedKey,
+    AttestationState, AttesterKey, ContextProvider, FrameAttestation, Host, HostError, PinOutcome,
+    ProviderResult, RoundRobinByRank, TrustTier, TrustedKey,
 };
-use contextgraph_types::attest::{ProvenanceAttestation, public_key_for, sign_frame_attestation};
+use contextgraph_types::attest::{
+    ProvenanceAttestation, inclusion_proof, merkle_root, public_key_for, result_set_commitments,
+    sign_commitment, sign_frame_attestation,
+};
 use contextgraph_types::capability::QueryCapability;
 use contextgraph_types::{
     Capabilities, ContextFrame, ContextQuery, ContextQueryResult, DataFlow, FrameId, FrameKind,
@@ -38,6 +41,11 @@ struct SigningProvider {
     capabilities: Capabilities,
     frames: Vec<ContextFrame>,
     attestations: Vec<FrameAttestation>,
+    /// The answer-level signature over the §6.5.3 Merkle root, if any.
+    result_attestation: Option<ProvenanceAttestation>,
+    /// The keys this provider publishes, as `handshake_ack.attester_keys`
+    /// would carry them.
+    published: Vec<AttesterKey>,
 }
 
 impl SigningProvider {
@@ -61,7 +69,27 @@ impl SigningProvider {
             },
             frames,
             attestations,
+            result_attestation: None,
+            published: vec![],
         }
+    }
+
+    /// The same provider, publishing `seed`'s public key under [`KEY_ID`].
+    fn publishing(mut self, seed: &[u8; 32]) -> Self {
+        self.published = vec![AttesterKey {
+            key_id: KEY_ID.into(),
+            algorithm: "ed25519".into(),
+            // Lowercase hex, the wire's encoding — the same string a trusted
+            // key built from these bytes holds.
+            public_key: TrustedKey::ed25519_bytes(KEY_ID, &public_key_for(seed)).public_key,
+        }];
+        self
+    }
+
+    /// The same provider, signing its answer once over the result-set root.
+    fn with_result_attestation(mut self, root: ProvenanceAttestation) -> Self {
+        self.result_attestation = Some(root);
+        self
     }
 }
 
@@ -76,9 +104,13 @@ impl ContextProvider for SigningProvider {
     fn capabilities(&self) -> &Capabilities {
         &self.capabilities
     }
+    fn attester_keys(&self) -> &[AttesterKey] {
+        &self.published
+    }
     async fn query(&self, _query: &ContextQuery) -> Result<ContextQueryResult, HostError> {
         Ok(ContextQueryResult {
             frame_attestations: self.attestations.clone(),
+            result_attestation: self.result_attestation.clone(),
             ..ContextQueryResult::unattested(self.frames.clone(), false, None)
         })
     }
@@ -499,6 +531,359 @@ async fn verification_changes_neither_selection_nor_order() {
             .collect::<Vec<_>>(),
         "and must not reorder the audit either"
     );
+}
+
+/// **F9 under key rotation (#136).** A key whose validity window closed before
+/// the answer arrived reads as `KeyNotInService` — its own name, distinct from
+/// "no key" and from "forged" — and the frame is still served, still quoted,
+/// and still included. The host records the instant it received the answer, and
+/// replaying the check at an instant inside the window attests the same
+/// evidence: the auditor-replay case (ADR 0028).
+#[tokio::test]
+async fn a_lapsed_key_degrades_its_frame_to_unattested_and_never_removes_it() {
+    let subject = frame("frm_rotated", "evidence signed under a retired key");
+    let retired = contextgraph_types::KeyValidity::new(
+        Some("2019-01-01T00:00:00Z".into()),
+        Some("2019-12-31T23:59:59Z".into()),
+    )
+    .expect("a well-formed window");
+
+    let mut host = Host::new();
+    host.trust_key(
+        PROVIDER,
+        TrustedKey::ed25519_bytes(KEY_ID, &public_key_for(&SEED)).with_validity(retired),
+    );
+    host.register(Box::new(SigningProvider::new(
+        vec![subject.clone()],
+        vec![entry("frm_rotated", sign(&subject, &SEED))],
+    )));
+
+    let fanout = host.query_all(&query()).await;
+    assert_eq!(
+        fanout.accepted_frames().count(),
+        1,
+        "F9: an out-of-service key never removes a frame"
+    );
+    let received_at = fanout.outcomes[0]
+        .received_at
+        .clone()
+        .expect("a leg that served frames records when it received them");
+    assert!(contextgraph_types::is_protocol_timestamp(&received_at));
+
+    let composed = fanout.compose_for_prompt(1_000);
+    assert!(
+        composed
+            .prompt
+            .contains("evidence signed under a retired key")
+    );
+    let audit = &composed.audit.entries[0];
+    assert!(matches!(
+        audit.disposition,
+        contextgraph_host::FrameDisposition::Included { .. }
+    ));
+    match &audit.attestation {
+        AttestationState::KeyNotInService {
+            key_id,
+            received_at: evaluated_at,
+            position,
+            ..
+        } => {
+            assert_eq!(key_id, KEY_ID);
+            assert_eq!(evaluated_at, &received_at);
+            assert_eq!(*position, contextgraph_types::WindowPosition::Expired);
+        }
+        other => panic!("expected KeyNotInService, got {other:?}"),
+    }
+    assert!(!audit.attestation.is_attested());
+    assert_eq!(composed.audit.attested().count(), 0);
+
+    // Replay: the same answer, checked at an instant the operator's records
+    // place inside the window, is attested — the key vouches for what it
+    // signed while in service.
+    let ProviderResult::Frames(result) = &fanout.outcomes[0].result else {
+        panic!("the leg served frames");
+    };
+    let replayed =
+        host.trust()
+            .check_result_signed_as_at(PROVIDER, PROVIDER, result, "2019-06-01T00:00:00Z");
+    assert!(replayed[0].state.is_attested(), "{replayed:?}");
+}
+
+/// **The pinned tier, end to end (#130, ADR 0030).** A host that opts in pins
+/// the key a provider published at its handshake; the provider's signed frames
+/// then read as `Pinned` — verified, and labelled as continuity rather than
+/// identity, so the audit never counts them as operator-attested. After a
+/// restart the provider publishes a *different* key under the same `key_id`:
+/// the host is told loudly, the pin is not replaced, the new signatures do not
+/// verify, and every frame is still served (F9).
+#[tokio::test]
+async fn a_pinned_key_is_its_own_tier_and_a_changed_key_is_reported_not_re_pinned() {
+    let subject = frame("frm_1", "evidence from a provider nobody configured");
+
+    // First contact.
+    let mut host = Host::new();
+    host.register(Box::new(
+        SigningProvider::new(
+            vec![subject.clone()],
+            vec![entry("frm_1", sign(&subject, &SEED))],
+        )
+        .publishing(&SEED),
+    ));
+    let outcomes = host.pin_attester_keys(PROVIDER).expect("registered");
+    assert!(
+        matches!(outcomes.as_slice(), [PinOutcome::Pinned { .. }]),
+        "{outcomes:?}"
+    );
+
+    let fanout = host.query_all(&query()).await;
+    let composed = fanout.compose_for_prompt(1_000);
+    let state = &composed.audit.entries[0].attestation;
+    assert!(
+        matches!(state, AttestationState::Pinned { .. }),
+        "{state:?}"
+    );
+    assert_eq!(state.trust_tier(), Some(TrustTier::Pinned));
+    assert!(state.signature_verified());
+    assert!(
+        !state.is_attested(),
+        "a pin is never presented as a configured key"
+    );
+    assert_eq!(composed.audit.attested().count(), 0);
+    assert!(!fanout.any_attested());
+    assert!(
+        composed
+            .prompt
+            .contains("evidence from a provider nobody configured")
+    );
+
+    // Restart: the store is restored, and the provider now publishes and signs
+    // with a different key under the same key_id.
+    let mut restarted = Host::new();
+    restarted.set_trust_store(host.trust().clone());
+    restarted.register(Box::new(
+        SigningProvider::new(
+            vec![subject.clone()],
+            vec![entry("frm_1", sign(&subject, &IMPOSTOR_SEED))],
+        )
+        .publishing(&IMPOSTOR_SEED),
+    ));
+    let outcomes = restarted.pin_attester_keys(PROVIDER).expect("registered");
+    assert!(
+        matches!(outcomes.as_slice(), [PinOutcome::KeyChanged { .. }]),
+        "a changed key is an alarm: {outcomes:?}"
+    );
+    assert!(outcomes[0].is_alarm());
+    assert_eq!(
+        restarted.trust().key(PROVIDER, KEY_ID),
+        host.trust().key(PROVIDER, KEY_ID),
+        "the pin stands; it is never silently replaced"
+    );
+
+    let fanout = restarted.query_all(&query()).await;
+    assert_eq!(fanout.accepted_frames().count(), 1, "F9");
+    let composed = fanout.compose_for_prompt(1_000);
+    assert_eq!(
+        composed.audit.entries[0].attestation,
+        AttestationState::Invalid {
+            verdict: contextgraph_types::AttestationVerdict::BadSignature
+        }
+    );
+    assert!(
+        composed
+            .prompt
+            .contains("evidence from a provider nobody configured")
+    );
+}
+
+#[tokio::test]
+async fn pinning_an_unknown_provider_is_an_error() {
+    let mut host = Host::new();
+    assert!(matches!(
+        host.pin_attester_keys("nobody"),
+        Err(HostError::UnknownProvider(_))
+    ));
+}
+
+/// Sign `frames` the cheap way (`SPEC.md` §6.5.3): one signature over the
+/// result-set Merkle root, and one inclusion proof per frame with no per-frame
+/// signature at all. Entries come back in canonical `FrameId` order, which is
+/// the order the leaves were hashed in.
+fn root_signed(
+    frames: &[ContextFrame],
+    seed: &[u8; 32],
+) -> (Vec<FrameAttestation>, ProvenanceAttestation) {
+    let ordered = result_set_commitments(PROVIDER, frames);
+    let commitments: Vec<[u8; 32]> = ordered.iter().map(|(_, commitment)| *commitment).collect();
+    let entries = ordered
+        .iter()
+        .enumerate()
+        .map(|(index, (id, _))| {
+            FrameAttestation::proven(
+                id.clone(),
+                inclusion_proof(&commitments, index).expect("index is in range"),
+            )
+        })
+        .collect();
+    let root = sign_commitment(
+        &merkle_root(&commitments),
+        seed,
+        KEY_ID,
+        "docs-provider",
+        "2026-08-29T00:00:00Z",
+    );
+    (entries, root)
+}
+
+fn three_frames() -> Vec<ContextFrame> {
+    vec![
+        frame("frm_a", "the first proven paragraph"),
+        frame("frm_b", "the second proven paragraph"),
+        frame("frm_c", "the third proven paragraph"),
+    ]
+}
+
+/// #133's first witness: a provider that signs its whole answer once gets
+/// credit for every frame it proves, through the same `AttestationState` and
+/// the same audit field as a per-frame signature — no second vocabulary.
+#[tokio::test]
+async fn every_frame_proven_under_a_signed_root_is_attested_in_the_audit() {
+    let frames = three_frames();
+    let (entries, root) = root_signed(&frames, &SEED);
+    let host =
+        host_trusting(SigningProvider::new(frames.clone(), entries).with_result_attestation(root));
+
+    let fanout = host.query_all(&query()).await;
+    let composed = fanout.compose_for_prompt(1_000);
+    assert_eq!(composed.audit.entries.len(), 3);
+    for entry in &composed.audit.entries {
+        assert_eq!(
+            entry.attestation,
+            AttestationState::Attested {
+                key_id: KEY_ID.to_string(),
+                attester_id: "docs-provider".to_string(),
+                covers_content: true,
+            },
+            "{} is attested through its inclusion proof",
+            entry.frame.frame_id
+        );
+    }
+    assert_eq!(composed.audit.attested().count(), 3);
+    assert!(fanout.any_attested());
+}
+
+/// #133's second witness: `leaf_count` is part of the proof so a verifier
+/// cannot be shown a proof from a differently-shaped tree, and the host honors
+/// it. A provider that hands one frame a proof taken from a four-leaf tree —
+/// the candidate set before it truncated one away — gets that frame reported
+/// as malformed evidence, not attested, while its correctly-proven siblings
+/// stay attested. Every frame is served.
+#[tokio::test]
+async fn a_proof_from_a_differently_shaped_tree_is_not_attested() {
+    let frames = three_frames();
+    let (mut entries, root) = root_signed(&frames, &SEED);
+
+    let mut candidates = frames.clone();
+    candidates.push(frame("frm_d", "a candidate the provider truncated away"));
+    let (wider_entries, _) = root_signed(&candidates, &SEED);
+    let wider_proof = wider_entries[0].inclusion_proof.clone().expect("a proof");
+    assert_eq!(wider_proof.leaf_count, 4);
+    entries[0].inclusion_proof = Some(wider_proof);
+
+    let host =
+        host_trusting(SigningProvider::new(frames.clone(), entries).with_result_attestation(root));
+    let fanout = host.query_all(&query()).await;
+    assert_eq!(fanout.accepted_frames().count(), 3, "F9");
+    let composed = fanout.compose_for_prompt(1_000);
+    let state_of = |id: &str| {
+        composed
+            .audit
+            .entries
+            .iter()
+            .find(|entry| entry.frame.frame_id == id)
+            .expect("in the audit")
+            .attestation
+            .clone()
+    };
+    assert_eq!(
+        state_of("frm_a"),
+        AttestationState::Invalid {
+            verdict: contextgraph_types::AttestationVerdict::MalformedCommitment
+        }
+    );
+    assert!(state_of("frm_b").is_attested());
+    assert!(state_of("frm_c").is_attested());
+    assert!(composed.prompt.contains("the first proven paragraph"));
+}
+
+/// #133's F9 witness: a malformed root, a root signed by somebody else, and a
+/// malformed proof each leave every frame served, included and quoted —
+/// degraded to not-attested, never removed.
+#[tokio::test]
+async fn a_malformed_root_or_proof_leaves_every_frame_served() {
+    let frames = three_frames();
+
+    // 1. A root that is garbage from end to end.
+    let (entries, mut garbage_root) = root_signed(&frames, &SEED);
+    garbage_root.signed_commitment = "not a digest".into();
+    garbage_root.signature = "\u{0}definitely not hex".into();
+    assert_all_served_and_none_attested(
+        SigningProvider::new(frames.clone(), entries).with_result_attestation(garbage_root),
+    )
+    .await;
+
+    // 2. A well-formed root signed by an impostor under the trusted key_id.
+    let (entries, forged_root) = root_signed(&frames, &IMPOSTOR_SEED);
+    assert_all_served_and_none_attested(
+        SigningProvider::new(frames.clone(), entries).with_result_attestation(forged_root),
+    )
+    .await;
+
+    // 3. Honest root, every proof's first sibling replaced with garbage.
+    let (mut entries, root) = root_signed(&frames, &SEED);
+    for entry in &mut entries {
+        if let Some(proof) = entry.inclusion_proof.as_mut() {
+            proof.path[0].sibling = "sha256:zz".into();
+        }
+    }
+    assert_all_served_and_none_attested(
+        SigningProvider::new(frames.clone(), entries).with_result_attestation(root),
+    )
+    .await;
+
+    async fn assert_all_served_and_none_attested(provider: SigningProvider) {
+        let host = host_trusting(provider);
+        let fanout = host.query_all(&query()).await;
+        assert!(matches!(
+            fanout.outcomes[0].result,
+            ProviderResult::Frames(_)
+        ));
+        assert_eq!(fanout.accepted_frames().count(), 3, "F9: nothing removed");
+        let composed = fanout.compose_for_prompt(1_000);
+        assert_eq!(composed.audit.entries.len(), 3);
+        for entry in &composed.audit.entries {
+            assert!(
+                matches!(
+                    entry.disposition,
+                    contextgraph_host::FrameDisposition::Included { .. }
+                ),
+                "F9: {} is included",
+                entry.frame.frame_id
+            );
+            assert!(
+                matches!(entry.attestation, AttestationState::Invalid { .. }),
+                "named, not silently unattested: {:?}",
+                entry.attestation
+            );
+        }
+        assert_eq!(composed.audit.attested().count(), 0);
+        for content in [
+            "the first proven paragraph",
+            "the second proven paragraph",
+            "the third proven paragraph",
+        ] {
+            assert!(composed.prompt.contains(content), "F9: {content} is quoted");
+        }
+    }
 }
 
 /// The single-provider door verifies too, and reports the same states — a host

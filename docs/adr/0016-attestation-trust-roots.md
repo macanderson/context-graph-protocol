@@ -113,7 +113,12 @@ operator which of their providers were verified against a key a person actually
 checked. It is also not implementable today: no wire field carries a public key,
 so adopting it means a normative addition, which is its own ADR and its own
 conformance requirement. Worth having eventually as a **labelled second tier**
-below a configured key, never as the only tier. Tracked as follow-up.
+below a configured key, never as the only tier. *(Amended 2026-09-28: adopted
+on exactly those terms by
+[ADR 0030](./0030-a-pinned-trust-tier-below-configured.md) — opt-in, reported as
+its own `AttestationState::Pinned` rather than `Attested`, never replacing a
+pinned or configured key when the published one changes. The wire half was
+already `handshake_ack.attester_keys`, per ADR 0019.)*
 
 **A key registry, well-known endpoint, or transparency log.** Rejected as out of
 scope, per `GOVERNANCE.md`'s consent boundary. These are the *right* answer for
@@ -158,11 +163,20 @@ needs *some* answer, and "the operator supplies it" is an answer, written down.
     itself is portable — anyone with the key can check it offline, which is the
     point — but the *decision to trust the key* travels with nobody.
   - There is **no revocation.** A key stays trusted until an operator removes
-    it. Nothing here notices a compromise, and no expiry is enforced.
-  - There is **no rotation protocol.** A new `key_id` is trusted when the
-    operator adds it; until then the provider's frames read as `NoTrustedKey`.
-    That degradation is safe (F9) and silent to the model — it is visible only
-    in the audit, so a host that never reads its audit learns nothing.
+    it or closes its window. Nothing here notices a compromise.
+  - **Rotation is by validity window, and it is local.** *(Amended 2026-09-28
+    by [ADR 0028](./0028-key-validity-windows-are-evaluated-at-receipt.md);
+    this bullet previously read "There is no rotation protocol", and "no expiry
+    is enforced" above.)* A `TrustedKey` may carry an inclusive `not_before` /
+    `not_after`, evaluated at the instant the host **received** the evidence —
+    never at the attestation's unsigned `issued_at` — so a retired key keeps
+    vouching for what arrived while it was in service and vouches for nothing
+    that arrives after. An attestation outside its key's window reads as
+    `AttestationState::KeyNotInService`, and the frame is still served (F9). A
+    key with no window behaves exactly as before. What is still not a protocol:
+    a new `key_id` is trusted when the operator adds it, and until then the
+    provider's frames read as `NoTrustedKey` — safe (F9) and silent to the
+    model, visible only in the audit.
   - `Attested` means **"signed by a key this operator chose to trust"** and
     nothing more. It does not mean the content is true, that the provider is
     who it claims to be to any third party, or that the operator checked the

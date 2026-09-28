@@ -86,6 +86,13 @@ only if, it also defines what a verifier does with it**, and should not bind
 `attester_id` as a bare string. Until a major family takes up that design, the
 field is metadata and F18 says how to treat it.
 
+*Amended 2026-09-28:* key lapse (#136, #120) no longer waits on this.
+[ADR 0028](0028-key-validity-windows-are-evaluated-at-receipt.md) evaluates a
+key's validity window at the instant the verifier *received* the evidence — a
+sound upper bound on signing time that the signer cannot choose — and reads
+nothing from `issued_at`. The position above is unchanged: binding `issued_at`
+would still be the way to make signing time provable to a third party.
+
 ## Consequences
 
 - The boundary has a witness in each crate that owns it.

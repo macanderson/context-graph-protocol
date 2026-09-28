@@ -641,6 +641,10 @@ pub struct StdioProvider {
     /// The reader task; aborted on `Drop` as a backstop (the child's death
     /// already ends it via EOF).
     reader: JoinHandle<()>,
+    /// The attester keys the handshake published (`SPEC.md` §6.5.5), kept so
+    /// [`ContextProvider::attester_keys`] can hand them to a host that pins on
+    /// first use (ADR 0030). Empty for a provider that signs nothing.
+    attester_keys: Vec<AttesterKey>,
 }
 
 impl StdioProvider {
@@ -659,6 +663,7 @@ impl StdioProvider {
             .await?
             .with_label(id.clone());
         let (info, capabilities) = conn.handshake().await?;
+        let attester_keys = conn.attester_keys().to_vec();
 
         // Handshake done: split the connection. The `BufReader` carries any
         // bytes it buffered past the ack, so nothing is lost across the move.
@@ -683,6 +688,7 @@ impl StdioProvider {
             no_id_lock: TokioMutex::new(()),
             control: TokioMutex::new(control),
             reader,
+            attester_keys,
         })
     }
 
@@ -733,6 +739,10 @@ impl ContextProvider for StdioProvider {
 
     fn capabilities(&self) -> &Capabilities {
         &self.capabilities
+    }
+
+    fn attester_keys(&self) -> &[AttesterKey] {
+        &self.attester_keys
     }
 
     async fn query(&self, query: &ContextQuery) -> Result<ContextQueryResult, HostError> {

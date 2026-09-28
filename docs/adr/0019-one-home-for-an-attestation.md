@@ -84,7 +84,11 @@ configured key — remains **open under #130**, along with the tier's own ADR, a
 `TrustStore` that records a key's origin, and an `AttestationState` that reports
 which tier verified it. #130's step 1 (an additive wire field carrying the key)
 is what shipped; its steps 2 through 4 have not, and this ADR does not decide
-them.
+them. *(Amended 2026-09-28:
+[ADR 0030](0030-a-pinned-trust-tier-below-configured.md) decides them and adopts
+the pinned tier. What this section says about `attester_keys` still holds for
+every host that does not opt in: the reference host consults it only when asked
+to pin.)*
 
 **5. A host verifies the proof-only shape.** A `FrameAttestation` may carry a
 per-frame signature, an inclusion proof in the signed `result_attestation` root,

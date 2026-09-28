@@ -26,7 +26,14 @@
       "graph": true,
       "embeddings_fingerprint": null,
       "verify": true
-    }
+    },
+    "attester_keys": [
+      {
+        "key_id": "repo-graph-2026-08",
+        "algorithm": "ed25519",
+        "public_key": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61"
+      }
+    ]
   },
   {
     "type": "handshake_ack",

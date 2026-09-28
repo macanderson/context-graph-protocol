@@ -231,17 +231,24 @@ asserts against a deliberately over-budget, duplicate-content fixture.
 `entry.attestation` records what the host found when it checked the frame's
 detached [provenance attestation](../SPEC.md) (§6.5) against its own
 [`TrustStore`][trust] — the keys **an operator** chose to trust for that
-provider ([ADR 0016](adr/0016-attestation-trust-roots.md); there is no registry
-and no trust-on-first-use, because a host that needs an organization behind it
-is not one an individual can run).
+provider ([ADR 0016](adr/0016-attestation-trust-roots.md); there is no registry,
+because a host that needs an organization behind it is not one an individual
+can run). A host may also opt in to pinning a provider's published keys on first
+use ([ADR 0030](adr/0030-a-pinned-trust-tier-below-configured.md)); a frame
+verified against a pinned key reads as `Pinned`, never `Attested`, because a pin
+proves the key has not changed since first contact and nothing about whose it
+is.
 
 | state                          | meaning                                                          |
 | ------------------------------ | ---------------------------------------------------------------- |
 | `NotChecked`                   | the host consulted no trust store — "I did not look"             |
 | `Unattested`                   | the provider offered no attestation for this frame               |
-| `Attested { .., covers_content }` | verified against a trusted key                                |
+| `Attested { .., covers_content }` | verified against a key the operator configured                |
+| `Pinned { .., covers_content }` | verified against a key pinned on first use — continuity, not identity; `is_attested()` is false |
 | `NoTrustedKey { key_id }`      | an attestation arrived; the host holds no key under that `key_id` |
+| `KeyNotInService { key_id, received_at, .. }` | the key is trusted, but its validity window did not cover the instant the answer arrived ([ADR 0028](adr/0028-key-validity-windows-are-evaluated-at-receipt.md)) |
 | `UnknownAlgorithm { .. }`      | a scheme this build cannot check (F8) — a refusal to guess        |
+| `UnusableEvidence`             | an entry named the frame but could not be turned into a check (a proof with no signed root, or an empty entry) |
 | `Invalid { verdict }`          | a trusted key was found and the check failed; the verdict says how |
 
 Two things this deliberately does **not** do. It never removes a frame: an
@@ -262,6 +269,92 @@ chain (§6.5.2), and `content_digest` is optional — so a signed frame that
 declares none has a valid signature over its identity and its provenance and
 **nothing over its text**. The flag is `false` there, and a host should not
 present such a frame as though its words were signed.
+
+#### Where the trusted keys come from, and how they survive a restart
+
+The store is filled by the operator and nobody else. Keep it in a **trust
+file** at a path the operator names
+([ADR 0029](adr/0029-the-trust-store-file.md)) — there is no default location
+and no discovery — and load it when the host starts:
+
+```rust
+use contextgraph_host::{Host, TrustStore};
+
+let mut host = Host::new();
+// A missing, unreadable or malformed file is a named TrustFileError — never a
+// silently empty store that verifies nothing.
+host.set_trust_store(TrustStore::load(&operator_named_path)?);
+```
+
+The file is a small JSON document:
+
+```json
+{
+  "format": "contextgraph-trust/1",
+  "providers": {
+    "docs": [
+      {
+        "key_id": "docs-2026-08",
+        "algorithm": "ed25519",
+        "public_key": "<64 hex characters>",
+        "fingerprint": "sha256:<64 hex characters>",
+        "not_before": "2026-08-01T00:00:00Z",
+        "not_after": "2027-07-31T23:59:59Z"
+      }
+    ]
+  }
+}
+```
+
+`providers` is keyed by the id the operator registered the provider under — the
+same id consent is recorded under. `fingerprint` is optional when you write the
+file by hand and must match the key when present; `not_before` / `not_after` are
+the key's optional, inclusive validity window, evaluated at the instant each
+answer arrives ([ADR 0028](adr/0028-key-validity-windows-are-evaluated-at-receipt.md)).
+A key the host pinned on first use carries `"tier": "pinned"`
+([ADR 0030](adr/0030-a-pinned-trust-tier-below-configured.md)); saving it is
+what lets the host notice, after a restart, that the provider's key changed.
+Any other member is an error. `TrustStore::save(path)` writes the file back
+atomically after the operator trusts or revokes a key.
+
+**Show the fingerprint in the consent flow.** "I consent to this provider" and
+"I trust this key" are one decision about one party (ADR 0016 §2), so a host
+that prompts for consent shows the keys it trusts for that provider beside the
+prompt:
+
+```rust
+for key in host.trust().keys_for(provider_id) {
+    println!(
+        "  signing key {}  fingerprint {}",
+        key.key_id,
+        key.fingerprint().unwrap_or_else(|| "(malformed key)".into()),
+    );
+}
+```
+
+The fingerprint is `sha256:` over the key bytes, the same string the trust file
+records beside the key, so a person can compare it with the one the provider's
+operator published before they say yes.
+
+**Pinning on first use is opt-in, and it is a lower tier.** A host that wants
+credit for a provider nobody handed it a key for can pin the keys the provider
+published at its handshake, then save the store so the pin survives:
+
+```rust
+for outcome in host.pin_attester_keys(provider_id)? {
+    if outcome.is_alarm() {
+        // KeyChanged or ConflictsWithConfigured: the provider now publishes
+        // different bytes under a key_id this host already holds. The held
+        // key stands. A person has to hear about this.
+        eprintln!("signing key changed for {provider_id}: {outcome:?}");
+    }
+}
+host.trust().save(&operator_named_path)?;
+```
+
+Frames verified against a pinned key read as `Pinned`, and `is_attested()` is
+false for them: a pin proves the key has not changed since first contact, not
+whose it is ([ADR 0030](adr/0030-a-pinned-trust-tier-below-configured.md)).
 
 [trust]: https://docs.rs/contextgraph-host/latest/contextgraph_host/trust/struct.TrustStore.html
 
