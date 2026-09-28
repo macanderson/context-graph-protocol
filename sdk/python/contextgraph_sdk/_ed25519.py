@@ -22,7 +22,9 @@ nonce generation and side channels live, and none of that is present here.
 Producing an attestation from Python means handing the 32 commitment bytes to
 a real signing backend — an HSM, a KMS, ``cryptography``, ``PyNaCl`` — exactly
 as the Rust reference's own doc comment recommends for a provider holding keys
-anywhere but in memory. A verifier is a public-input pure function whose only
+anywhere but in memory. The SDK's own in-process signers
+(:mod:`contextgraph_sdk._signing`) are exactly such a hand-off, to an optional
+``cryptography`` dependency, and never reach into this module. A verifier is a public-input pure function whose only
 failure mode is answering wrongly, and ``tests/test_attest.py`` checks that
 against RFC 8032's own vectors, against the repository's published signature
 vector produced by ``ed25519-dalek``, and — when ``cryptography`` happens to be

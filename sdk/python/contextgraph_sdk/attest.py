@@ -29,15 +29,29 @@ The SDK promises zero dependencies, and Python's standard library ships SHA-256
 but no Ed25519. Verification therefore uses :mod:`contextgraph_sdk._ed25519`, a
 self-contained RFC 8032 verifier in this package — see that module's header for
 why a verifier (and only a verifier) is a defensible thing to carry.
+
+Signing is optional
+-------------------
+
+:func:`sign_commitment`, :func:`sign_frame_attestation` and
+:func:`public_key_for` mirror the Rust reference's in-process signers, and they
+need the optional ``cryptography`` backend (``pip install
+"contextgraph-sdk[signing]"``). Without it they raise
+:class:`~contextgraph_sdk._signing.SigningUnavailableError` — never a different
+answer. :mod:`contextgraph_sdk._signing` says why the SDK does not sign in pure
+Python, and what holding a seed in memory costs; a provider whose key lives in
+an HSM or KMS signs :func:`frame_commitment`'s 32 bytes with that backend
+instead and never calls these.
 """
 
 from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping, Optional, Sequence, Union
+from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, Union
 
-from . import _ed25519
+from . import _ed25519, _signing
+from ._signing import SigningUnavailableError
 from .types import Provenance
 
 __all__ = [
@@ -49,6 +63,7 @@ __all__ = [
     "LinkLike",
     "FrameLike",
     "ProvenanceAttestation",
+    "SigningUnavailableError",
     "Verdict",
     "digest_string",
     "encode_provenance_link",
@@ -57,7 +72,10 @@ __all__ = [
     "merkle_root",
     "parse_digest",
     "provenance_chain_head",
+    "public_key_for",
     "root_from_proof",
+    "sign_commitment",
+    "sign_frame_attestation",
     "verify_commitment",
     "verify_frame_attestation",
 ]
@@ -125,6 +143,18 @@ class ProvenanceAttestation:
             signature=obj["signature"],
             issued_at=obj["issued_at"],
         )
+
+    def to_wire(self) -> Dict[str, str]:
+        """The JSON object this attestation travels as — :meth:`from_wire`'s
+        inverse."""
+        return {
+            "signed_commitment": self.signed_commitment,
+            "key_id": self.key_id,
+            "algorithm": self.algorithm,
+            "attester_id": self.attester_id,
+            "signature": self.signature,
+            "issued_at": self.issued_at,
+        }
 
     def uses_known_algorithm(self) -> bool:
         """Whether this names a scheme this revision defines."""
@@ -501,4 +531,104 @@ def verify_frame_attestation(
     """Verify a detached attestation over a single frame (``SPEC.md`` §6.5.4)."""
     return verify_commitment(
         frame_commitment(provider_id, frame), attestation, public_key
+    )
+
+
+# ---------------------------------------------------------------------------
+# Signing — optional, needs the ``cryptography`` backend (``[signing]`` extra)
+# ---------------------------------------------------------------------------
+
+
+def public_key_for(signing_key_seed: bytes) -> bytes:
+    """The raw 32-byte public key matching a signing seed — the form
+    :func:`verify_frame_attestation` accepts.
+
+    Needs the optional backend: deriving a public key multiplies by the secret
+    scalar, so it is signing's risk and goes where signing goes.
+
+    :raises SigningUnavailableError: ``cryptography`` is not installed.
+    :raises ValueError: the seed is not 32 bytes.
+    """
+    return _signing.public_key(signing_key_seed)
+
+
+def sign_commitment(
+    commitment: bytes,
+    signing_key_seed: bytes,
+    key_id: str,
+    attester_id: str,
+    issued_at: str,
+) -> ProvenanceAttestation:
+    """Sign an arbitrary commitment (a frame commitment or a Merkle root)
+    in-process, for providers content to hold key material in memory.
+
+    Mirrors ``contextgraph_types::attest::sign_commitment``: Ed25519 over the
+    commitment's 32 raw bytes, the signature rendered as lowercase hex. Ed25519
+    is deterministic, so the same seed and commitment always produce the same
+    attestation — which is how ``tests/test_signing.py`` pins this against the
+    published vector byte for byte.
+
+    A provider whose key lives in an HSM or KMS does not call this: it signs
+    the same 32 bytes with its own backend and builds the
+    :class:`ProvenanceAttestation` itself. The protocol specifies the preimage,
+    never the custody of the key.
+
+    :raises SigningUnavailableError: ``cryptography`` is not installed.
+    :raises ValueError: the commitment or the seed is not 32 bytes.
+    """
+    if len(commitment) != 32:
+        raise ValueError(
+            f"a commitment is 32 raw bytes, got {len(commitment)}; pass "
+            "frame_commitment(...) or merkle_root(...), not a digest string"
+        )
+    signature = _signing.sign(signing_key_seed, bytes(commitment))
+    return ProvenanceAttestation(
+        signed_commitment=digest_string(bytes(commitment)),
+        key_id=key_id,
+        algorithm=ALGORITHM_ED25519,
+        attester_id=attester_id,
+        signature=signature.hex(),
+        issued_at=issued_at,
+    )
+
+
+def sign_frame_attestation(
+    provider_id: str,
+    frame: FrameLike,
+    signing_key_seed: bytes,
+    key_id: str,
+    attester_id: str,
+    issued_at: str,
+) -> ProvenanceAttestation:
+    """Sign one frame's :func:`frame_commitment` in-process.
+
+    **Refuses a frame that declares no ``content_digest``.** ``SPEC.md`` §6.5.2
+    requires an attester to populate it on any frame it signs (ADR 0018): a
+    digest-less commitment binds the frame's identity and provenance but none
+    of its content, so the provider could re-serve entirely different bytes
+    under the same id with the signature still checking out. The reference
+    verifier reports such an attestation as identity-only rather than valid;
+    this signer declines to produce one. :func:`sign_commitment` remains for a
+    caller with a reason to sign an arbitrary commitment.
+
+    :raises ValueError: the frame declares no ``content_digest``, or the seed
+        is not 32 bytes.
+    :raises SigningUnavailableError: ``cryptography`` is not installed.
+    """
+    if isinstance(frame, AttestableFrame):
+        content_digest: Optional[str] = frame.content_digest
+    else:
+        content_digest = frame.get("content_digest")
+    if content_digest is None:
+        raise ValueError(
+            "refusing to sign a frame that declares no content_digest: the "
+            "signature would cover its identity but none of its content "
+            "(SPEC.md §6.5.2, ADR 0018)"
+        )
+    return sign_commitment(
+        frame_commitment(provider_id, frame),
+        signing_key_seed,
+        key_id,
+        attester_id,
+        issued_at,
     )

@@ -495,9 +495,11 @@ class DifferentialAgainstCryptography(unittest.TestCase):
     """Cross-check the in-package verifier against a vetted implementation.
 
     Skipped where ``cryptography`` is absent, which is the normal case for this
-    SDK's users and for CI — the RFC 8032 vectors above are what runs there.
-    This adds the one thing they cannot: agreement on inputs nobody published
-    an answer for.
+    SDK's users and for the ``sdk-python-interpreters`` CI legs — the RFC 8032
+    vectors above are what runs there. The ``sdk (python)`` job installs the
+    optional ``[signing]`` extra, so this runs there on every PR. It adds the
+    one thing the vectors cannot: agreement on inputs nobody published an
+    answer for.
     """
 
     def setUp(self) -> None:
