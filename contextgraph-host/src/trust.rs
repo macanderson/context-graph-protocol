@@ -81,7 +81,7 @@ use contextgraph_types::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::consent::now_protocol_timestamp;
+use crate::consent::now_receipt_timestamp;
 use crate::wire::AttesterKey;
 
 /// The exact length of a `sha256:<64 lowercase hex>` commitment string.
@@ -596,7 +596,7 @@ impl TrustStore {
             signing_id,
             frame,
             attestation,
-            &now_protocol_timestamp(),
+            &now_receipt_timestamp(),
         )
     }
 
@@ -792,7 +792,7 @@ impl TrustStore {
         signing_id: &str,
         result: &ContextQueryResult,
     ) -> Vec<FrameAttestationOutcome> {
-        self.check_result_signed_as_at(local_id, signing_id, result, &now_protocol_timestamp())
+        self.check_result_signed_as_at(local_id, signing_id, result, &now_receipt_timestamp())
     }
 
     /// [`check_result_signed_as`](Self::check_result_signed_as) as of

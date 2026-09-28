@@ -587,7 +587,7 @@ impl Host {
         // is the host's own clock — never the attestations' unsigned
         // `issued_at` — and it is recorded on the outcome so the check can be
         // replayed later with the same result.
-        let received_at = crate::consent::now_protocol_timestamp();
+        let received_at = crate::consent::now_receipt_timestamp();
 
         // Budget honesty, axis 1 (§7, B2): frames that sum above the query
         // budget are a lie about `token_cost`. Drop them, report loudly.
