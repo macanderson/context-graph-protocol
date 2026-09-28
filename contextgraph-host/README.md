@@ -50,8 +50,8 @@ for frame in fanout.accepted_frames() {
 `add_stdio` waits up to 10 seconds for the provider's `handshake_ack`, and a
 provider that misses that bound is refused with `HostError::Timeout`, not left
 hanging. The wait covers the provider's whole startup, so a provider that does
-real work first needs more. `contextgraph-mcp-bridge`, for one, launches and
-initializes the MCP server it wraps before it acks. Call
+real work first needs more. `contextgraph-mcp-bridge`, for one, launches the
+MCP server it wraps and fetches every resource from it before it acks. Call
 `host.set_handshake_timeout(..)` before `add_stdio` to raise the bound for that
 host only.
 
