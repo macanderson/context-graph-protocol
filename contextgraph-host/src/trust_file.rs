@@ -113,8 +113,10 @@ pub enum TrustFileError {
     Invalid {
         /// The file, when the contents came from one.
         path: Option<PathBuf>,
-        /// What is wrong with it.
-        problem: TrustFileProblem,
+        /// What is wrong with it. Boxed so the error stays small on the
+        /// `Ok` path every successful load returns; read it through
+        /// [`TrustFileError::problem`].
+        problem: Box<TrustFileProblem>,
     },
 }
 
@@ -136,7 +138,7 @@ impl TrustFileError {
     /// The content problem, for an [`Invalid`](Self::Invalid) file.
     pub fn problem(&self) -> Option<&TrustFileProblem> {
         match self {
-            Self::Invalid { problem, .. } => Some(problem),
+            Self::Invalid { problem, .. } => Some(problem.as_ref()),
             _ => None,
         }
     }
@@ -144,7 +146,7 @@ impl TrustFileError {
     fn invalid(problem: TrustFileProblem) -> Self {
         Self::Invalid {
             path: None,
-            problem,
+            problem: Box::new(problem),
         }
     }
 
@@ -416,19 +418,22 @@ impl TrustStore {
         temp_name.push(format!(".tmp-{}", std::process::id()));
         let temp = path.with_file_name(temp_name);
 
-        let write = || -> std::io::Result<()> {
-            use std::io::Write;
-            let mut file = std::fs::File::create(&temp)?;
-            file.write_all(text.as_bytes())?;
-            file.sync_all()?;
-            std::fs::rename(&temp, path)
-        };
-        write().map_err(|source| {
+        write_then_rename(&temp, path, text.as_bytes()).map_err(|source| {
             // Best effort: a failed write must not leave its temporary behind.
             let _ = std::fs::remove_file(&temp);
             unwritable(source)
         })
     }
+}
+
+/// Write `bytes` to `temp`, flush them to disk, and rename `temp` over
+/// `target` — the atomic replace [`TrustStore::save`] promises.
+fn write_then_rename(temp: &Path, target: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut file = std::fs::File::create(temp)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    std::fs::rename(temp, target)
 }
 
 /// Turn one file entry into a [`TrustedKey`], or name why it cannot be one.

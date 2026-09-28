@@ -158,11 +158,14 @@ fn a_malformed_file_is_a_named_error_carrying_its_path() {
     std::fs::remove_file(&path).ok();
     match &error {
         TrustFileError::Invalid {
-            path: Some(named),
-            problem: TrustFileProblem::NotJson(_),
+            path: Some(named), ..
         } => assert_eq!(named, &path),
-        other => panic!("expected Invalid NotJson with the path, got {other:?}"),
+        other => panic!("expected Invalid with the path, got {other:?}"),
     }
+    assert!(
+        matches!(error.problem(), Some(TrustFileProblem::NotJson(_))),
+        "{error:?}"
+    );
     assert!(error.to_string().contains("trust file"), "{error}");
 }
 

@@ -356,7 +356,9 @@ mod tests {
             compare_protocol_timestamps("2026-07-20T18:00:00.1Z", "2026-07-20T18:00:00Z"),
             Some(Greater)
         );
-        assert!("2026-07-20T18:00:00.1Z" < "2026-07-20T18:00:00Z");
+        // ...where comparing the strings themselves says the opposite.
+        let (later, earlier) = ("2026-07-20T18:00:00.1Z", "2026-07-20T18:00:00Z");
+        assert_eq!(later.cmp(earlier), Less);
         // Trailing zeros carry no weight.
         assert_eq!(
             compare_protocol_timestamps("2026-07-20T18:00:00.10Z", "2026-07-20T18:00:00.1Z"),
