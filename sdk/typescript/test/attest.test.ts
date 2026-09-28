@@ -24,6 +24,7 @@ import {
   fromHex,
   inclusionProof,
   isValid,
+  MAX_INCLUSION_PATH_STEPS,
   merkleRoot,
   parseDigest,
   provenanceChainHead,
@@ -36,6 +37,7 @@ import {
   toHex,
   verifyCommitment,
   verifyFrameAttestation,
+  verifyFrameInclusion,
   type AttestableFrame,
   type ProvenanceAttestation,
 } from "../src/attest.js";
@@ -425,4 +427,46 @@ test("a signing key that is not a private Ed25519 key is refused, not misused", 
 
   const { privateKey: ecKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   assert.throws(() => signCommitment(commitment, ecKey, "k", "a", "t"), TypeError);
+});
+
+test("verifyFrameInclusion checks a frame against a signed root, and bounds the walk", () => {
+  const providerId: string = V.merkle.provider_id;
+  const frames = V.merkle.leaf_frames as AttestableFrame[];
+  const leaves = merkleLeaves(7);
+  const root = merkleRoot(leaves);
+  assert.equal(digestString(root), V.merkle.roots_by_leaf_count["7"]);
+  const signedRoot = signCommitment(root, seed(), "key-1", "oxagen", "2026-08-27T00:00:00Z");
+  const proof = inclusionProof(leaves, 3)!;
+
+  assert.deepEqual(verifyFrameInclusion(providerId, frames[3]!, proof, signedRoot, publicKey()), {
+    verdict: "valid",
+  });
+  // Another frame under the same proof recomputes a different root.
+  assert.equal(
+    verifyFrameInclusion(providerId, frames[2]!, proof, signedRoot, publicKey()).verdict,
+    "commitment_mismatch",
+  );
+
+  // ADR 0018 holds through the tree: a digest-less leaf is identity-only.
+  const bare: AttestableFrame = { id: "bare" };
+  const bareLeaves = [frameCommitment(providerId, bare), ...leaves.slice(1)];
+  const bareRoot = signCommitment(merkleRoot(bareLeaves), seed(), "key-1", "oxagen", "2026-08-27T00:00:00Z");
+  const bareVerdict = verifyFrameInclusion(providerId, bare, inclusionProof(bareLeaves, 0)!, bareRoot, publicKey());
+  assert.deepEqual(bareVerdict, { verdict: "valid_identity_only" });
+  assert.ok(!isValid(bareVerdict));
+
+  // Every step costs a hash, and the provider chose the path: an over-long
+  // one is refused on its length before anything is hashed.
+  const overlong = {
+    ...proof,
+    path: Array.from({ length: MAX_INCLUSION_PATH_STEPS + 1 }, () => proof.path[0]!),
+  };
+  assert.deepEqual(verifyFrameInclusion(providerId, frames[3]!, overlong, signedRoot, publicKey()), {
+    verdict: "malformed_commitment",
+  });
+  // So is a leaf index outside the tree the proof describes.
+  assert.deepEqual(
+    verifyFrameInclusion(providerId, frames[3]!, { ...proof, leaf_index: 7 }, signedRoot, publicKey()),
+    { verdict: "malformed_commitment" },
+  );
 });

@@ -187,6 +187,23 @@ test("an undefined member is omitted as JSON.stringify omits it; anything else n
   throwsKind(() => recordHash({ list: [1, undefined] }), "not_canonicalizable", "an undefined element");
 });
 
+test("a value that contains itself is refused by name; a shared one is written twice", () => {
+  // A cycle has no JSON form. Without the check the walk recurses until the
+  // stack overflows, and the caller gets a RangeError about the call stack
+  // rather than a finding about the record.
+  const cyclic: Record<string, unknown> = { a: 1 };
+  cyclic.self = cyclic;
+  throwsKind(() => recordHash(cyclic), "not_canonicalizable", "an object cycle");
+  const loop: unknown[] = [];
+  loop.push(loop);
+  throwsKind(() => canonicalizeJson({ loop }), "not_canonicalizable", "an array cycle");
+
+  // Reached twice by different paths is not a cycle: JSON.stringify writes it
+  // twice, and so does RFC 8785.
+  const shared = { x: 1 };
+  assert.equal(canonicalizeJson({ a: shared, b: [shared, shared] }), `{"a":{"x":1},"b":[{"x":1},{"x":1}]}`);
+});
+
 test("an own __proto__ member is content, not a prototype", () => {
   // `JSON.parse` keeps `__proto__` as an ordinary own member; a canonicalizer
   // that copied the record by assignment would silently drop it.
@@ -197,9 +214,15 @@ test("an own __proto__ member is content, not a prototype", () => {
 // -- RFC 8785 conformance -----------------------------------------------------
 
 test("RFC 8785 §3.2.4: the specification's worked example canonicalizes byte for byte", () => {
+  // `String.raw` keeps every backslash, so this is JSON text, not a JS string.
+  // The RFC writes the tail of "string" with unicode escapes for B, a quote
+  // and a backslash; here B is literal and the rest use JSON's short escapes.
+  // Either way the value ends with B, quote, backslash, backslash, quote,
+  // slash, and every quote and backslash inside it stays escaped, or the JSON
+  // string would end early.
   const input = JSON.parse(String.raw`{
     "numbers": [333333333.33333329, 1E30, 4.50, 2e-3, 0.000000000000000000000000001],
-    "string": "€$\u000F\u000aA'B"\\\\"\/",
+    "string": "€$\u000F\u000aA'B\"\\\\\"\/",
     "literals": [null, true, false]
   }`);
   // Section 3.2.4's hexadecimal listing, verbatim.

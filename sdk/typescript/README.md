@@ -119,6 +119,11 @@ not `valid` ([ADR 0018](../../docs/adr/0018-signing-a-frame-requires-a-content-d
 the signature binds who served it and its provenance, but not its bytes.
 `isValid` is `false` for it; `signatureVerifies` is `true`.
 
+A frame attested through a signed result-set root rather than its own signature
+is checked with `verifyFrameInclusion(providerId, frame, proof, rootAttestation,
+publicKey)`. It applies the same rule, and refuses a proof path longer than
+`MAX_INCLUSION_PATH_STEPS` (64) before hashing anything.
+
 ## Sign a provenance attestation
 
 The SDK signs as well as verifies
@@ -242,7 +247,8 @@ const verdict = verifyRecordAttestation(record, attestation, publicKey);
   implementations disagree, diff `recordHashPreimage(record)`.
 - **`canonicalizeJson(value)`** is the RFC 8785 canonicalizer on its own. It
   refuses `NaN`, the infinities and lone surrogates with a `RecordHashError`
-  instead of coercing them the way `JSON.stringify` does.
+  instead of coercing them the way `JSON.stringify` does, and refuses a value
+  that contains itself instead of overflowing the stack.
 - **The signed message is `"contextgraph/attest/1/record"` followed by the
   digest's 32 raw bytes** (`recordAttestationMessage`), so a frame-layer
   signature over the same digest never verifies as a record attestation. An

@@ -94,7 +94,7 @@ export interface RecordAttestation {
  *   A caller bug.
  * - `not_canonicalizable` — the value holds something RFC 8785 refuses
  *   (`NaN`, an infinity, a lone surrogate) or something that is not JSON at
- *   all (a `bigint`, a function, a class instance). A finding about the
+ *   all (a `bigint`, a function, a class instance, a cycle). A finding about the
  *   record, not a library hiccup.
  * - `malformed_digest` — a digest string was not the `sha256:<64 lowercase
  *   hex>` the protocol grammar requires (`SPEC.md` §6.2).
@@ -132,11 +132,11 @@ const UTF8 = new TextEncoder();
  * and a diff of the canonical text is not.
  *
  * @throws RecordHashError (`not_canonicalizable`) on `NaN`, an infinity, a
- *   lone surrogate in a string or member name, or a non-JSON value.
+ *   lone surrogate in a string or member name, a cycle, or a non-JSON value.
  */
 export function canonicalizeJson(value: unknown): string {
   const out: string[] = [];
-  writeCanonical(value, out, null);
+  writeCanonical(value, out, null, new Set());
   return out.join("");
 }
 
@@ -153,8 +153,18 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * `omit` names one member to drop from **this** object only. It is passed as
  * `null` to every recursive call, which is what makes the omit-self rule
  * top-level-only by construction rather than by a check someone can forget.
+ *
+ * `ancestors` holds the arrays and objects currently being written, so a value
+ * that contains itself is refused by name instead of recursing until the stack
+ * overflows. A value reached twice by different paths is not a cycle and is
+ * written twice, as `JSON.stringify` writes it.
  */
-function writeCanonical(value: unknown, out: string[], omit: string | null): void {
+function writeCanonical(
+  value: unknown,
+  out: string[],
+  omit: string | null,
+  ancestors: Set<unknown>,
+): void {
   if (value === null) {
     out.push("null");
     return;
@@ -189,6 +199,24 @@ function writeCanonical(value: unknown, out: string[], omit: string | null): voi
       );
   }
 
+  if (ancestors.has(value)) {
+    throw new RecordHashError("not_canonicalizable", "a value that contains itself has no JSON form");
+  }
+  ancestors.add(value);
+  try {
+    writeContainer(value, out, omit, ancestors);
+  } finally {
+    ancestors.delete(value);
+  }
+}
+
+/** The array and object half of {@link writeCanonical}, for a value already known to be an `object`. */
+function writeContainer(
+  value: unknown,
+  out: string[],
+  omit: string | null,
+  ancestors: Set<unknown>,
+): void {
   if (Array.isArray(value)) {
     out.push("[");
     for (let i = 0; i < value.length; i += 1) {
@@ -202,7 +230,7 @@ function writeCanonical(value: unknown, out: string[], omit: string | null): voi
           `array element ${i} is undefined, which is not a JSON value`,
         );
       }
-      writeCanonical(element, out, null);
+      writeCanonical(element, out, null, ancestors);
     }
     out.push("]");
     return;
@@ -227,7 +255,7 @@ function writeCanonical(value: unknown, out: string[], omit: string | null): voi
   names.forEach((name, i) => {
     if (i > 0) out.push(",");
     out.push(canonicalString(name), ":");
-    writeCanonical(object[name], out, null);
+    writeCanonical(object[name], out, null, ancestors);
   });
   out.push("}");
 }
@@ -291,7 +319,7 @@ export function recordHashPreimage(record: unknown): Uint8Array {
   // assignment-based copy would turn an own `__proto__` member (which
   // `JSON.parse` produces faithfully) into a prototype change.
   const out: string[] = [];
-  writeCanonical(record, out, RECORD_HASH_MEMBER);
+  writeCanonical(record, out, RECORD_HASH_MEMBER, new Set());
   return UTF8.encode(out.join(""));
 }
 

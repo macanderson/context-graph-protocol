@@ -129,8 +129,9 @@ export type AttestationVerdict =
    * The signature verified, over a frame that declares no `content_digest` —
    * so it binds the frame's identity and provenance and **not its bytes**
    * (ADR 0018). {@link isValid} is `false` for it; {@link signatureVerifies}
-   * is `true`. Only {@link verifyFrameAttestation} produces it: a bare
-   * commitment carries no frame to ask.
+   * is `true`. Only {@link verifyFrameAttestation} and
+   * {@link verifyFrameInclusion} produce it: a bare commitment carries no
+   * frame to ask.
    */
   | { readonly verdict: "valid_identity_only" }
   | { readonly verdict: "commitment_mismatch"; readonly expected: string; readonly signed: string }
@@ -504,6 +505,48 @@ export function verifyFrameAttestation(
   publicKey: Uint8Array,
 ): AttestationVerdict {
   const verdict = verifyCommitment(frameCommitment(providerId, frame), attestation, publicKey);
+  if (verdict.verdict === "valid" && !declaresContentDigest(frame)) {
+    return { verdict: "valid_identity_only" };
+  }
+  return verdict;
+}
+
+/**
+ * The longest inclusion path {@link verifyFrameInclusion} walks. Mirrors the
+ * Rust reference's `MAX_INCLUSION_PATH_STEPS`: every step costs a hash and
+ * every field of a proof comes from the provider, and 64 levels already
+ * describe a tree with more leaves than any answer can hold.
+ */
+export const MAX_INCLUSION_PATH_STEPS = 64;
+
+/**
+ * Verify that a frame was a leaf of a signed result-set root (`SPEC.md`
+ * §6.5.3). Mirrors the Rust reference's `verify_frame_inclusion`.
+ *
+ * `resultAttestation` is the answer-level attestation, whose
+ * `signed_commitment` must equal the root this proof recomputes from the
+ * frame's own commitment. The content-binding rule is
+ * {@link verifyFrameAttestation}'s, for the same reason (ADR 0018): the leaf
+ * is a {@link frameCommitment}, so a frame with no `content_digest` is bound
+ * by identity and provenance alone however many hashes sit above it.
+ *
+ * A path longer than {@link MAX_INCLUSION_PATH_STEPS}, a malformed sibling, or
+ * a leaf index outside the stated tree is `malformed_commitment`, rejected
+ * before any signature work: there is no root to compare against.
+ */
+export function verifyFrameInclusion(
+  providerId: string,
+  frame: AttestableFrame,
+  proof: InclusionProof,
+  resultAttestation: ProvenanceAttestation,
+  publicKey: Uint8Array,
+): AttestationVerdict {
+  if (proof.path.length > MAX_INCLUSION_PATH_STEPS) {
+    return { verdict: "malformed_commitment" };
+  }
+  const root = rootFromProof(frameCommitment(providerId, frame), proof);
+  if (root === null) return { verdict: "malformed_commitment" };
+  const verdict = verifyCommitment(root, resultAttestation, publicKey);
   if (verdict.verdict === "valid" && !declaresContentDigest(frame)) {
     return { verdict: "valid_identity_only" };
   }

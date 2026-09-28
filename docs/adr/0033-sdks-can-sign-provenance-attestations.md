@@ -153,9 +153,12 @@ Each SDK README carries a key custody section with two parts:
 - The Python SDK has its first optional dependency. `pip install
   contextgraph-sdk` is unchanged. Signing requires
   `pip install contextgraph-sdk[signing]`, and the error says so.
-- The TypeScript `AttestationVerdict` gains `valid_identity_only`, bringing its
-  verifier in line with ADR 0018. It is additive, and `isValid` stays `false`
-  for it.
+- The TypeScript `AttestationVerdict` gains `valid_identity_only`, and the
+  SDK gains `verifyFrameInclusion` (the Rust reference's
+  `verify_frame_inclusion`, with the same 64-step path bound), bringing its
+  verifier in line with ADR 0018 for a frame signed directly and for one
+  signed through a result-set root. It is additive, and `isValid` stays
+  `false` for the new verdict.
 - The Rust reference's `sign_frame_attestation` predates ADR 0018 and still
   signs a digest-less frame. §2 applies to it too. Aligning it is a change to
   `contextgraph-types`, not to any SDK, and until it lands the SDKs are
