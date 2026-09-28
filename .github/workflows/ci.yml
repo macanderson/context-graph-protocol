@@ -279,9 +279,11 @@ jobs:
           go build -o "$GITHUB_WORKSPACE/cg-go-example" ./examples/example-docs
       - name: Go example provider passes the conformance suite
         run: ./.github/scripts/conformance-external.sh -- ./cg-go-example
-      - name: Go attestation port reproduces the published vectors
+      # Provenance signing and verification, record_hash and RecordAttestation
+      # against tests/vectors/ and tests/fixtures/, and RFC 8785's own vectors.
+      - name: Go attestation and record-hash ports reproduce the published vectors
         working-directory: sdk/go
-        run: go test ./contextgraph/attest/
+        run: go test ./contextgraph/attest/ ./contextgraph/jcs/
 
   sdk-typescript-http:
     name: sdk (typescript) HTTP adapter is conformant
