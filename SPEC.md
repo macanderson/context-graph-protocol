@@ -1052,7 +1052,7 @@ a tie between duplicates and never decides what is relevant.
 Everything else routes through one seam, `RankingStrategy`
 ([ADR 0015](./docs/adr/0015-cross-provider-ranking-strategies.md)), and the
 strategy's order is what the budget packer walks — so the policy decides which
-frames reach the prompt, not only where they sit in it. Three ship:
+frames reach the prompt, not only where they sit in it. Five ship:
 
 - `ScoreDescending` ranks the union by raw `score`. It is the default that
   `order_by_value` and `compose_for_prompt` apply, a deliberate documented
@@ -1064,8 +1064,19 @@ frames reach the prompt, not only where they sit in it. Three ship:
   comparisons it makes are the ones this section says are meaningful.
 - `PerProviderQuota` does the same in blocks of `k`, so a provider's evidence
   stays contiguous.
+- `TrustWeighted` deals a provider of host-configured weight `w` that many
+  frames per round. The weight scales the provider's **allocation**, never its
+  `score`: `weight × score` is still a score, and presenting it as a
+  cross-provider measure is exactly what F10 forbids.
+- `PrecomputedOrder` carries the order a host's own reranker produced before
+  composition. A reranker does I/O, so the host runs it beside its fan-out and
+  passes the verdict in as data; composition stays pure.
 
-A host with its own reranker or trust weighting implements the trait and passes
+Whichever policy ran, the composition audit records its name
+(`CompositionAudit::ranking_policy`), so the documentation F10 requires travels
+with each composition rather than living only in the host's configuration.
+
+A host with its own policy implements the trait and passes
 it to `compose_for_prompt_with`, or ranks the frames itself and calls
 `fold_to_edges` for placement alone.
 

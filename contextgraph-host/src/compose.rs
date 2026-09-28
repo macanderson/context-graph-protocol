@@ -397,9 +397,10 @@ fn merge_provenance(base: &[Provenance], extra: &[Provenance]) -> Vec<Provenance
 /// ranking policy has two ways to say so: pass a
 /// [`ranking::RankingStrategy`] to [`order_by`] or
 /// [`compose_for_prompt_with`] — [`ranking::RoundRobinByRank`] and
-/// [`ranking::PerProviderQuota`] ship here and need no configuration — or rank
-/// the frames itself and call [`fold_to_edges`], which is the placement without
-/// any ranking at all.
+/// [`ranking::PerProviderQuota`] ship here and need no configuration, and
+/// [`ranking::TrustWeighted`] and [`ranking::PrecomputedOrder`] carry a host's
+/// trust weights or its own reranker's order — or rank the frames itself and
+/// call [`fold_to_edges`], which is the placement without any ranking at all.
 ///
 /// What F10 forbids is not this ordering but *laundering* it: a host must never
 /// apply a cross-provider `score` threshold, nor present a raw `score` to a user
@@ -527,8 +528,17 @@ pub struct AuditEntry {
 /// and the canonical token cost actually used. The audit is a **total
 /// partition** — every offered frame is either included or excluded with a
 /// reason — so a host can answer "why is this evidence not in the prompt?" and
-/// "why is the prompt within budget?" from the record alone.
+/// "why is the prompt within budget?" from the record alone — and, through
+/// [`ranking_policy`](Self::ranking_policy), "in what order, and by whose
+/// rule?" (issue #116).
+///
+/// `#[non_exhaustive]`: the audit is built by this crate's composition entry
+/// points, never by a host, so a downstream struct literal was never a use
+/// worth keeping — and marking it lets the next field the record needs land
+/// without another Rust-semver break. Read it through its public fields and
+/// accessors.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct CompositionAudit {
     /// One entry per offered frame; included or excluded-with-reason.
     pub entries: Vec<AuditEntry>,
@@ -537,6 +547,22 @@ pub struct CompositionAudit {
     /// The summed canonical token cost of the included frames — always
     /// `<= global_budget`.
     pub tokens_used: u32,
+    /// The cross-provider ranking policy that ordered the frames — the
+    /// [`RankingStrategy::policy_name`] of the strategy the composition ran
+    /// under (`"score-descending"` for [`compose_for_prompt`]).
+    ///
+    /// `SPEC.md` §6.6 (F10) says a host that orders frames from different
+    /// providers **MUST** document that ordering as its own policy choice.
+    /// Since the policy is chosen per call, the only place that documentation
+    /// is reliably true is the record of the call itself. The strategy decided
+    /// which frames survived the budget, so an audit without it could explain
+    /// every drop but not the rule that made the drop happen.
+    ///
+    /// A `String`, not `&'static str`, because a host's own strategy may name
+    /// itself at runtime — a
+    /// [`PrecomputedOrder`](ranking::PrecomputedOrder) carries its reranker's
+    /// model name.
+    pub ranking_policy: String,
 }
 
 impl CompositionAudit {
@@ -675,7 +701,13 @@ where
 /// provider whose retriever reports the largest numbers and cite nothing from
 /// anyone else. [`ranking::RoundRobinByRank`] and
 /// [`ranking::PerProviderQuota`] are two policies that do not, and neither
-/// needs configuring.
+/// needs configuring; [`ranking::TrustWeighted`] does the same under
+/// host-configured per-provider weights, and [`ranking::PrecomputedOrder`]
+/// carries the order a host's own reranker produced before this call.
+///
+/// The strategy's [`policy_name`](RankingStrategy::policy_name) is recorded as
+/// the audit's [`ranking_policy`](CompositionAudit::ranking_policy), so the
+/// F10 choice travels with the composition it shaped.
 ///
 /// A strategy cannot break the budget bound or the audit: it ranks, and the
 /// packer still includes a frame only while its canonical token cost fits,
@@ -818,6 +850,7 @@ where
             entries,
             global_budget,
             tokens_used,
+            ranking_policy: strategy.policy_name().to_string(),
         },
     }
 }

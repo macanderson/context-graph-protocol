@@ -18,6 +18,23 @@
 //! - [`PerProviderQuota`] — the same idea in blocks of `k`: each provider's top
 //!   `k`, then each provider's next `k`.
 //!
+//! Two more carry a host's own judgement into the same seam:
+//!
+//! - [`TrustWeighted`] — host-configured per-provider weights that scale how
+//!   many frames a provider is dealt per round. A weight scales a provider's
+//!   **allocation**, never its `score`: a weighted score is still a score, and
+//!   F10 forbids presenting one as a cross-provider measure of relevance.
+//! - [`PrecomputedOrder`] — the order a host's own reranker already produced.
+//!   A reranker does I/O (a cross-encoder call, a local model) and
+//!   [`RankingStrategy::order`] is a synchronous pure function, so the host
+//!   reranks *before* composing and hands the result over as data.
+//!   `examples/rerank_before_compose.rs` runs that flow end to end.
+//!
+//! Whichever strategy ran, its [`RankingStrategy::policy_name`] is recorded in
+//! the composition audit's
+//! [`ranking_policy`](super::CompositionAudit::ranking_policy), so the F10
+//! choice is part of the record rather than the caller's memory.
+//!
 //! # Why raw score starves a provider
 //!
 //! Consider a semantic-search provider that reports cosine similarity in the
@@ -74,6 +91,12 @@ pub trait RankingStrategy {
     /// ordering it applied. F10 requires a host to document the choice; a
     /// strategy that cannot say what it is makes that impossible, which is why
     /// this has no default implementation.
+    ///
+    /// The name is recorded in every
+    /// [`CompositionAudit::ranking_policy`](super::CompositionAudit::ranking_policy)
+    /// the strategy orders, so it should identify the rule precisely enough
+    /// for a reader of the audit to know which policy ran — a reranker's
+    /// model name, not just `"reranker"`.
     fn policy_name(&self) -> &str;
 
     /// Order the input indices best-first. See the trait contract.
@@ -346,6 +369,234 @@ impl RankingStrategy for PerProviderQuota {
                 lanes[index].provider,
                 lanes[index].rank,
             )
+        })
+    }
+}
+
+/// Host-configured **trust weights**: a provider with weight `w` is dealt `w`
+/// frames per round, so a provider the host trusts more reaches the prompt
+/// sooner, and with more of its evidence, under a tight budget.
+///
+/// # What a weight multiplies
+///
+/// A weight scales a provider's **allocation** — how many of its frames are
+/// seated per round of the deal — and never its `score`. `SPEC.md` §6.6 (F10)
+/// forbids presenting a raw `score` as a cross-provider measure of relevance,
+/// and `weight × score` is still a score: it inherits every scale mismatch
+/// between two providers' retrievers and then multiplies it by a number the
+/// host chose. A weight over allocation makes no claim about any frame's
+/// relevance; it states, in the host's own terms, how much of the prompt each
+/// source is entitled to compete for. The only score comparisons this strategy
+/// makes are within one provider, where F10 says the ordering is meaningful.
+///
+/// # The deal
+///
+/// A frame at within-provider rank `r` (`0` = that provider's best) from a
+/// provider of weight `w` sits in round `r / w`. Rounds are dealt in order;
+/// inside a round, providers go in the stable provider-id order every
+/// strategy here uses, each contributing its (up to) `w` frames contiguously
+/// in score order. So weights `lex = 2, sem = 1` deal `lex`'s best two, then
+/// `sem`'s best, then `lex`'s next two, then `sem`'s second.
+///
+/// Every provider has weight `1` unless configured otherwise, so an
+/// unconfigured `TrustWeighted` is exactly [`RoundRobinByRank`], and one whose
+/// weights are all `k` is exactly [`PerProviderQuota::new(k)`](PerProviderQuota::new).
+/// With one provider every frame's round is monotone in its rank, so this
+/// degenerates to [`ScoreDescending`] whatever the weight — the
+/// cross-provider question does not arise.
+///
+/// # Weight zero
+///
+/// A weight of `0` means **last resort**, not *excluded*: a strategy ranks and
+/// never filters (see [`RankingStrategy`]), so a zero-weight provider's frames
+/// are ranked after every positively weighted provider's frames,
+/// round-robined among themselves by rank. They reach the prompt only if the
+/// budget outlasts everything the host trusts more — and when they do not, the
+/// packer records the drop as
+/// [`OverBudget`](super::ExclusionReason::OverBudget) in the audit, which is
+/// where a host's distrust belongs: visible, not silent.
+///
+/// # Configuration is the host's to record
+///
+/// [`policy_name`](RankingStrategy::policy_name) is the stable
+/// `"trust-weighted"` rather than a rendering of the weight table, so the name
+/// a [`CompositionAudit`](super::CompositionAudit) carries identifies the
+/// rule, not one host's parameters. A host that must reproduce a composition
+/// later records its weight table alongside the audit;
+/// [`weights`](Self::weights) yields it in a deterministic order for exactly
+/// that.
+///
+/// Weights are keyed by the host's **local** provider id — the id the frames
+/// arrive under in [`compose_for_prompt_with`](super::compose_for_prompt_with),
+/// which is the id the operator registered the provider as.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrustWeighted {
+    weights: BTreeMap<String, u32>,
+    default_weight: u32,
+}
+
+impl TrustWeighted {
+    /// A strategy in which every provider not given an explicit weight has
+    /// `default_weight`. `0` is allowed and makes every unlisted provider a
+    /// last resort — see the type docs.
+    pub fn new(default_weight: u32) -> Self {
+        Self {
+            weights: BTreeMap::new(),
+            default_weight,
+        }
+    }
+
+    /// Set `provider_id`'s weight, replacing any earlier one. Builder-style so
+    /// a host's configuration reads as one expression.
+    #[must_use]
+    pub fn with_weight(mut self, provider_id: impl Into<String>, weight: u32) -> Self {
+        self.weights.insert(provider_id.into(), weight);
+        self
+    }
+
+    /// The weight `provider_id` is dealt under: its configured weight, or the
+    /// default.
+    pub fn weight_for(&self, provider_id: &str) -> u32 {
+        self.weights
+            .get(provider_id)
+            .copied()
+            .unwrap_or(self.default_weight)
+    }
+
+    /// The weight of every provider without an explicit one.
+    pub fn default_weight(&self) -> u32 {
+        self.default_weight
+    }
+
+    /// The explicitly configured weights, in provider-id order — deterministic,
+    /// so a host can record the table beside an audit and get the same bytes
+    /// every time.
+    pub fn weights(&self) -> impl Iterator<Item = (&str, u32)> {
+        self.weights
+            .iter()
+            .map(|(provider_id, weight)| (provider_id.as_str(), *weight))
+    }
+}
+
+impl Default for TrustWeighted {
+    /// Every provider weighted `1` — a round robin until the host says
+    /// otherwise.
+    fn default() -> Self {
+        Self::new(1)
+    }
+}
+
+impl RankingStrategy for TrustWeighted {
+    fn policy_name(&self) -> &str {
+        "trust-weighted"
+    }
+
+    fn order(&self, frames: &[(String, ContextFrame)]) -> Vec<usize> {
+        let lanes = provider_lanes(frames);
+        order_by_key(frames, |index| {
+            let lane = lanes[index];
+            match self.weight_for(&frames[index].0) {
+                // Last resort: after every weighted round, round-robined by
+                // rank among the zero-weight providers.
+                0 => (1u8, lane.rank, lane.provider, lane.rank),
+                // `u32 -> usize` is lossless on every target this crate builds
+                // for; saturating keeps the key total rather than panicking if
+                // one ever were narrower.
+                weight => {
+                    let weight = usize::try_from(weight).unwrap_or(usize::MAX);
+                    (0u8, lane.rank / weight, lane.provider, lane.rank)
+                }
+            }
+        })
+    }
+}
+
+/// An order the host computed **before** composing — typically its own
+/// reranker's — handed to
+/// [`compose_for_prompt_with`](super::compose_for_prompt_with) as data.
+///
+/// # Why the reranker stays outside this crate
+///
+/// A reranker does I/O: a cross-encoder call, a local model, a remote API.
+/// [`RankingStrategy::order`] is synchronous and pure by design, because the
+/// composition path it sits on is — the same frame set must compose to the
+/// same bytes, and nothing on that path awaits. Rather than grow a second,
+/// async trait and pull an executor into composition, the host does the I/O
+/// where it already does I/O (beside its fan-out) and passes the result in.
+/// This crate's job is placement and accounting, not inference; see the
+/// amendment to
+/// [ADR 0015](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0015-cross-provider-ranking-strategies.md),
+/// and `examples/rerank_before_compose.rs` for the flow run end to end.
+///
+/// # Keyed by identity, not by index
+///
+/// The order is a list of [`FrameId`]s, best first. Indices would be fragile:
+/// composition de-duplicates before it ranks, so the slice a strategy sees is
+/// not the slice the host reranked. A [`FrameId`] names the same evidence on
+/// both sides of that step.
+///
+/// # Frames the order does not name
+///
+/// A frame absent from the order — the reranker skipped it, timed out on it,
+/// or never saw it — is ranked **after** every named frame, never dropped (a
+/// strategy ranks; it never filters). The unnamed frames keep the relative
+/// order [`RoundRobinByRank`] gives them over the **whole** set — ranks are
+/// counted before the named frames are lifted out, so a provider whose best
+/// frames the reranker already seated does not also lead the fallback — and
+/// the fallback therefore makes no cross-provider score comparison of its own;
+/// with nothing named and one provider, that is [`ScoreDescending`]. If the
+/// order names an identity twice, its first position wins; an identity that
+/// matches no frame is ignored.
+///
+/// # The name is the reranker's
+///
+/// [`policy_name`](RankingStrategy::policy_name) returns whatever the host
+/// passed to [`new`](Self::new) — `"cross-encoder:ms-marco-MiniLM-L-6-v2"`,
+/// say — so the [`CompositionAudit`](super::CompositionAudit) records which
+/// reranker ordered the frames, not merely that one did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrecomputedOrder {
+    policy_name: String,
+    positions: BTreeMap<FrameId, usize>,
+}
+
+impl PrecomputedOrder {
+    /// An order named `policy_name`, best first. The name should say which
+    /// ranker produced the order; it is what the composition audit records.
+    pub fn new(policy_name: impl Into<String>, order: impl IntoIterator<Item = FrameId>) -> Self {
+        let mut positions = BTreeMap::new();
+        for (position, id) in order.into_iter().enumerate() {
+            // First occurrence wins: a repeated identity is a reranker bug the
+            // order must survive, not a reason to move the frame down.
+            positions.entry(id).or_insert(position);
+        }
+        Self {
+            policy_name: policy_name.into(),
+            positions,
+        }
+    }
+
+    /// Where `id` sits in the precomputed order (`0` = best), or `None` when
+    /// the order does not name it.
+    pub fn position_of(&self, id: &FrameId) -> Option<usize> {
+        self.positions.get(id).copied()
+    }
+}
+
+impl RankingStrategy for PrecomputedOrder {
+    fn policy_name(&self) -> &str {
+        &self.policy_name
+    }
+
+    fn order(&self, frames: &[(String, ContextFrame)]) -> Vec<usize> {
+        let lanes = provider_lanes(frames);
+        order_by_key(frames, |index| {
+            let (provider_id, frame) = &frames[index];
+            match self.position_of(&frame.identity(provider_id.as_str())) {
+                Some(position) => (0u8, position, 0usize),
+                // Unnamed: after every named frame, in round-robin order.
+                None => (1u8, lanes[index].rank, lanes[index].provider),
+            }
         })
     }
 }

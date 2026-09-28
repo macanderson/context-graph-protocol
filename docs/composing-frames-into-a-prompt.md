@@ -111,19 +111,36 @@ the conservative provider is cited nowhere.
 
 [`compose::ranking::RankingStrategy`][ranking] is where a host's answer to that
 lives, and the strategy's order is what the budget packer walks —
-[`compose_for_prompt_with`][compose_for_prompt] takes one. Three ship:
+[`compose_for_prompt_with`][compose_for_prompt] takes one. Five ship:
 
 | Strategy | Order | Cross-provider score comparison |
 |---|---|---|
 | `ScoreDescending` (default) | raw `score` descending over the union | yes — the documented default |
 | `RoundRobinByRank` | every provider's best, then every provider's second | none |
 | `PerProviderQuota::new(k)` | each provider's top `k`, then each provider's next `k` | none |
+| `TrustWeighted` | a provider of weight `w` is dealt `w` frames per round; weight `0` is a last resort | none — a weight scales allocation, never `score` |
+| `PrecomputedOrder::new(name, ids)` | the order a host's own reranker produced, then any unnamed frames in round-robin order | whatever the host's reranker does |
 
-All three break the final tie on the canonical `FrameId`, and the two
-interleaving strategies ordinalize providers through a `BTreeMap`, so a
-ranking is a pure function of the frame set. With a single provider all three
-produce the same order — the cross-provider question does not arise, and none
-of them invents one.
+All five break the final tie on the canonical `FrameId`, and the interleaving
+strategies ordinalize providers through a `BTreeMap`, so a ranking is a pure
+function of the frame set. With a single provider the first four produce the
+same order — the cross-provider question does not arise, and none of them
+invents one.
+
+**A reranker runs before composition, not inside it.** A reranker does I/O and
+`RankingStrategy::order` is synchronous and pure, so the host awaits its
+reranker beside its fan-out and passes the verdict in as a
+`PrecomputedOrder` — a list of `FrameId`s, so composition's dedup step cannot
+shift it. [`examples/rerank_before_compose.rs`][rerank-example] runs the flow:
+
+```text
+cargo run -p contextgraph-host --example rerank_before_compose
+```
+
+Whichever strategy ran, the audit records it: `composed.audit.ranking_policy`
+is the strategy's `policy_name()` — `"score-descending"` for
+`compose_for_prompt`, the reranker's own name for a `PrecomputedOrder` — so
+the F10 choice is part of the record rather than the caller's memory.
 
 A strategy ranks; it never filters. Dropping a frame is the budget packer's
 decision because only the packer records an [`ExclusionReason`][audit] for the
@@ -193,7 +210,8 @@ pub struct CompositionAudit {
     pub entries: Vec<AuditEntry>, // one per offered frame
     pub global_budget: u32,
     pub tokens_used: u32,          // summed canonical cost of included frames; <= global_budget
-}
+    pub ranking_policy: String,    // RankingStrategy::policy_name() of the policy that ordered the frames
+}                                  // #[non_exhaustive]: read it, never build it
 
 pub struct AuditEntry {
     pub frame: FrameId,
@@ -219,6 +237,8 @@ So a host can answer, from the record alone:
 - **Why is the prompt within budget?** — `tokens_used <= global_budget`, and
   it is packed from the *canonical* cost of each frame (not the provider-declared
   `token_cost`), so an under-declared frame still cannot sneak past the budget.
+- **In what order, and by whose rule?** — `ranking_policy` names the
+  cross-provider ranking policy the call ran under (`SPEC.md` §6.6, F10).
 - **Which quoted evidence was signed?** — `entry.attestation`, below.
 
 `audit.included()`, `audit.excluded()`, `audit.attested()` and
@@ -383,6 +403,7 @@ catches the misbehaving input and accepts the well-behaved counterpart.
 [dedup_cross_provider]: ../contextgraph-host/src/compose.rs
 [order_by_value]: ../contextgraph-host/src/compose.rs
 [ranking]: ../contextgraph-host/src/compose/ranking.rs
+[rerank-example]: ../contextgraph-host/examples/rerank_before_compose.rs
 [budget_split]: ../contextgraph-host/src/compose.rs
 [query_all]: ../contextgraph-host/src/host.rs
 [query_all_budgeted]: ../contextgraph-host/src/host.rs
