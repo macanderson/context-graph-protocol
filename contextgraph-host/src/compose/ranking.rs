@@ -539,11 +539,14 @@ impl RankingStrategy for TrustWeighted {
 ///
 /// A frame absent from the order — the reranker skipped it, timed out on it,
 /// or never saw it — is ranked **after** every named frame, never dropped (a
-/// strategy ranks; it never filters). The unnamed frames follow in
-/// [`RoundRobinByRank`] order, so the fallback makes no cross-provider score
-/// comparison of its own; with nothing named and one provider, that is
-/// [`ScoreDescending`]. If the order names an identity twice, its first
-/// position wins; an identity that matches no frame is ignored.
+/// strategy ranks; it never filters). The unnamed frames keep the relative
+/// order [`RoundRobinByRank`] gives them over the **whole** set — ranks are
+/// counted before the named frames are lifted out, so a provider whose best
+/// frames the reranker already seated does not also lead the fallback — and
+/// the fallback therefore makes no cross-provider score comparison of its own;
+/// with nothing named and one provider, that is [`ScoreDescending`]. If the
+/// order names an identity twice, its first position wins; an identity that
+/// matches no frame is ignored.
 ///
 /// # The name is the reranker's
 ///

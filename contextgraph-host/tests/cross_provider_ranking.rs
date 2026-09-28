@@ -700,8 +700,11 @@ fn trust_weighting_degenerates_to_the_unweighted_strategies() {
 #[test]
 fn a_precomputed_order_leads_and_the_unnamed_frames_follow_in_round_robin() {
     // The three named frames lead in the reranker's order; the four it did
-    // not name follow in `RoundRobinByRank` order (restricted to them), so
-    // the fallback makes no cross-provider score comparison of its own.
+    // not name keep the relative order `RoundRobinByRank` gives them over the
+    // whole set, so the fallback makes no cross-provider score comparison of
+    // its own. Ranks count the named frames too: `lex-2` is `lex`'s rank 1,
+    // so `sem-1` (rank 0) leads the fallback even though the reranker lifted
+    // `lex-1` out of it.
     assert_eq!(
         ids(&reranked_lex_first(), generous_and_conservative()),
         [
