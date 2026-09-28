@@ -21,9 +21,27 @@
  * The encoding was chosen over RFC 8785 (JCS) precisely so this port needs
  * none (ADR 0010). A provenance link is six optional strings; if you find
  * yourself serializing one to JSON here, re-read §6.5.1.
+ *
+ * # Signing, and what it costs to sign in-process
+ *
+ * {@link signCommitment} and {@link signFrameAttestation} mirror the Rust
+ * reference's `sign_commitment` and `sign_frame_attestation` (ADR 0033), for a
+ * provider content to hold its key in this process. A provider whose key lives
+ * in an HSM or a KMS never calls them: it computes {@link frameCommitment} or
+ * {@link merkleRoot}, has its backend sign those 32 bytes, and assembles the
+ * {@link ProvenanceAttestation} itself — the protocol specifies the preimage,
+ * never the custody of the key. The README's "Key custody" section says what
+ * a long-lived key in application memory costs.
  */
 
-import { createHash, createPublicKey, verify as cryptoVerify } from "node:crypto";
+import {
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  sign as cryptoSign,
+  verify as cryptoVerify,
+  type KeyObject,
+} from "node:crypto";
 
 import type { Provenance } from "./types.js";
 
@@ -107,6 +125,14 @@ export interface InclusionProof {
  */
 export type AttestationVerdict =
   | { readonly verdict: "valid" }
+  /**
+   * The signature verified, over a frame that declares no `content_digest` —
+   * so it binds the frame's identity and provenance and **not its bytes**
+   * (ADR 0018). {@link isValid} is `false` for it; {@link signatureVerifies}
+   * is `true`. Only {@link verifyFrameAttestation} produces it: a bare
+   * commitment carries no frame to ask.
+   */
+  | { readonly verdict: "valid_identity_only" }
   | { readonly verdict: "commitment_mismatch"; readonly expected: string; readonly signed: string }
   | { readonly verdict: "bad_signature" }
   | { readonly verdict: "unknown_algorithm"; readonly algorithm: string }
@@ -121,6 +147,26 @@ export type AttestationVerdict =
  * that "I could not check it" and "it is good" are never the same answer.
  */
 export function isValid(verdict: AttestationVerdict): boolean {
+  return verdict.verdict === "valid";
+}
+
+/**
+ * Whether the signature itself checked out, whatever the preimage covered —
+ * `valid` or `valid_identity_only` (ADR 0018).
+ *
+ * The narrower question, for a caller who wants provider identity without a
+ * claim about content. A host deciding whether to trust a frame's bytes asks
+ * {@link isValid} instead.
+ */
+export function signatureVerifies(verdict: AttestationVerdict): boolean {
+  return verdict.verdict === "valid" || verdict.verdict === "valid_identity_only";
+}
+
+/**
+ * Whether the verified signature binds the frame's content bytes. Only
+ * `valid` does; a verdict that did not verify binds nothing (ADR 0018).
+ */
+export function bindsContent(verdict: AttestationVerdict): boolean {
   return verdict.verdict === "valid";
 }
 
@@ -433,10 +479,63 @@ export function verifyCommitment(
     };
   }
 
+  // The frame layer signs the commitment's 32 bytes directly: a frame
+  // commitment and a Merkle root are both built from this protocol's own
+  // domain tags and prefixes (§6.5.2–§6.5.3), so they are domain-bound by
+  // construction. The record layer is not, which is why `record.ts` prepends
+  // a tag before calling the same primitive.
+  return verifyEd25519(signed, attestation.signature, publicKey);
+}
+
+/**
+ * Verify a detached attestation over a single frame (`SPEC.md` §6.5.4).
+ *
+ * A frame that declares no `content_digest` was committed to by identity and
+ * provenance alone, so a passing signature over it is reported as
+ * `valid_identity_only` rather than `valid` (ADR 0018): the signature says
+ * nothing about the bytes, and a host rendering a checkmark must be able to
+ * tell. Every failing verdict is returned unchanged — it is already the more
+ * specific answer.
+ */
+export function verifyFrameAttestation(
+  providerId: string,
+  frame: AttestableFrame,
+  attestation: ProvenanceAttestation,
+  publicKey: Uint8Array,
+): AttestationVerdict {
+  const verdict = verifyCommitment(frameCommitment(providerId, frame), attestation, publicKey);
+  if (verdict.verdict === "valid" && !declaresContentDigest(frame)) {
+    return { verdict: "valid_identity_only" };
+  }
+  return verdict;
+}
+
+/** Whether a frame carries the `content_digest` that binds its bytes into a commitment. */
+function declaresContentDigest(frame: AttestableFrame): boolean {
+  // `null` arrives from JSON as readily as a missing member, and both mean absent.
+  return typeof frame.content_digest === "string";
+}
+
+/**
+ * Check an Ed25519 signature (lowercase hex) over `message` under a raw
+ * 32-byte public key, strictly (§6.5.4).
+ *
+ * Shared by the frame layer (the message is a commitment) and the record layer
+ * (`record.ts`, where the message is a domain tag and a digest), so the strict
+ * key rules live in exactly one place. The key is judged before the signature,
+ * matching the Rust reference's order.
+ *
+ * @internal Exported for the record layer; not part of the package surface.
+ */
+export function verifyEd25519(
+  message: Uint8Array,
+  signatureHex: string,
+  publicKey: Uint8Array,
+): AttestationVerdict {
   if (publicKey.length !== 32 || isRejectableKey(publicKey)) {
     return { verdict: "malformed_key" };
   }
-  const signature = fromHex(attestation.signature);
+  const signature = fromHex(signatureHex);
   if (signature === null || signature.length !== 64) {
     return { verdict: "malformed_signature" };
   }
@@ -453,18 +552,169 @@ export function verifyCommitment(
   }
   // `null` is the algorithm argument Ed25519 takes: it hashes internally, so
   // there is no digest to name.
-  const ok = cryptoVerify(null, Buffer.from(signed), key, Buffer.from(signature));
+  const ok = cryptoVerify(null, Buffer.from(message), key, Buffer.from(signature));
   return ok ? { verdict: "valid" } : { verdict: "bad_signature" };
 }
 
-/** Verify a detached attestation over a single frame (`SPEC.md` §6.5.4). */
-export function verifyFrameAttestation(
+// ---------------------------------------------------------------------------
+// Signing (ADR 0033)
+// ---------------------------------------------------------------------------
+
+/**
+ * The key a signing entry point accepts: a raw 32-byte Ed25519 seed (the
+ * RFC 8032 §5.1.5 private key, the form the Rust reference and the published
+ * vectors use), or a private Ed25519 `KeyObject`.
+ *
+ * Prefer the `KeyObject`. Build it once — {@link signingKeyFromSeed}, or
+ * `createPrivateKey` over a PEM your secret store hands you — and the key
+ * material lives in OpenSSL's memory rather than in a JavaScript `Uint8Array`
+ * that a heap snapshot, a debug log or a careless `JSON.stringify` can reach.
+ * Passing a seed re-derives a `KeyObject` on every call and leaves the seed
+ * wherever the caller keeps it.
+ */
+export type SigningKey = Uint8Array | KeyObject;
+
+/**
+ * The DER PKCS#8 header for an Ed25519 private key — 16 bytes, then the raw
+ * 32-byte seed (RFC 8410 §7). The signing-side twin of `ED25519_SPKI_PREFIX`,
+ * and the reason no signing library is needed: `node:crypto` accepts a seed
+ * in exactly this wrapping.
+ */
+const ED25519_PKCS8_PREFIX = Uint8Array.of(
+  0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
+);
+
+/**
+ * Turn a raw 32-byte Ed25519 seed into a private `KeyObject`.
+ *
+ * The DER buffer assembled on the way is zeroed before this returns, so the
+ * only copies of the seed left behind are the caller's and OpenSSL's.
+ *
+ * @throws RangeError if the seed is not exactly 32 bytes.
+ */
+export function signingKeyFromSeed(seed: Uint8Array): KeyObject {
+  if (seed.length !== 32) {
+    throw new RangeError(`an Ed25519 seed is 32 bytes, got ${seed.length}`);
+  }
+  const der = concatBytes([ED25519_PKCS8_PREFIX, seed]);
+  try {
+    return createPrivateKey({
+      // A view over `der`, not a copy, so zeroing `der` below reaches every byte.
+      key: Buffer.from(der.buffer, der.byteOffset, der.length),
+      format: "der",
+      type: "pkcs8",
+    });
+  } finally {
+    der.fill(0);
+  }
+}
+
+/** Normalize a {@link SigningKey} to a private Ed25519 `KeyObject`, refusing anything else. */
+function privateKeyObject(signingKey: SigningKey): KeyObject {
+  if (signingKey instanceof Uint8Array) return signingKeyFromSeed(signingKey);
+  if (signingKey.type !== "private" || signingKey.asymmetricKeyType !== "ed25519") {
+    throw new TypeError(
+      `a signing key must be a private Ed25519 KeyObject, got a ${signingKey.type} ` +
+        `${signingKey.asymmetricKeyType ?? "symmetric"} key`,
+    );
+  }
+  return signingKey;
+}
+
+/**
+ * The raw 32-byte public key matching a signing key — the form
+ * {@link verifyCommitment} and a host's trust store take. Mirrors the Rust
+ * reference's `public_key_for`.
+ */
+export function publicKeyFor(signingKey: SigningKey): Uint8Array {
+  const spki = createPublicKey(privateKeyObject(signingKey)).export({ format: "der", type: "spki" });
+  const header = new Uint8Array(spki.subarray(0, ED25519_SPKI_PREFIX.length));
+  if (spki.length !== ED25519_SPKI_PREFIX.length + 32 || !equalBytes(header, ED25519_SPKI_PREFIX)) {
+    // Unreachable for an Ed25519 key; checked so a runtime that ever encodes
+    // differently fails loudly instead of handing back 32 wrong bytes.
+    throw new Error("node:crypto exported an Ed25519 public key in an unexpected DER shape");
+  }
+  return Uint8Array.from(spki.subarray(ED25519_SPKI_PREFIX.length));
+}
+
+/**
+ * Sign `message` with Ed25519, returning the 64-byte signature.
+ *
+ * @internal Exported for the record layer; not part of the package surface.
+ */
+export function signEd25519(message: Uint8Array, signingKey: SigningKey): Uint8Array {
+  // `null` again: Ed25519 names no digest. Deterministic (RFC 8032), so the
+  // same key and message always produce the same bytes — which is what lets
+  // a test pin this to a published vector rather than round-trip it.
+  return new Uint8Array(cryptoSign(null, Buffer.from(message), privateKeyObject(signingKey)));
+}
+
+/**
+ * Sign an already-computed commitment — a {@link frameCommitment} or a
+ * {@link merkleRoot} — in-process. Mirrors the Rust reference's
+ * `sign_commitment`.
+ *
+ * For a provider content to hold key material in memory. A provider using an
+ * HSM or KMS signs the same 32 bytes with its backend and fills in a
+ * {@link ProvenanceAttestation} with `signed_commitment: digestString(commitment)`
+ * and the signature as lowercase hex; nothing else differs.
+ *
+ * `issuedAt` is written as given: it is metadata outside the signature
+ * (ADR 0021), and it must be a `SPEC.md` §F4 protocol timestamp.
+ *
+ * @throws RangeError if `commitment` is not 32 bytes, or a seed is not 32 bytes.
+ * @throws TypeError if a `KeyObject` is not a private Ed25519 key.
+ */
+export function signCommitment(
+  commitment: Uint8Array,
+  signingKey: SigningKey,
+  keyId: string,
+  attesterId: string,
+  issuedAt: string,
+): ProvenanceAttestation {
+  if (commitment.length !== 32) {
+    throw new RangeError(`a commitment is 32 bytes, got ${commitment.length}`);
+  }
+  return {
+    signed_commitment: digestString(commitment),
+    key_id: keyId,
+    algorithm: ALGORITHM_ED25519,
+    attester_id: attesterId,
+    signature: toHex(signEd25519(commitment, signingKey)),
+    issued_at: issuedAt,
+  };
+}
+
+/**
+ * Sign one frame's commitment in-process. Mirrors the Rust reference's
+ * `sign_frame_attestation`, with one deliberate difference: it refuses a frame
+ * that declares no `content_digest`.
+ *
+ * ADR 0018 requires an attester to populate `content_digest` on any frame it
+ * signs, because a signature over a digest-less frame binds the frame's
+ * identity and not its bytes, and outlives any content later served under that
+ * id. A verifier can only label such a signature `valid_identity_only` after
+ * the fact; refusing here stops it being produced. A caller that genuinely
+ * needs to re-sign an old identity-only commitment can still reach it through
+ * {@link signCommitment}.
+ *
+ * @throws TypeError if the frame declares no `content_digest`.
+ */
+export function signFrameAttestation(
   providerId: string,
   frame: AttestableFrame,
-  attestation: ProvenanceAttestation,
-  publicKey: Uint8Array,
-): AttestationVerdict {
-  return verifyCommitment(frameCommitment(providerId, frame), attestation, publicKey);
+  signingKey: SigningKey,
+  keyId: string,
+  attesterId: string,
+  issuedAt: string,
+): ProvenanceAttestation {
+  if (!declaresContentDigest(frame)) {
+    throw new TypeError(
+      `frame ${JSON.stringify(frame.id)} declares no content_digest; ADR 0018 forbids signing ` +
+        "a frame whose bytes the signature would not bind",
+    );
+  }
+  return signCommitment(frameCommitment(providerId, frame), signingKey, keyId, attesterId, issuedAt);
 }
 
 function equalBytes(a: Uint8Array, b: Uint8Array): boolean {

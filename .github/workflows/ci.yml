@@ -221,6 +221,13 @@ jobs:
       - name: TS attestation port reproduces the published vectors
         working-directory: sdk/typescript
         run: node --test "dist/test/*.test.js"
+      # record_hash (RFC 8785) and RecordAttestation against tests/fixtures/
+      # record-hash-vectors.json and record-attestation.json (#119). A
+      # separate directory, so this is its own step and the glob above never
+      # runs it twice.
+      - name: TS record_hash and RecordAttestation port reproduces the published record vectors
+        working-directory: sdk/typescript
+        run: node --test "dist/test/record/*.test.js"
 
   sdk-python:
     name: sdk (python) is a conformant implementation

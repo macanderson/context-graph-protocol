@@ -25,6 +25,7 @@ export {
 } from "./http.js";
 export {
   ALGORITHM_ED25519,
+  bindsContent,
   digestString,
   encodeProvenanceLink,
   frameCommitment,
@@ -34,7 +35,12 @@ export {
   merkleRoot,
   parseDigest,
   provenanceChainHead,
+  publicKeyFor,
   rootFromProof,
+  signatureVerifies,
+  signCommitment,
+  signFrameAttestation,
+  signingKeyFromSeed,
   toHex,
   verifyCommitment,
   verifyFrameAttestation,
@@ -43,4 +49,21 @@ export {
   type InclusionProof,
   type InclusionStep,
   type ProvenanceAttestation,
+  type SigningKey,
 } from "./attest.js";
+export {
+  canonicalizeJson,
+  RECORD_ATTESTATION_DOMAIN,
+  RECORD_HASH_MEMBER,
+  RecordHashError,
+  recordAttestationMessage,
+  recordHash,
+  recordHashIsCurrent,
+  recordHashPreimage,
+  signRecord,
+  signRecordAttestation,
+  verifyRecordAttestation,
+  verifySignedRecordHash,
+  type RecordAttestation,
+  type RecordHashErrorKind,
+} from "./record.js";

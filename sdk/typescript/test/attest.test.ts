@@ -13,8 +13,11 @@ import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { createPublicKey, generateKeyPairSync } from "node:crypto";
+
 import {
   ALGORITHM_ED25519,
+  bindsContent,
   digestString,
   encodeProvenanceLink,
   frameCommitment,
@@ -24,7 +27,12 @@ import {
   merkleRoot,
   parseDigest,
   provenanceChainHead,
+  publicKeyFor,
   rootFromProof,
+  signatureVerifies,
+  signCommitment,
+  signFrameAttestation,
+  signingKeyFromSeed,
   toHex,
   verifyCommitment,
   verifyFrameAttestation,
@@ -304,4 +312,117 @@ test("a strict verifier declines a small-order or non-canonical public key", () 
       `${hex} must not be usable as a verification key`,
     );
   }
+});
+
+// ---------------------------------------------------------------------------
+// Signing (#127, ADR 0033). Pinned to the published signature, never
+// round-tripped against this port's own verifier alone: a signer and a
+// verifier that share a bug agree with each other and with nothing else.
+// ---------------------------------------------------------------------------
+
+const seed = (): Uint8Array => fromHex(V.signature.signing_key_seed_hex)!;
+
+test("the published seed derives the published public key", () => {
+  assert.equal(toHex(publicKeyFor(seed())), V.signature.public_key_hex);
+  assert.equal(toHex(publicKeyFor(signingKeyFromSeed(seed()))), V.signature.public_key_hex);
+});
+
+test("signing the published commitment with the published seed reproduces the published signature byte for byte", () => {
+  const published: ProvenanceAttestation = V.signature.attestation;
+  const signed = signCommitment(
+    signedCommitment(),
+    seed(),
+    published.key_id,
+    published.attester_id,
+    published.issued_at,
+  );
+  // Ed25519 is deterministic (RFC 8032), so equality here is exact, not
+  // "also verifies".
+  assert.equal(signed.signature, published.signature);
+  assert.deepEqual(signed, published);
+  assert.deepEqual(verifyCommitment(signedCommitment(), signed, publicKey()), { verdict: "valid" });
+});
+
+test("a KeyObject built once signs the same bytes as the raw seed", () => {
+  const key = signingKeyFromSeed(seed());
+  const published: ProvenanceAttestation = V.signature.attestation;
+  assert.equal(
+    signCommitment(signedCommitment(), key, "key-1", "oxagen", published.issued_at).signature,
+    published.signature,
+  );
+});
+
+test("signFrameAttestation over the published frame reproduces the published attestation", () => {
+  const spec = V.frame_commitment;
+  const frame: AttestableFrame = {
+    id: spec.frame.id,
+    content_digest: spec.frame.content_digest,
+    provenance: (spec.frame.provenance as string[]).map(link),
+  };
+  const published: ProvenanceAttestation = V.signature.attestation;
+  const signed = signFrameAttestation(
+    spec.provider_id,
+    frame,
+    seed(),
+    published.key_id,
+    published.attester_id,
+    published.issued_at,
+  );
+  assert.deepEqual(signed, published);
+  assert.deepEqual(verifyFrameAttestation(spec.provider_id, frame, signed, publicKey()), {
+    verdict: "valid",
+  });
+});
+
+test("signFrameAttestation refuses a frame that declares no content_digest (ADR 0018)", () => {
+  for (const frame of [
+    { id: "no-digest" },
+    { id: "null-digest", content_digest: null as unknown as string },
+  ] as AttestableFrame[]) {
+    assert.throws(
+      () => signFrameAttestation("repo-graph", frame, seed(), "key-1", "oxagen", "2026-08-27T00:00:00Z"),
+      TypeError,
+    );
+  }
+});
+
+test("a verified signature over a digest-less frame is identity-only, not valid (ADR 0018)", () => {
+  // Such signatures predate the refusal above and must still be readable —
+  // labelled, not rejected, and never mistaken for a binding of the bytes.
+  const frame: AttestableFrame = { id: "legacy", provenance: [link("file")] };
+  const legacy = signCommitment(
+    frameCommitment("repo-graph", frame),
+    seed(),
+    "key-1",
+    "oxagen",
+    "2026-08-27T00:00:00Z",
+  );
+  const verdict = verifyFrameAttestation("repo-graph", frame, legacy, publicKey());
+  assert.deepEqual(verdict, { verdict: "valid_identity_only" });
+  assert.ok(!isValid(verdict));
+  assert.ok(signatureVerifies(verdict));
+  assert.ok(!bindsContent(verdict));
+
+  // Adding a digest after the fact is a different commitment, not an upgrade.
+  assert.equal(
+    verifyFrameAttestation(
+      "repo-graph",
+      { ...frame, content_digest: `sha256:${"ab".repeat(32)}` },
+      legacy,
+      publicKey(),
+    ).verdict,
+    "commitment_mismatch",
+  );
+});
+
+test("a signing key that is not a private Ed25519 key is refused, not misused", () => {
+  const commitment = signedCommitment();
+  assert.throws(() => signCommitment(commitment, new Uint8Array(31), "k", "a", "t"), RangeError);
+  assert.throws(() => signCommitment(new Uint8Array(31), seed(), "k", "a", "t"), RangeError);
+
+  const publicOnly = createPublicKey(signingKeyFromSeed(seed()));
+  assert.throws(() => signCommitment(commitment, publicOnly, "k", "a", "t"), TypeError);
+
+  const { privateKey: ecKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  assert.throws(() => signCommitment(commitment, ecKey, "k", "a", "t"), TypeError);
 });
