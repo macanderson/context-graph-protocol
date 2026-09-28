@@ -1,177 +1,254 @@
 # Publishing the Context Graph Protocol crates to crates.io
 
-This documents the release process for the three **Context Graph Protocol**
-crates — `contextgraph-types`, `contextgraph-host`, `contextgraph-conformance` — to crates.io. These
-crates are published independently of any downstream consumer (such as the
-`stella` binary), on their own cadence.
+This is the release process for the four public **Context Graph Protocol**
+crates: `contextgraph-types`, `contextgraph-host`, `contextgraph-conformance`
+and `contextgraph-trace`. They publish together, at one version, on their own
+cadence, independent of any downstream consumer (such as the `stella` binary).
+The workspace default is `publish = false`; these four override it (see their
+`Cargo.toml`s), and every other workspace crate stays unpublished.
 
-**Nobody has run these publish commands yet.** The workspace default is
-`publish = false`; the three Context Graph Protocol crates override it explicitly (see their
-`Cargo.toml`s). This file exists so the *first* real publish is a checklist,
-not an improvisation.
+Published so far: 0.1.0, 0.1.1 and 0.1.2 (by hand, 2026-08-01), and 2.0.0
+(2026-09-13, from the tag `contextgraph-v2.0.0`). `contextgraph-trace` was
+first published at 0.1.1. 1.0.0 was bumped in-tree and never published. The
+[CHANGELOG](./CHANGELOG.md) has the detail for each.
+
+## The release tag
+
+A crate release is named by exactly one git tag:
+
+```
+contextgraph-vX.Y.Z
+```
+
+where `X.Y.Z` is the version all four crates carry. That is the only
+workspace tag convention
+([ADR 0034](./docs/adr/0034-one-release-tag-per-train.md)), and it is what
+[`.github/workflows/release.yml`](./.github/workflows/release.yml) triggers
+on. The SDKs have their own trains and their own tag shapes, described in
+[`sdk/PUBLISHING.md`](./sdk/PUBLISHING.md): `sdk/go/vX.Y.Z` (the shape Go
+requires for a nested module), `npm-vX.Y.Z` and `pypi-vX.Y.Z`. There is no bare
+`vX.Y.Z` tag. `ocp-v0.1.0` is from before the rename; it stays, and no new
+`ocp-*` tag is cut.
+
+**The tag comes first, and it names a commit on `main`.** Merge the version
+bump through a pull request, then tag the merge commit. Never publish from a
+commit that has no tag, and never tag a commit that is not on `main`. (The
+retroactive tags for the releases before this rule, below, are the one
+exception: they record where a past release came from, and start nothing.)
 
 ## Preferred path: the tag-triggered workflow, not a laptop
 
-[`.github/workflows/release.yml`](./.github/workflows/release.yml) automates
-the exact sequence documented below, so a release is reproducible and doesn't
-depend on whoever's laptop has a `cargo login` token on it. Pushing a
-`contextgraph-vX.Y.Z` tag is what *starts* it — it does not publish anything
-by itself:
+`release.yml` automates the sequence documented below, so a release is
+reproducible and does not depend on whose laptop has a `cargo login` token.
+Pushing the tag is what *starts* it. It does not publish anything by itself:
 
-1. The workflow's `publish` job targets the `crates-io` GitHub Environment. If
-   that environment has required reviewers configured (Settings →
-   Environments), the job pauses there until a human clicks "Approve and
-   deploy." No approval, no publish.
-2. It then runs `cargo publish` for each crate in dependency order, polling
-   the sparse index between publishes (`.github/scripts/wait-for-crate.sh`)
-   so the next crate's registry resolution never races the CDN — the same
-   "wait for the index" step called out by hand below, just automated.
-3. `CARGO_REGISTRY_TOKEN` must exist as a secret scoped to that same
+1. **`preflight`** runs with no secrets and no approval. It first runs
+   `.github/scripts/check-release-tag.py`, which refuses the run unless:
+   - the tag is exactly `contextgraph-v` + the version all four crates carry
+     in the tagged commit (and they do all carry one version);
+   - the tagged commit is on `main`;
+   - that version is not already on crates.io for any of the four.
+
+   Then it proves `contextgraph-types` still packages
+   (`cargo publish --dry-run --locked`). A failure here costs nobody an
+   approval click.
+2. **`publish`** targets the `crates-io` GitHub Environment. With required
+   reviewers configured (Settings → Environments), the job pauses until a
+   human clicks "Approve and deploy". No approval, no publish. It checks out
+   the exact commit preflight checked, not the tag, so moving the tag while
+   the job waits changes nothing.
+3. It runs `cargo publish` for each crate in dependency order, polling the
+   sparse index between publishes (`.github/scripts/wait-for-crate.sh`) so the
+   next crate's registry resolution never races the CDN.
+4. `CARGO_REGISTRY_TOKEN` must exist as a secret scoped to that same
    environment, holding a crates.io API token as described in "One-time
    prerequisites" below.
 
-Both the `crates-io` environment and its secret are one-time, human,
-repo-Settings setup — **neither exists yet** as of this writing. Until they
-do, the workflow exists but cannot run: a tag push just sits there with the
-job queued for an environment that has no approver configured, which is a
-safe failure mode, not a silent one.
+To cut a release:
 
-The manual sequence in "The publish sequence" below remains the documented
-reference for exactly what that workflow executes step-by-step, and is the
-fallback if a release needs manual intervention partway through (see "This is
-a one-way door").
+```bash
+# After the version bump has merged to main and CI is green on the merge commit.
+git fetch origin main
+git checkout --detach origin/main        # or the exact merge commit of the bump
+grep -m1 '^version' Cargo.toml           # must print the version you are tagging
+git tag -a contextgraph-vX.Y.Z -m "contextgraph crates X.Y.Z"
+git push origin contextgraph-vX.Y.Z
+```
+
+Then approve the `publish` job once `preflight` is green.
+
+The manual sequence in "The publish sequence" below remains the reference for
+exactly what that workflow executes, and the fallback if a run fails partway
+(see "This is a one-way door").
 
 ## Why the order matters
 
 ```
 contextgraph-types  →  contextgraph-host  →  contextgraph-conformance
+                    ↘  contextgraph-trace
 ```
 
-`contextgraph-host` depends on `contextgraph-types` via `{ path = "../contextgraph-types", version =
-"0.1.0" }`; `contextgraph-conformance` depends on both `contextgraph-types` and `contextgraph-host` the
-same way. crates.io rejects a publish whose dependencies aren't already
-resolvable from the registry — `path` is stripped from the published
-manifest and only `version` survives, so **each crate can only be published
-once every crate below it in the chain is already live on crates.io.**
-Publishing out of order fails outright, not partially.
+`contextgraph-host`, `contextgraph-conformance` and `contextgraph-trace` depend
+on `contextgraph-types` (and `contextgraph-conformance` on `contextgraph-host`)
+through a `path` dependency that also carries a `version` requirement.
+crates.io strips `path` from the published manifest and only `version`
+survives, so **each crate can only be published once every crate it depends
+on is already live on crates.io.** Publishing out of order fails outright,
+not partially.
 
 This is also why local pre-publish verification is asymmetric:
 
 - `contextgraph-types` has no workspace-internal deps, so
-  `cargo publish --dry-run --locked -p contextgraph-types` runs the **full** verify (packages,
-  resolves, compiles the packaged tarball in isolation, then aborts before
-  upload) — this is complete proof it's ready.
-- `contextgraph-host` and `contextgraph-conformance` depend on a crate (`contextgraph-types`) that
-  genuinely isn't on crates.io yet, so `cargo package`/`cargo publish
-  --dry-run` for them cannot resolve the registry entry for `contextgraph-types`
-  locally — that's not a bug in this checklist, it's crates.io index
-  resolution working as designed. The correct pre-publish proof for those
-  two is `cargo package -p <crate> --no-verify --allow-dirty
-  --exclude-lockfile` (packages and validates the manifest shape without
-  needing the registry lockfile) plus manual inspection of the generated
-  `Cargo.toml` inside the `.crate` tarball to confirm the `version` fields
-  landed. Full `--dry-run` verification for `contextgraph-host` and `contextgraph-conformance`
-  only becomes possible *after* their dependencies are actually published.
+  `cargo publish --dry-run --locked -p contextgraph-types` runs the **full**
+  verify (packages, resolves, compiles the packaged tarball in isolation, then
+  aborts before upload). That is complete proof it is ready, and it is what CI
+  and `preflight` run.
+- The other three resolve `contextgraph-types` from the registry, so their
+  full `--dry-run` for a *new* version can only succeed once that version of
+  `contextgraph-types` is live. `cargo package -p <crate> --no-verify
+  --allow-dirty --exclude-lockfile` checks their manifest shape before then.
+  The one-shot co-publish below avoids the problem entirely.
 
 ## One-time prerequisites
 
-1. A crates.io account with a verified email, linked to a GitHub account with
-   write access to `macanderson/context-graph-protocol` (or another account
-   willing to transfer ownership to the `macanderson` GitHub org's crates.io
-   team once one exists).
-2. `cargo login <token>` locally, using a crates.io API token scoped to
-   `publish-new` + `publish-update` (crates.io Account Settings → API
-   Tokens). Do not commit this token; it's not an env var this repo reads.
-   For the tag-triggered workflow instead of a laptop, the same kind of
-   token is stored as the `CARGO_REGISTRY_TOKEN` secret on a `crates-io`
-   GitHub Environment (Settings → Environments → New environment → add
-   required reviewers, then add the secret scoped to it) rather than run
-   through `cargo login` anywhere.
-3. Confirm the crate names are still unclaimed: check
-   `https://crates.io/crates/contextgraph-types`, `.../contextgraph-host`, `.../contextgraph-conformance`
-   — a 404 on each means the name is free. (As of writing, all three are
-   unclaimed.)
+1. A crates.io account with a verified email, holding owner rights on the four
+   crates.
+2. For the workflow: a crates.io API token scoped to `publish-update`, stored
+   as the `CARGO_REGISTRY_TOKEN` secret on a `crates-io` GitHub Environment
+   (Settings → Environments → New environment → add required reviewers, then
+   add the secret scoped to it). For a by-hand run: `cargo login <token>`
+   locally. Do not commit the token; no file in this repository reads it.
 
 ## The publish sequence
 
-Run every command from the repo root, in this exact order. Do not
-parallelize — each step's success gates the next.
+This is what `release.yml` runs. Run it by hand only to finish a workflow run
+that failed partway, and only **from a checkout of the release tag**, never
+from a branch:
+
+```bash
+git fetch origin tag contextgraph-vX.Y.Z
+git checkout --detach contextgraph-vX.Y.Z
+git describe --exact-match --tags HEAD   # must print contextgraph-vX.Y.Z
+```
+
+Then, from the repo root, in this order, skipping any crate already live at
+`X.Y.Z`. Do not parallelize: each step's success gates the next.
 
 ```bash
 # 1. contextgraph-types — the leaf, no workspace-internal deps.
-cd contextgraph-types
-cargo publish
-cd ..
-
-# Wait for the crates.io index to pick it up. Usually seconds, occasionally
-# a minute or two behind the sparse index CDN. Confirm before proceeding:
-cargo search contextgraph-types   # or just check https://crates.io/crates/contextgraph-types
+cargo publish -p contextgraph-types --locked
+./.github/scripts/wait-for-crate.sh contextgraph-types X.Y.Z
 
 # 2. contextgraph-host — now resolvable, since contextgraph-types is live.
-cd contextgraph-host
-cargo publish
-cd ..
-cargo search contextgraph-host
+cargo publish -p contextgraph-host --locked
+./.github/scripts/wait-for-crate.sh contextgraph-host X.Y.Z
 
 # 3. contextgraph-conformance — now resolvable, since both its deps are live.
-cd contextgraph-conformance
-cargo publish
-cd ..
-cargo search contextgraph-conformance
+cargo publish -p contextgraph-conformance --locked
+
+# 4. contextgraph-trace — depends only on contextgraph-types.
+cargo publish -p contextgraph-trace --locked
 ```
 
 `cargo publish` runs its own full verify (packages, builds in an isolated
-temp dir, then uploads) before it ever touches the registry, so each step is
-self-checking — but it's still a one-way action (see below).
+temp dir, then uploads) before it touches the registry, so each step is
+self-checking. It is still a one-way action (see below). It also records the
+commit it was run from in the `.crate` file's `.cargo_vcs_info.json`, which is
+how anyone can check a published version against its tag.
 
 ### One-shot alternative (cargo ≥ 1.90)
 
-Modern cargo can co-publish an interdependent set in one command, computing
-the dependency order and resolving the siblings through a temporary local
-registry — no manual index-wait between steps:
+Cargo can co-publish an interdependent set in one command, computing the
+dependency order and resolving the siblings through a temporary local
+registry, with no manual index wait between steps:
 
 ```bash
-cargo publish -p contextgraph-types -p contextgraph-host -p contextgraph-conformance
+cargo publish --locked -p contextgraph-types -p contextgraph-host -p contextgraph-conformance -p contextgraph-trace
 ```
 
-Add `--dry-run` to rehearse the whole set without uploading; that dry-run is
-the definitive publishability proof used to validate this checklist (it
-packages, resolves each sibling, and compiles all three in order). Prefer the
-explicit three-step sequence above if you want to eyeball each crate landing
-on crates.io before the next goes up.
+Add `--dry-run` to rehearse the whole set without uploading; that packages,
+resolves each sibling, and compiles all four in order.
 
 ## After publishing
 
 - **docs.rs builds automatically** on a successful publish, typically within
-  a few minutes. Check `https://docs.rs/contextgraph-types`,
-  `https://docs.rs/contextgraph-host`, `https://docs.rs/contextgraph-conformance` render
-  cleanly — the `documentation` field in each `Cargo.toml` already points
-  there.
-- **Verify the acceptance criterion end to end**: in a scratch directory
-  *outside* this workspace, `cargo new /tmp/contextgraph-smoke && cd /tmp/contextgraph-smoke
-  && cargo add contextgraph-types contextgraph-conformance` should resolve from the real
-  registry with no path override, and `cargo test` (after writing a trivial
-  conformance-suite invocation) should pass — proving "an external crate can
-  depend on `contextgraph-types` and pass `contextgraph-conformance` without
-  vendoring any downstream code" (the issue's acceptance bar) against the
-  *published* crates, not just the workspace.
-- Tag the release in this repo for traceability, e.g. `contextgraph-v0.1.0`. Use
-  the `contextgraph-` tag prefix so the crate release train never collides with a
-  downstream consumer's own version tags in the tag namespace. **If publishing
-  by hand, this happens last** — after the fact, for traceability. If using
-  `release.yml` instead, the order inverts: pushing this same tag is what
-  starts the workflow, so it happens *first*, before any crate is live.
+  a few minutes. Check that `https://docs.rs/contextgraph-types`,
+  `https://docs.rs/contextgraph-host`, `https://docs.rs/contextgraph-conformance`
+  and `https://docs.rs/contextgraph-trace` render.
+- **Verify from outside the workspace**: in a scratch directory,
+  `cargo new /tmp/contextgraph-smoke && cd /tmp/contextgraph-smoke && cargo add
+  contextgraph-types contextgraph-conformance` should resolve from the real
+  registry with no path override, and a trivial conformance-suite invocation
+  should pass under `cargo test`.
+- **Check the provenance**: the commit in any of the new `.crate` files'
+  `.cargo_vcs_info.json` must equal `git rev-parse contextgraph-vX.Y.Z^{commit}`.
+
+## Retroactive tags for the releases before this rule
+
+0.1.0, 0.1.1 and 0.1.2 were published by hand before
+[ADR 0034](./docs/adr/0034-one-release-tag-per-train.md), and have no tag.
+ADR 0034 decides to tag each one retroactively, on **the commit its `.crate`
+file records** (not a commit judged equivalent), with an annotated message
+that says the tag was made afterwards. `contextgraph-v2.0.0` already exists
+and already names the commit its `.crate` file records.
+
+| Tag | Commit, from `.cargo_vcs_info.json` | Note |
+| --- | --- | --- |
+| `contextgraph-v0.1.0` | `6392a22978874c7939d314224e353a4449185c16` | predates the history re-root; on no branch |
+| `contextgraph-v0.1.1` | `53c5afeca9b62393637ef2319a6d3fc45c852608` | predates the history re-root; on no branch |
+| `contextgraph-v0.1.2` | `9ce2a83b8cf8a0bdbd62dfdca8ff93a785948d6d` | head of #74; same tree as `main`'s squash-merge `00377abca163225a7efe0e2a1425fef34c95230e` |
+
+A maintainer runs this once. Each fetch pulls a commit no branch holds, which
+GitHub serves by its full id:
+
+```bash
+git fetch origin 6392a22978874c7939d314224e353a4449185c16 \
+                 53c5afeca9b62393637ef2319a6d3fc45c852608 \
+                 9ce2a83b8cf8a0bdbd62dfdca8ff93a785948d6d
+
+git tag -a contextgraph-v0.1.0 6392a22978874c7939d314224e353a4449185c16 \
+  -m "contextgraph crates 0.1.0 (published 2026-08-01)" \
+  -m "Tagged retroactively on 2026-09-28 (ADR 0034, #103): the commit recorded in the published .crate files' .cargo_vcs_info.json. It predates the history re-root and is on no branch."
+git tag -a contextgraph-v0.1.1 53c5afeca9b62393637ef2319a6d3fc45c852608 \
+  -m "contextgraph crates 0.1.1 (published 2026-08-01)" \
+  -m "Tagged retroactively on 2026-09-28 (ADR 0034, #103): the commit recorded in the published .crate files' .cargo_vcs_info.json. It predates the history re-root and is on no branch. Superseded by 0.1.2; do not depend on it."
+git tag -a contextgraph-v0.1.2 9ce2a83b8cf8a0bdbd62dfdca8ff93a785948d6d \
+  -m "contextgraph crates 0.1.2 (published 2026-08-01)" \
+  -m "Tagged retroactively on 2026-09-28 (ADR 0034, #103): the commit recorded in the published .crate files' .cargo_vcs_info.json, the head of #74. Its tree is identical to main's squash-merge 00377abca163225a7efe0e2a1425fef34c95230e."
+
+git push origin contextgraph-v0.1.0 contextgraph-v0.1.1 contextgraph-v0.1.2
+```
+
+Change the date in the messages to the day the tags are actually made.
+
+Pushing the tags starts `release.yml` once for each, and those runs use **the
+workflow file in each tagged commit**, not today's. All three commits predate
+`check-release-tag.py`, so their `preflight` only dry-runs a package, and
+their `publish` job then waits for approval on the `crates-io` environment.
+Nothing can be published either way: crates.io refuses a version it already
+has, so an approved run would fail at its first `cargo publish`. Still, do
+not approve them. Cancel all three:
+
+```bash
+gh run list --workflow release.yml --limit 3 --json databaseId,headBranch \
+  --jq '.[] | select(.headBranch | startswith("contextgraph-v0.1.")) | .databaseId' \
+  | xargs -n1 gh run cancel
+```
+
+Afterwards, `git ls-remote --tags origin 'contextgraph-v*'` lists a tag for
+every version on crates.io.
 
 ## This is a one-way door
 
 crates.io does not support deleting a published version. A mistake after
-publish is fixed with `cargo yank --version 0.1.0 -p contextgraph-types` (hides it
-from new dependency resolution without breaking existing lockfiles that
-already reference it) followed by publishing a corrected patch version —
-never by trying to overwrite or delete what's already there. This is exactly
-why every command above was verified with `--dry-run` / `--no-verify
---exclude-lockfile` first, and why no agent or script should run the real
-`cargo publish` without a human deliberately choosing to.
+publish is fixed with `cargo yank --version X.Y.Z -p <crate>` (hides it from
+new dependency resolution without breaking existing lockfiles that already
+reference it) followed by publishing a corrected patch version, never by
+trying to overwrite what is already there. A version, once published, keeps
+its tag: do not move or delete a `contextgraph-v*` tag after its release.
+This is why every step above is rehearsed with `--dry-run` first, and why no
+agent or script runs the real `cargo publish` or pushes a release tag without
+a human deliberately choosing to.
 
 ---
 
@@ -276,7 +353,19 @@ an `aws s3 rm` with the argument made out loud. The `spec/` upload *does* use
 
 - **`production` environment.** The AWS role trusts exactly the subject
   `repo:macanderson/context-graph-protocol:environment:production`. There is no
-  stored AWS key; without the environment the credential exchange fails.
+  stored AWS key; without the environment the credential exchange fails. That
+  subject names the environment, not a branch, so the environment restricts who
+  can publish only together with a **deployment-branch policy limiting
+  `production` to `main`** (Settings → Environments → production → Deployment
+  branches and tags → Selected branches → add `main`). Configure it; it was
+  absent when checked on 2026-09-22
+  ([#202](https://github.com/macanderson/context-graph-protocol/issues/202)).
+  Confirm with `gh api repos/macanderson/context-graph-protocol/environments/production`:
+  `deployment_branch_policy` is set and the only custom branch is `main`. The
+  publish job also runs only when `github.ref` is `refs/heads/main`, so a
+  dispatch from another branch that carries the workflow as reviewed skips it
+  even without the policy; a branch that edits that condition away is what the
+  policy is for.
 - **`SITE_DISPATCH_TOKEN` secret.** The last step asks the microsite to rebuild,
   because its rendered documentation quotes this specification. Writing to
   another repository is something the job's own `GITHUB_TOKEN` cannot do by

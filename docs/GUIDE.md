@@ -181,7 +181,7 @@ code, start here.
 
 **Queries and errors**
 - `ContextQuery` — a request for frames (goal, keywords, kinds wanted, budget, as-of time).
-- `ContextQueryResult` — the response wrapper (frames + whether truncated).
+- `ContextQueryResult` — the response wrapper: the frames, whether the answer was truncated (and roughly how much was dropped), and the optional detached attestation evidence, `frame_attestations` (per-frame signatures and inclusion proofs) and `result_attestation` (one signature over the whole set of frames returned). An unsigned provider builds it with `ContextQueryResult::unattested`.
 - `ErrorCode` — machine-readable error codes (`bad_request`, `unsupported_kind`, `budget_unsatisfiable`, ...).
 - `HostReaction` — what a host should do in response to a given error code (retry, drop provider, etc.).
 
@@ -250,6 +250,7 @@ row, a row names no file, or two ADRs share a number.
 | [0029](./adr/0029-the-trust-store-file.md) | The trust store is a file the operator names | Trusted keys used to vanish on restart because nothing read or wrote the store. There is now a small, versioned JSON file for it, read only from a path the operator gives, strict about every member, and carrying each key's fingerprint so the consent prompt and the file show the same string. A bad file is a named error, never an empty store. |
 | [0030](./adr/0030-a-pinned-trust-tier-below-configured.md) | A pinned trust tier, below a configured key | A host may now remember the key a provider published the first time it met it, the way `ssh` remembers a host key. Evidence signed with that key is reported as *pinned*, never as attested, because it proves the key has not changed, not whose it is. If the provider later publishes a different key under the same name, the host is told and the old key stays pinned. |
 | [0031](./adr/0031-result-set-attestation-is-checked-once-per-answer.md) | A signed answer is checked once, and a proof's shape before its hashes | A provider that signs its whole answer once used to cost the host one signature check per frame. The host now checks that signature once per answer. Each frame's proof must also have exactly the shape its stated tree size gives it, and state the answer's own size, before any hashing starts. |
+| [0034](./adr/0034-one-release-tag-per-train.md) | One release tag per release train | Crate versions reached crates.io with no tag naming them, under three disagreeing tag conventions. Each release train now has one tag shape (`contextgraph-v*` for the crates, `sdk/go/v*` as Go requires), the release workflow refuses a tag that misnames the version, points off `main`, or repeats a published release, and every past release gets a retroactive tag on the commit its `.crate` file records. |
 
 
 ---

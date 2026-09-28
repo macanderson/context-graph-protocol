@@ -77,10 +77,22 @@ impl ContextProvider for MyProvider {
     fn capabilities(&self) -> &Capabilities { &self.capabilities }
 
     async fn query(&self, query: &ContextQuery) -> Result<ContextQueryResult, HostError> {
-        Ok(ContextQueryResult { frames: vec![], truncated: false, dropped_estimate: None })
+        // A provider that does not sign what it serves. `unattested` leaves
+        // `frame_attestations` empty and `result_attestation` unset.
+        Ok(ContextQueryResult::unattested(vec![], false, None))
     }
 }
 ```
+
+Besides `frames`, `truncated` and `dropped_estimate`, `ContextQueryResult`
+carries the detached attestation evidence: `frame_attestations` (one entry
+per attested frame, each naming the frame it covers) and `result_attestation`
+(one signature over the Merkle root of exactly the frames returned). A
+provider that signs fills those two (`SPEC.md` §6.5.5, rules F11–F13); one
+that does not uses `ContextQueryResult::unattested`, or ends a struct literal
+with `..Default::default()`. A literal naming only `frames`, `truncated` and
+`dropped_estimate` does not compile. [ADR 0014](../docs/adr/0014-attestations-on-the-wire.md) explains
+why the evidence rides on the result rather than inside a frame.
 
 See [Implementing a provider][implementing] for the full guide, including the
 stdio/HTTP transports (for providers written in *any* language, not just

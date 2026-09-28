@@ -161,7 +161,9 @@ exist here) — it's an easy mistake to make once and then have to explain why
 Note this is a distinct tag from the Rust crates' release tags, which are
 named `contextgraph-vX.Y.Z` (`contextgraph-v2.0.0` is the first; pushing one is
 what starts `.github/workflows/release.yml`). The Go SDK's tag is independent
-of that prefix and cadence. A root-level `v0.0.2` git-pin tag was once planned
+of that prefix and cadence. [ADR 0034](../docs/adr/0034-one-release-tag-per-train.md)
+lists every release train's tag shape: `contextgraph-v*`, `sdk/go/v*`,
+`npm-v*` and `pypi-v*`, and no bare `v*`. A root-level `v0.0.2` git-pin tag was once planned
 (#30) and was never cut: the crates reached crates.io first, which made it
 unnecessary.
 

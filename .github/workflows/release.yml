@@ -4,10 +4,18 @@ name: Release
 # in dependency order (see PUBLISHING.md): contextgraph-types -> contextgraph-host
 # -> contextgraph-conformance -> contextgraph-trace.
 #
+# The tag is the release's name (ADR 0034): `contextgraph-v<version>`, where
+# <version> is the one version the four crates share. It is the only workspace
+# tag convention. The Go SDK's `sdk/go/v*` tags are the shape Go requires and
+# never start this workflow.
+#
 # This workflow is inert by construction. A `contextgraph-v*` tag push alone
 # can never publish anything:
-#   1. `preflight` runs unconditionally (no environment, no secrets) and only
-#      proves contextgraph-types still packages — it cannot publish anything.
+#   1. `preflight` runs unconditionally (no environment, no secrets). It first
+#      refuses any tag that does not name the version being published, any
+#      tagged commit that is not on `main`, and any version already on
+#      crates.io (`.github/scripts/check-release-tag.py`, #103), then proves
+#      contextgraph-types still packages. It cannot publish anything.
 #   2. The `publish` job targets the `crates-io` GitHub Environment, which
 #      must exist and have required reviewers configured — the job pauses
 #      there for a human "Approve and deploy" click before a single step
@@ -15,9 +23,8 @@ name: Release
 #   3. `CARGO_REGISTRY_TOKEN` must exist as a secret scoped to that same
 #      environment. No secret, no publish, regardless of approval.
 #
-# Neither of those exists yet as of writing (issue #16 is prep only — no real
-# publish, no tag, no environment/secret setup). Standing up both is a
-# one-time, human, repo-Settings action; see PUBLISHING.md.
+# The environment and its secret are one-time, human, repo-Settings actions;
+# see PUBLISHING.md.
 #
 # A failure partway through (e.g. contextgraph-types publishes but
 # contextgraph-host's index-propagation wait times out) is not auto-retried:
@@ -47,8 +54,36 @@ jobs:
   preflight:
     name: preflight (dry-run, no credentials, no approval needed)
     runs-on: ubuntu-latest
+    outputs:
+      # The version check-release-tag.py verified. The publish job releases
+      # this rather than re-deriving a version from the tag name.
+      version: ${{ steps.tag.outputs.version }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The guard below asks whether the tagged commit is on `main`, which
+          # needs `main`'s history, not just the tagged commit.
+          fetch-depth: 0
+      # The guard below needs Python 3.11 or later (`tomllib`). Pinned here
+      # rather than trusting whatever the runner image ships, as ci.yml does.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      # An untagged or mis-tagged publish is the failure #103 records: every
+      # crate version then on crates.io went up with no tag naming it. This
+      # step makes that unrepeatable rather than merely fixed. The tag must be
+      # `contextgraph-v` + the publishing crates' version, the tagged commit
+      # must be on `main`, and the version must not be on crates.io yet, so a
+      # tag re-pushed for a version already live stops here too. See ADR 0034.
+      - name: The tag names this version, on main, not yet published
+        id: tag
+        env:
+          TAG: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          python3 .github/scripts/check-release-tag.py --tag "$TAG" --commit "$COMMIT" --main origin/main
       - uses: ./.github/actions/rust
       # `--locked` matches what the publish job below runs. Without it the dry
       # run is allowed to update Cargo.lock and a lockfile out of sync with
@@ -62,8 +97,15 @@ jobs:
     needs: preflight
     runs-on: ubuntu-latest
     environment: crates-io
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
     steps:
+      # The commit preflight checked, not whatever the tag names by the time a
+      # human approves. A tag can be moved while this job waits for approval;
+      # a commit cannot.
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
 
       - uses: ./.github/actions/rust
 
@@ -73,7 +115,7 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
       - name: Wait for contextgraph-types to propagate to the sparse index
-        run: ./.github/scripts/wait-for-crate.sh contextgraph-types "${GITHUB_REF_NAME#contextgraph-v}"
+        run: ./.github/scripts/wait-for-crate.sh contextgraph-types "$VERSION"
 
       # contextgraph-host depends on contextgraph-types via a path dep with a
       # ">=1.0.0" version requirement (see contextgraph-host/Cargo.toml) —
@@ -86,7 +128,7 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
       - name: Wait for contextgraph-host to propagate to the sparse index
-        run: ./.github/scripts/wait-for-crate.sh contextgraph-host "${GITHUB_REF_NAME#contextgraph-v}"
+        run: ./.github/scripts/wait-for-crate.sh contextgraph-host "$VERSION"
 
       - name: Publish contextgraph-conformance
         run: cargo publish -p contextgraph-conformance --locked

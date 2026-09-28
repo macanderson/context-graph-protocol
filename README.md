@@ -1,9 +1,10 @@
 # Context Graph Protocol (`contextgraph/1.0`)
 
-[![CI](https://github.com/macanderson/context-graph-protocol/actions/workflows/ci.yml/badge.svg)](https://github.com/macanderson/context-graph-protocol/actions/workflows/ci.yml)
+[![CI](https://github.com/macanderson/context-graph-protocol/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/macanderson/context-graph-protocol/actions/workflows/ci.yml?query=branch%3Amain)
 [![contextgraph-types on crates.io](https://img.shields.io/crates/v/contextgraph-types.svg)](https://crates.io/crates/contextgraph-types) [![contextgraph-types docs](https://img.shields.io/docsrs/contextgraph-types)](https://docs.rs/contextgraph-types)
 [![contextgraph-host on crates.io](https://img.shields.io/crates/v/contextgraph-host.svg)](https://crates.io/crates/contextgraph-host) [![contextgraph-host docs](https://img.shields.io/docsrs/contextgraph-host)](https://docs.rs/contextgraph-host)
 [![contextgraph-conformance on crates.io](https://img.shields.io/crates/v/contextgraph-conformance.svg)](https://crates.io/crates/contextgraph-conformance) [![contextgraph-conformance docs](https://img.shields.io/docsrs/contextgraph-conformance)](https://docs.rs/contextgraph-conformance)
+[![contextgraph-trace on crates.io](https://img.shields.io/crates/v/contextgraph-trace.svg)](https://crates.io/crates/contextgraph-trace) [![contextgraph-trace docs](https://img.shields.io/docsrs/contextgraph-trace)](https://docs.rs/contextgraph-trace)
 
 https://contextgraphprotocol.org
 

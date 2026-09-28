@@ -78,7 +78,13 @@ jobs:
 
   publish:
     name: publish to contextgraphprotocol.org
-    if: github.event_name != 'pull_request'
+    # Only from `main`. `workflow_dispatch` lets anyone with write access run
+    # this workflow from any branch, and the `production` environment below
+    # does not stop that on its own (#202). This condition stops it for any
+    # branch that carries this file as reviewed: a dispatch from such a branch
+    # validates and then skips this job. See the note at `role-to-assume` for
+    # the branch it cannot stop.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -96,10 +102,22 @@ jobs:
       # that holds credentials able to write to a production bucket.
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          # No stored AWS key. The role trusts exactly one subject —
-          # `repo:macanderson/context-graph-protocol:environment:production` —
-          # so `environment: production` above is load-bearing rather than
-          # decorative, and the role can write only these two prefixes.
+          # No stored AWS key. The role trusts exactly one subject,
+          # `repo:macanderson/context-graph-protocol:environment:production`,
+          # and can write only these two prefixes. That subject names the
+          # environment, not a branch: any job that declares
+          # `environment: production` gets it. So the environment restricts
+          # who can publish only together with a deployment-branch policy
+          # that limits `production` to `main` (Settings → Environments →
+          # production → Deployment branches and tags → Selected branches →
+          # `main`). That policy is a repository setting and must be
+          # configured; it was absent when this was written (#202,
+          # https://github.com/macanderson/context-graph-protocol/issues/202).
+          # Until it is, the job-level `if:` above keeps a dispatch from any
+          # other branch that carries this file as reviewed from reaching this
+          # step. A dispatch runs the dispatching branch's copy of the file,
+          # so a branch that edits the `if:` away gets past it, which is why
+          # the policy is still required. Keep both.
           role-to-assume: arn:aws:iam::916294258235:role/gha-deploy-context-graph-protocol
           aws-region: us-east-1
 

@@ -63,13 +63,20 @@ versions differ). A registry version is stable, reviewable in `Cargo.lock`, and
 shows up in `cargo tree`; a git pin is none of those, and a pin by bare SHA
 tells the next reader nothing about how far behind they are.
 
-If you must build from git — to test a fix before it is released — pin a
-release tag rather than a SHA. Release tags are named `contextgraph-vX.Y.Z`
-(the tag that `.github/workflows/release.yml` publishes from), for example:
+If you must build from git, pin a release tag rather than a SHA. Release tags
+are named `contextgraph-vX.Y.Z`, the one crate tag convention
+([ADR 0034](./docs/adr/0034-one-release-tag-per-train.md)) and the tag
+`.github/workflows/release.yml` publishes from. Each names the commit its
+release was built from, for example:
 
 ```toml
 contextgraph-types = { git = "https://github.com/macanderson/context-graph-protocol", tag = "contextgraph-v2.0.0" }
 ```
+
+There is no bare `vX.Y.Z` tag. An older draft of this section named `v0.0.2`,
+which was never cut. To test a fix that has not been released yet, and so has
+no tag, pin the full commit id of its merge to `main` with `rev = "…"`, and
+note beside it which release you expect to move to.
 
 Move back to the registry version once the fix ships.
 

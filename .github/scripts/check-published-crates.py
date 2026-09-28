@@ -19,9 +19,8 @@ flagged — prose may legitimately mention an unpublished crate — the defect t
 guards is the omission.
 
 `DOCUMENTS` is where a new copy of the list goes when one is written.
-`PUBLISHING.md` is a known third copy that still describes the pre-publish,
-three-crate world as a whole; it joins this list with the rewrite that brings
-it up to date, rather than being held to one sentence of it now.
+`PUBLISHING.md` joined it with the rewrite that brought its crate runbook up
+to the four-crate world (#103, ADR 0034).
 
 Standard library only, offline. Unit tests live in
 `.github/scripts/tests/test_check_published_crates.py`.
@@ -36,7 +35,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 # Documents that promise a complete list of the published crates.
-DOCUMENTS = ["SECURITY.md"]
+DOCUMENTS = ["SECURITY.md", "PUBLISHING.md"]
 
 PUBLISH_TRUE = re.compile(r"^\s*publish\s*=\s*true\s*(?:#.*)?$", re.MULTILINE)
 PACKAGE_NAME = re.compile(r"^\[package\](?:(?!^\[).)*?^name\s*=\s*\"([^\"]+)\"", re.MULTILINE | re.DOTALL)
