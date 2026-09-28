@@ -26,8 +26,11 @@ const OBSERVATION: &str = "observation.json";
 
 fn inspect() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_contextgraph-inspect"));
-    // Plain text, so assertions match words rather than ANSI escapes.
-    command.env("NO_COLOR", "1");
+    // Plain text, so assertions match words rather than ANSI escapes. Stdout
+    // is a pipe here, which already turns color off; `NO_COLOR` says so
+    // explicitly, and removing `CLICOLOR_FORCE` keeps a runner that forces
+    // color from overriding either.
+    command.env("NO_COLOR", "1").env_remove("CLICOLOR_FORCE");
     command
 }
 
@@ -152,7 +155,7 @@ fn hash_prints_the_published_record_hash_of_every_fixture() {
 
 #[test]
 fn hash_refuses_a_value_that_is_not_a_record() {
-    let output = run(&["record", "hash", "-"], Some(b"[1, 2, 3]"));
+    let output = run(&["record", "hash", "-"], Some(b"[1, 2, 3]".as_slice()));
     assert_eq!(output.status.code(), Some(2), "{}", describe(&output));
     assert!(output.stdout.is_empty(), "{}", describe(&output));
     assert!(
@@ -194,7 +197,7 @@ fn preimage_reads_standard_input_and_locates_an_edit() {
         .expect("a vector for observation.json");
     let original = std::fs::read(fixtures_dir().join(OBSERVATION)).expect("read observation");
 
-    let output = run(&["record", "preimage", "-"], Some(&original));
+    let output = run(&["record", "preimage", "-"], Some(original.as_slice()));
     assert!(output.status.success(), "{}", describe(&output));
     assert_eq!(output.stdout, jcs.as_bytes());
 

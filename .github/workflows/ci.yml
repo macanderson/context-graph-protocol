@@ -52,7 +52,7 @@ jobs:
       # `attestation` is off by default, so the line above reaches
       # contextgraph_types::attest and the cross-language vectors the SDK
       # suites reconcile against only through feature unification with
-      # contextgraph-conformance's dev-dependency. That is a resolver detail,
+      # contextgraph-conformance's dependency on it. That is a resolver detail,
       # and a guarantee resting on one is not a guarantee: ask for the feature
       # by name, so those constructions are checked whatever the resolver
       # decides and whatever any other crate happens to request.
