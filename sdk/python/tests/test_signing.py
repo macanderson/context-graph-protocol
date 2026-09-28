@@ -153,15 +153,42 @@ class FrameSigningVectors(_NeedsBackend):
             wire["issued_at"],
         )
         self.assertEqual(signed.to_wire(), wire)
-        self.assertEqual(
-            verify_frame_attestation(
-                V["frame_commitment"]["provider_id"],
-                published_frame(),
-                signed,
-                public_key_for(FRAME_SEED),
-            ).verdict,
-            Verdict.VALID,
+        verdict = verify_frame_attestation(
+            V["frame_commitment"]["provider_id"],
+            published_frame(),
+            signed,
+            public_key_for(FRAME_SEED),
         )
+        self.assertEqual(verdict.verdict, Verdict.VALID)
+        self.assertTrue(verdict.binds_content())
+
+    def test_a_digest_less_frame_verifies_as_identity_only(self) -> None:
+        # ADR 0018's verifier half. sign_frame_attestation refuses this frame,
+        # so the non-conformant attester is played by sign_commitment over its
+        # commitment. The signature is genuine; it binds no bytes, and the
+        # verdict has to say so rather than report VALID.
+        provider_id = V["frame_commitment"]["provider_id"]
+        digest_less = AttestableFrame(
+            id=V["frame_commitment"]["frame"]["id"],
+            provenance=published_frame().provenance,
+        )
+        signed = sign_commitment(
+            frame_commitment(provider_id, digest_less),
+            FRAME_SEED,
+            "key-1",
+            "oxagen",
+            "2026-08-27T00:00:00Z",
+        )
+        as_mapping = {"id": digest_less.id, "provenance": list(digest_less.provenance)}
+        for frame in (digest_less, as_mapping):
+            with self.subTest(frame=type(frame).__name__):
+                verdict = verify_frame_attestation(
+                    provider_id, frame, signed, public_key_for(FRAME_SEED)
+                )
+                self.assertEqual(verdict.verdict, Verdict.VALID_IDENTITY_ONLY)
+                self.assertFalse(verdict.is_valid())
+                self.assertTrue(verdict.signature_verifies())
+                self.assertFalse(verdict.binds_content())
 
     def test_a_merkle_root_signs_and_verifies_like_any_commitment(self) -> None:
         root = merkle_root(
@@ -249,6 +276,25 @@ class SigningRefusals(unittest.TestCase):
                 with self.assertRaises(ValueError) as refused:
                     sign_frame_attestation(
                         "repo-graph", frame, FRAME_SEED, "k", "a", "2026-08-27T00:00:00Z"
+                    )
+                self.assertNotIsInstance(refused.exception, SigningUnavailableError)
+                self.assertIn("content_digest", str(refused.exception))
+
+    def test_a_frame_with_a_malformed_content_digest_is_not_signed(self) -> None:
+        # SPEC.md D1: a present digest is sha256:<64 lowercase hex>. Anything
+        # else is a string, not a binding to bytes, and is refused before the
+        # backend is consulted.
+        malformed = ("", "sha256:short", "SHA256:" + "ab" * 32, "sha256:" + "AB" * 32, 42)
+        for digest in malformed:
+            with self.subTest(digest=digest):
+                with self.assertRaises(ValueError) as refused:
+                    sign_frame_attestation(
+                        "repo-graph",
+                        {"id": "retry-policy", "content_digest": digest, "provenance": []},
+                        FRAME_SEED,
+                        "k",
+                        "a",
+                        "2026-08-27T00:00:00Z",
                     )
                 self.assertNotIsInstance(refused.exception, SigningUnavailableError)
                 self.assertIn("content_digest", str(refused.exception))

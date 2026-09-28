@@ -20,6 +20,7 @@ from contextgraph_sdk import _ed25519
 from contextgraph_sdk.attest import (
     ALGORITHM_ED25519,
     AttestableFrame,
+    AttestationVerdict,
     ProvenanceAttestation,
     Verdict,
     digest_string,
@@ -316,6 +317,48 @@ class SignatureVectors(unittest.TestCase):
             ).verdict,
             Verdict.COMMITMENT_MISMATCH,
         )
+
+    def test_only_a_content_binding_verdict_is_valid(self) -> None:
+        # ADR 0018: VALID_IDENTITY_ONLY verifies but binds no bytes, so it is
+        # not valid, while the narrower question still has an answer. The
+        # identity-only verdict itself is produced from a real signature in
+        # test_signing.py, which needs the signing backend to make one.
+        valid = AttestationVerdict(Verdict.VALID)
+        identity_only = AttestationVerdict(Verdict.VALID_IDENTITY_ONLY)
+        bad = AttestationVerdict(Verdict.BAD_SIGNATURE)
+        self.assertEqual(
+            (valid.is_valid(), valid.signature_verifies(), valid.binds_content()),
+            (True, True, True),
+        )
+        self.assertEqual(
+            (
+                identity_only.is_valid(),
+                identity_only.signature_verifies(),
+                identity_only.binds_content(),
+            ),
+            (False, True, False),
+        )
+        self.assertEqual(
+            (bad.is_valid(), bad.signature_verifies(), bad.binds_content()),
+            (False, False, False),
+        )
+
+    def test_a_digest_less_frame_never_borrows_a_content_binding_verdict(
+        self,
+    ) -> None:
+        # Dropping content_digest changes the commitment, so the published
+        # signature no longer matches it: a failing verdict is left exactly as
+        # it is, never downgraded or upgraded by the digest check.
+        spec = V["frame_commitment"]
+        digest_less = AttestableFrame(
+            id=spec["frame"]["id"],
+            provenance=[link(name) for name in spec["frame"]["provenance"]],
+        )
+        verdict = verify_frame_attestation(
+            spec["provider_id"], digest_less, attestation(), public_key()
+        )
+        self.assertEqual(verdict.verdict, Verdict.COMMITMENT_MISMATCH)
+        self.assertFalse(verdict.signature_verifies())
 
     def test_every_failure_is_named(self) -> None:
         commitment = signed_commitment()

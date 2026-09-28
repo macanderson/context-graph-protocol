@@ -231,6 +231,19 @@ class Rfc8785Structure(unittest.TestCase):
         with self.assertRaises(CanonicalizationError):
             canonicalize({1: "a non-string member name"})
 
+    def test_nesting_past_the_stack_is_a_named_refusal(self) -> None:
+        # Deeper than any recursion limit CPython ships with: the caller gets
+        # CanonicalizationError (and record_hash its named kind), never a bare
+        # RecursionError out of a hash of an untrusted record.
+        deep: Any = []
+        for _ in range(10_000):
+            deep = [deep]
+        with self.assertRaises(CanonicalizationError):
+            canonicalize(deep)
+        with self.assertRaises(RecordHashError) as refused:
+            record_hash({"body": deep})
+        self.assertEqual(refused.exception.kind, RecordHashError.NOT_CANONICALIZABLE)
+
 
 class RecordHashVectors(unittest.TestCase):
     def test_every_published_preimage_and_hash_is_reproduced(self) -> None:

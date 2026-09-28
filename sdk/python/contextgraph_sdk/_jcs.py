@@ -77,10 +77,20 @@ def canonicalize(value: Any) -> bytes:
     """The RFC 8785 canonical UTF-8 bytes of a JSON value.
 
     :raises CanonicalizationError: the value holds a non-finite number, a lone
-        surrogate, a non-string member name, or something that is not JSON.
+        surrogate, a non-string member name, or something that is not JSON, or
+        it nests deeper than the interpreter's recursion limit allows.
     """
     out: List[str] = []
-    _write(value, out)
+    try:
+        _write(value, out)
+    except RecursionError as error:
+        # A decoded document can sit just under ``json.loads``'s own depth
+        # limit and still exhaust the stack here, where each object level
+        # costs two frames. A named refusal, not a bare interpreter error, is
+        # what a caller hashing untrusted wire records can act on.
+        raise CanonicalizationError(
+            "the value nests too deeply to canonicalize"
+        ) from error
     try:
         return "".join(out).encode("utf-8")
     except UnicodeEncodeError as error:

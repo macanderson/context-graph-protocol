@@ -221,7 +221,28 @@ class AttestationVerdict:
 
         No other verdict is provisionally acceptable: the point of an
         attestation is that "I could not check it" and "it is good" are never
-        the same answer.
+        the same answer. That includes :data:`Verdict.VALID_IDENTITY_ONLY`,
+        whose signature verifies over a preimage that says nothing about the
+        bytes in hand (ADR 0018).
+        """
+        return self.verdict == Verdict.VALID
+
+    def signature_verifies(self) -> bool:
+        """Whether the signature itself checked out, whatever it covers.
+
+        True for :data:`Verdict.VALID` and :data:`Verdict.VALID_IDENTITY_ONLY`.
+        The question to ask on purpose when a caller wants provider identity
+        and provenance without a claim about content; a separate method rather
+        than a looser :meth:`is_valid` so the choice is legible at the call
+        site. Mirrors the Rust reference's ``signature_verifies``.
+        """
+        return self.verdict in (Verdict.VALID, Verdict.VALID_IDENTITY_ONLY)
+
+    def binds_content(self) -> bool:
+        """Whether the verified commitment binds the frame's content bytes.
+
+        Only :data:`Verdict.VALID` does; a verdict that did not verify at all
+        binds nothing. Mirrors the Rust reference's ``binds_content``.
         """
         return self.verdict == Verdict.VALID
 
@@ -230,6 +251,12 @@ class Verdict:
     """The named outcomes :class:`AttestationVerdict` can carry."""
 
     VALID = "valid"
+    #: The signature verifies, but over a frame that declares no
+    #: ``content_digest``, so it binds the frame's identity and provenance and
+    #: none of its bytes (``SPEC.md`` §6.5.2, ADR 0018).
+    #: :meth:`AttestationVerdict.is_valid` is false for it;
+    #: :meth:`AttestationVerdict.signature_verifies` is true.
+    VALID_IDENTITY_ONLY = "valid_identity_only"
     COMMITMENT_MISMATCH = "commitment_mismatch"
     BAD_SIGNATURE = "bad_signature"
     UNKNOWN_ALGORITHM = "unknown_algorithm"
@@ -528,10 +555,32 @@ def verify_frame_attestation(
     attestation: ProvenanceAttestation,
     public_key: bytes,
 ) -> AttestationVerdict:
-    """Verify a detached attestation over a single frame (``SPEC.md`` §6.5.4)."""
-    return verify_commitment(
+    """Verify a detached attestation over a single frame (``SPEC.md`` §6.5.4).
+
+    A frame that declares no ``content_digest`` was committed to by id and
+    provenance alone, so a signature that checks out over it says nothing
+    about the bytes. That case is reported as
+    :data:`Verdict.VALID_IDENTITY_ONLY` rather than :data:`Verdict.VALID`
+    (ADR 0018), exactly as the Rust reference does; every failing verdict is
+    left as it is, because it is already the more specific answer.
+    """
+    verdict = verify_commitment(
         frame_commitment(provider_id, frame), attestation, public_key
     )
+    if verdict.verdict == Verdict.VALID and _frame_content_digest(frame) is None:
+        return AttestationVerdict(Verdict.VALID_IDENTITY_ONLY)
+    return verdict
+
+
+def _frame_content_digest(frame: FrameLike) -> Any:
+    """A frame's declared ``content_digest``, or ``None`` when it declares none.
+
+    ``Any`` because a mapping frame is decoded JSON and may hold anything;
+    callers decide what a non-string means for them.
+    """
+    if isinstance(frame, AttestableFrame):
+        return frame.content_digest
+    return frame.get("content_digest")
 
 
 # ---------------------------------------------------------------------------
@@ -608,22 +657,27 @@ def sign_frame_attestation(
     of its content, so the provider could re-serve entirely different bytes
     under the same id with the signature still checking out. The reference
     verifier reports such an attestation as identity-only rather than valid;
-    this signer declines to produce one. :func:`sign_commitment` remains for a
-    caller with a reason to sign an arbitrary commitment.
+    this signer declines to produce one. A ``content_digest`` that is present
+    but not ``sha256:<64 lowercase hex>`` is refused too: such a frame already
+    fails ``SPEC.md`` D1, and a signature over it binds a string rather than
+    the bytes it claims to name. :func:`sign_commitment` remains for a caller
+    with a reason to sign an arbitrary commitment.
 
-    :raises ValueError: the frame declares no ``content_digest``, or the seed
-        is not 32 bytes.
+    :raises ValueError: the frame declares no well-formed ``content_digest``,
+        or the seed is not 32 bytes.
     :raises SigningUnavailableError: ``cryptography`` is not installed.
     """
-    if isinstance(frame, AttestableFrame):
-        content_digest: Optional[str] = frame.content_digest
-    else:
-        content_digest = frame.get("content_digest")
+    content_digest = _frame_content_digest(frame)
     if content_digest is None:
         raise ValueError(
             "refusing to sign a frame that declares no content_digest: the "
             "signature would cover its identity but none of its content "
             "(SPEC.md §6.5.2, ADR 0018)"
+        )
+    if not isinstance(content_digest, str) or parse_digest(content_digest) is None:
+        raise ValueError(
+            "refusing to sign a frame whose content_digest is not "
+            f"sha256:<64 lowercase hex> (SPEC.md D1): {content_digest!r}"
         )
     return sign_commitment(
         frame_commitment(provider_id, frame),

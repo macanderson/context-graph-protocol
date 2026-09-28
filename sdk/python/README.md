@@ -112,6 +112,13 @@ if result.verdict != Verdict.VALID:
     print(result)
 ```
 
+A frame that declares no `content_digest` verifies as
+`Verdict.VALID_IDENTITY_ONLY`, not `Verdict.VALID`. Its signature checks out,
+but it covers the frame's identity and provenance and none of its bytes (ADR
+0018). `is_valid()` is false for it. Call `signature_verifies()` when you want
+to accept it on purpose, and `binds_content()` to ask whether the signature
+covers the bytes.
+
 Two things worth knowing:
 
 - **`len(s)` is not a UTF-8 byte count.** The §6.5.1 length prefix is bytes;
@@ -161,7 +168,8 @@ public_key = public_key_for(seed)     # what a verifier needs
 over a result set. `sign_frame_attestation` refuses a frame that declares no
 `content_digest`: `SPEC.md` §6.5.2 requires one on every frame you sign,
 because without it the signature covers the frame's name and none of its
-content (ADR 0018).
+content (ADR 0018). It also refuses a `content_digest` that is not
+`sha256:<64 lowercase hex>` (`SPEC.md` D1).
 
 Without the extra, every signing function raises `SigningUnavailableError`,
 and the message names the extra to install. There is no fallback, so you never

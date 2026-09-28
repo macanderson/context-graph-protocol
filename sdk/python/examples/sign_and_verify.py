@@ -44,7 +44,7 @@ def main() -> int:
     frame = AttestableFrame(
         id="retry-policy",
         content_digest="sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest(),
-        provenance=(Provenance(type="file", uri="docs/retries.md", range="L1-12"),),
+        provenance=(Provenance(type="file", uri="runbooks/retries.md", range="L1-12"),),
     )
     record = {
         "schema_version": "contextgraph/lifecycle/1.0-draft",
