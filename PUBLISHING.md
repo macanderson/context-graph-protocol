@@ -32,7 +32,9 @@ requires for a nested module), `npm-vX.Y.Z` and `pypi-vX.Y.Z`. There is no bare
 
 **The tag comes first, and it names a commit on `main`.** Merge the version
 bump through a pull request, then tag the merge commit. Never publish from a
-commit that has no tag, and never tag a commit that is not on `main`.
+commit that has no tag, and never tag a commit that is not on `main`. (The
+retroactive tags for the releases before this rule, below, are the one
+exception: they record where a past release came from, and start nothing.)
 
 ## Preferred path: the tag-triggered workflow, not a laptop
 
@@ -218,11 +220,23 @@ git push origin contextgraph-v0.1.0 contextgraph-v0.1.1 contextgraph-v0.1.2
 ```
 
 Change the date in the messages to the day the tags are actually made.
-Pushing the tags starts `release.yml` once for each, and `preflight` stops
-each run on purpose: 0.1.0 and 0.1.1 because their commits are not on `main`,
-and all three because their versions are already on crates.io. Nothing is
-published and no approval is requested. Afterwards, `git ls-remote --tags
-origin 'contextgraph-v*'` lists a tag for every version on crates.io.
+
+Pushing the tags starts `release.yml` once for each, and those runs use **the
+workflow file in each tagged commit**, not today's. All three commits predate
+`check-release-tag.py`, so their `preflight` only dry-runs a package, and
+their `publish` job then waits for approval on the `crates-io` environment.
+Nothing can be published either way: crates.io refuses a version it already
+has, so an approved run would fail at its first `cargo publish`. Still, do
+not approve them. Cancel all three:
+
+```bash
+gh run list --workflow release.yml --limit 3 --json databaseId,headBranch \
+  --jq '.[] | select(.headBranch | startswith("contextgraph-v0.1.")) | .databaseId' \
+  | xargs -n1 gh run cancel
+```
+
+Afterwards, `git ls-remote --tags origin 'contextgraph-v*'` lists a tag for
+every version on crates.io.
 
 ## This is a one-way door
 

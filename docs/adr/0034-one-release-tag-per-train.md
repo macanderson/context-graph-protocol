@@ -9,9 +9,9 @@
 
 ## Context
 
-Four crate versions reached crates.io with no git tag naming them:
-`0.1.0`, `0.1.1` and `0.1.2`, all published by hand on 2026-08-01. Only
-`2.0.0` (2026-09-13) has one, `contextgraph-v2.0.0`. The one record of which
+Four crate versions are on crates.io, and three of them reached it with no
+git tag naming them: `0.1.0`, `0.1.1` and `0.1.2`, all published by hand on
+2026-08-01. Only `2.0.0` (2026-09-13) has one, `contextgraph-v2.0.0`. The one record of which
 commit each untagged release came from is the `.cargo_vcs_info.json` that
 `cargo publish` writes into every `.crate` file:
 
@@ -83,10 +83,9 @@ requested (`.github/scripts/check-release-tag.py`):
 2. The tagged commit is an ancestor of `origin/main`.
 3. That version is not already on the crates.io sparse index for any
    publishing crate. A version is published once, so a tag for a live
-   version records history and starts nothing. This is what makes the
-   retroactive tags in §3 safe to push, and it turns crates.io's upload-time
-   rejection into a failure before a human is asked to approve. The check
-   fails closed: an index it cannot read is a failure.
+   version records history and starts nothing. This turns crates.io's
+   upload-time rejection into a failure before a human is asked to approve.
+   The check fails closed: an index it cannot read is a failure.
 
 The publish job then checks out `github.sha`, the commit preflight checked,
 rather than the tag, which could be moved while the job waits for approval.
@@ -116,11 +115,19 @@ commits no branch holds a ref that keeps them.
 | `contextgraph-v0.1.2` | `9ce2a83b8cf8a0bdbd62dfdca8ff93a785948d6d` (its tree is identical to `main`'s `00377ab`) |
 | `contextgraph-v2.0.0` | exists; `be5edef4856d1a3387f76a7f7f64de1f691472cc`, as the `.crate` records |
 
-Rule 2 of §2 does not apply to these tags, because they do not start a
-release. It applies to a tag that is meant to publish. Pushing one of them
-still starts `release.yml`, and preflight stops each one: 0.1.0 and 0.1.1 at
-the `main` check, and all three at the registry check. That is the intended
-outcome, not an error to fix.
+The `main` rule of §2 does not apply to these tags, because they do not start
+a release. It applies to a tag that is meant to publish.
+
+Pushing one of them still starts a `release.yml` run, but not the guarded
+one. A tag push runs the workflow file *in the tagged commit*, and all three
+commits predate `check-release-tag.py`: their `release.yml` only dry-runs a
+package in `preflight`, then its `publish` job waits on the `crates-io`
+environment's approval. Nothing can be published either way. If someone
+approved, the first `cargo publish` would fail, because crates.io refuses a
+version it already has. The maintainer cancels those three runs and does
+not approve them. `PUBLISHING.md` gives the commands. No tag cut from here
+on has this problem, because every commit on `main` from this ADR forward
+carries the guarded workflow.
 
 Creating and pushing the tags is a maintainer action. The exact commands are
 in `PUBLISHING.md` ("Retroactive tags for the releases before this rule").

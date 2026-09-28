@@ -14,11 +14,10 @@ checked rather than re-deriving it from the tag name.
 
 ## The failure this exists to prevent (#103, ADR 0034)
 
-Every crate version on crates.io was published with no git tag naming it.
-`contextgraph-types` 0.1.0, 0.1.1 and 0.1.2 all went up by hand, and the only
-record of which commit each came from is the `.cargo_vcs_info.json` that
-`cargo publish` writes into the `.crate` tarball. Two of those three commits
-are on no branch. Meanwhile three tag conventions were in play (`ocp-v*`, a
+Every crate version before 2.0.0 was published with no git tag naming it.
+0.1.0, 0.1.1 and 0.1.2 all went up by hand, and the only record of which
+commit each came from is the `.cargo_vcs_info.json` that `cargo publish`
+writes into the `.crate` tarball. None of those three commits is on `main`. Meanwhile three tag conventions were in play (`ocp-v*`, a
 `v0.0.2` that `MIGRATION.md` named and nobody cut, and the `contextgraph-v*`
 this workflow triggers on), so nothing could say which tag a release should
 have had.
@@ -42,10 +41,12 @@ on a commit that went through review on `main`.
 3. **The version is not already on crates.io.** crates.io rejects a second
    upload of a version, but only at the upload, after a human has approved
    the `crates-io` environment. Checking the sparse index first turns that
-   into a preflight failure. It also makes the retroactive tags ADR 0034
-   calls for safe to push: each one starts this workflow, and each one stops
-   here, because its version is already live. `--skip-registry` turns this
-   rule off, for the self-tests; the workflow never passes it.
+   into a preflight failure, so a tag re-pushed for a version already live
+   asks nobody to approve anything. (The retroactive tags ADR 0034 cuts for
+   0.1.0 to 0.1.2 never reach this script: a tag push runs the workflow file
+   in the tagged commit, and those commits predate it. PUBLISHING.md says
+   what to do with those runs.) `--skip-registry` turns this rule off, for
+   the self-tests; the workflow never passes it.
 
 The registry rule fails closed. An index that cannot be read proves nothing,
 so a network error is a failure, not a pass. Re-run the job.

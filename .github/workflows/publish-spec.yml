@@ -80,9 +80,10 @@ jobs:
     name: publish to contextgraphprotocol.org
     # Only from `main`. `workflow_dispatch` lets anyone with write access run
     # this workflow from any branch, and the `production` environment below
-    # does not stop that on its own (#202). This condition does, whatever the
-    # environment's settings say: a dispatch from another branch validates and
-    # then skips this job. See the note at `role-to-assume` for its limit.
+    # does not stop that on its own (#202). This condition stops it for any
+    # branch that carries this file as reviewed: a dispatch from such a branch
+    # validates and then skips this job. See the note at `role-to-assume` for
+    # the branch it cannot stop.
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: validate
     runs-on: ubuntu-latest

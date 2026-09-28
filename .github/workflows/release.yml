@@ -64,12 +64,17 @@ jobs:
           # The guard below asks whether the tagged commit is on `main`, which
           # needs `main`'s history, not just the tagged commit.
           fetch-depth: 0
+      # The guard below needs Python 3.11 or later (`tomllib`). Pinned here
+      # rather than trusting whatever the runner image ships, as ci.yml does.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
       # An untagged or mis-tagged publish is the failure #103 records: every
       # crate version then on crates.io went up with no tag naming it. This
       # step makes that unrepeatable rather than merely fixed. The tag must be
       # `contextgraph-v` + the publishing crates' version, the tagged commit
       # must be on `main`, and the version must not be on crates.io yet, so a
-      # retroactive tag for an old release stops here too. See ADR 0034.
+      # tag re-pushed for a version already live stops here too. See ADR 0034.
       - name: The tag names this version, on main, not yet published
         id: tag
         env:

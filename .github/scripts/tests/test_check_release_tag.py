@@ -176,8 +176,9 @@ class VersionIsNotAlreadyPublished(Workspace):
         self.assertEqual(code, 0, out)
 
     def test_a_version_already_live_is_refused(self) -> None:
-        # The retroactive-tag case: pushing `contextgraph-v2.0.0` after 2.0.0
-        # shipped must stop in preflight, not wait for an approval click.
+        # A tag re-pushed for a live version: pushing `contextgraph-v2.0.0`
+        # again after 2.0.0 shipped must stop in preflight, not wait for an
+        # approval click that can only end in crates.io's rejection.
         fetch = lambda url: (200, index_body("0.1.2", "2.0.0"))  # noqa: E731
         code, out = self.run_guard("contextgraph-v2.0.0", self.release_commit, fetch=fetch, registry=True)
         self.assertEqual(code, 1, out)
