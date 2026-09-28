@@ -119,6 +119,69 @@ Sample colored output for a fully conformant provider:
   CONFORMANT — 8 passed, 6 skipped
 ```
 
+### Checking a record and its attestation
+
+A Context Exchange Provider has a second thing to check, one that needs no
+running provider: the records it appends. `contextgraph-inspect record` computes
+a record's `record_hash` (profile `LH1`), prints the canonical bytes that hash
+is taken over, checks a stored hash, and verifies a detached record attestation
+(profile `LC3`, [ADR 0017](./adr/0017-record-hash-and-record-attestation.md)).
+Every verb calls the same `contextgraph_types::record_attest` functions the
+reference suite does, so its answer is the reference answer.
+
+```bash
+contextgraph-inspect record hash record.json       # print the record_hash
+contextgraph-inspect record preimage record.json   # print the canonical RFC 8785 (JCS) bytes
+contextgraph-inspect record verify record.json     # is the stored record_hash current?
+contextgraph-inspect record attest attestation.json --record record.json --key <public key hex>
+```
+
+Any file argument may be `-` to read standard input.
+
+`preimage` is the one to reach for when your implementation and the reference
+disagree on a digest. The digest says only that two canonicalizations differ;
+the preimage says where. It prints the exact bytes with no trailing newline, so
+`contextgraph-inspect record preimage record.json | sha256sum` reproduces the
+hex of the `record_hash`, and a byte diff against your own canonicalization
+locates the member that sorts or prints differently:
+
+```bash
+diff <(contextgraph-inspect record preimage record.json) <(my-cep canonicalize record.json)
+```
+
+`verify` prints `current` with the hash, or `stale` with both the stored and
+the recomputed hash, or `unhashed` when the record carries no `record_hash` at
+all.
+
+`attest` recomputes the record's hash from its content rather than trusting the
+stored member, so a record edited after it was signed reports a commitment
+mismatch rather than passing. An auditor who holds the hash but not the record
+passes `--record-hash sha256:<hex>` in place of `--record`. `--key` is the
+attester's Ed25519 public key, 32 bytes as 64 hex digits. The verdict names the
+failure: commitment mismatch, bad signature, unknown algorithm, or a malformed
+key, signature, or `signed_record_hash`.
+
+The fixtures in [`tests/fixtures/`](../tests/fixtures/) make a worked example.
+`record-attestation.json` signs `observation.json` under the published test key
+in `record-attestation-key.json`:
+
+```bash
+contextgraph-inspect record attest tests/fixtures/record-attestation.json \
+  --record tests/fixtures/observation.json \
+  --key 495b4a0a4a16c5444d8626a7ae0bc6eca613676b51fb947238cb8238baa9fde5
+```
+
+Exit statuses are stable, for scripts:
+
+| status | meaning |
+|---|---|
+| `0` | positive answer: the hash or preimage printed, the stored hash is current, or the attestation is valid |
+| `1` | negative answer: the stored hash is stale or absent, or the attestation does not verify |
+| `2` | no answer: the input could not be read, is not JSON, is not a record, or the arguments are wrong |
+
+`contextgraph-conformance/tests/inspect_record.rs` runs each verb against the
+fixtures in `tests/fixtures/`.
+
 ## Option B: as a library, from your own test suite
 
 `run_conformance` is a plain async function that returns a typed

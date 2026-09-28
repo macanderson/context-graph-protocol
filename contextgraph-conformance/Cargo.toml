@@ -28,8 +28,24 @@ dist = false
 # consumer: the `attestation` check verifies real Ed25519 signatures over real
 # SHA-256 commitments, and a conformance suite that could not run the verifier
 # would be asserting §6.5 rather than checking it.
+#
+# `record-attestation` is ON for the same reason at the record layer:
+# `contextgraph-inspect record hash|preimage|verify|attest` (issue #121)
+# computes `record_hash`, prints its RFC 8785 preimage, and verifies record
+# attestations through the library, and a CEP author reaches for that binary
+# exactly when a digest disagrees. It implies `attestation`, which stays listed
+# because the frame-layer check needs it whether or not the record verbs exist.
+#
+# The integration suites use this same dependency: `lifecycle_profile_examples`
+# exercises record hashing and record attestation (profile LF3), and
+# `attestation_wire` recomputes every commitment and checks every signature on
+# the attestations shipped in `examples/`. Both check the *library's*
+# constructions rather than a private copy of either rule, so a fixture and
+# `contextgraph_types` can never describe two different hashes. (Until #121
+# these features were dev-only; the binary needing them made that split moot.)
 contextgraph-types = { path = "../contextgraph-types", version = ">=2.0.0", features = [
   "attestation",
+  "record-attestation",
 ] }
 contextgraph-host = { path = "../contextgraph-host", version = ">=2.0.0" }
 serde.workspace = true
@@ -55,22 +71,6 @@ path = "src/bin/contextgraph-example-docs.rs"
 
 [dev-dependencies]
 serde_json_canonicalizer.workspace = true
-# Both suites check the *library's* constructions rather than a private copy of
-# either rule, so a fixture and `contextgraph_types` can never describe two
-# different hashes.
-#
-# `record-attestation` is for the lifecycle-profile suite, which exercises
-# record hashing and record attestation (profile LF3).
-#
-# `attestation` is for `tests/attestation_wire.rs`, which recomputes every
-# commitment and checks every signature on the attestations shipped in
-# `examples/` — verified, not asserted.
-#
-# Both are DEV features, so the published crate's ordinary dependency set is
-# unchanged and contextgraph-types keeps its off-by-default cryptography, while
-# `cargo test` still compiles the §6.5 constructions that nothing in CI reached
-# before.
-contextgraph-types = { path = "../contextgraph-types", version = ">=2.0.0", features = [
-  "attestation",
-  "record-attestation",
-] }
+# contextgraph-types is not repeated here: the ordinary dependency above already
+# enables `attestation` and `record-attestation`, which is everything the
+# integration suites need.
