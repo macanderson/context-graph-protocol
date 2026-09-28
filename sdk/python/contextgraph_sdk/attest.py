@@ -29,15 +29,29 @@ The SDK promises zero dependencies, and Python's standard library ships SHA-256
 but no Ed25519. Verification therefore uses :mod:`contextgraph_sdk._ed25519`, a
 self-contained RFC 8032 verifier in this package — see that module's header for
 why a verifier (and only a verifier) is a defensible thing to carry.
+
+Signing is optional
+-------------------
+
+:func:`sign_commitment`, :func:`sign_frame_attestation` and
+:func:`public_key_for` mirror the Rust reference's in-process signers, and they
+need the optional ``cryptography`` backend (``pip install
+"contextgraph-sdk[signing]"``). Without it they raise
+:class:`~contextgraph_sdk._signing.SigningUnavailableError` — never a different
+answer. :mod:`contextgraph_sdk._signing` says why the SDK does not sign in pure
+Python, and what holding a seed in memory costs; a provider whose key lives in
+an HSM or KMS signs :func:`frame_commitment`'s 32 bytes with that backend
+instead and never calls these.
 """
 
 from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping, Optional, Sequence, Union
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Union
 
-from . import _ed25519
+from . import _ed25519, _signing
+from ._signing import SigningUnavailableError
 from .types import Provenance
 
 __all__ = [
@@ -46,20 +60,27 @@ __all__ = [
     "AttestationVerdict",
     "InclusionProof",
     "InclusionStep",
+    "MAX_INCLUSION_PATH_STEPS",
     "LinkLike",
     "FrameLike",
     "ProvenanceAttestation",
+    "SigningUnavailableError",
     "Verdict",
     "digest_string",
     "encode_provenance_link",
     "frame_commitment",
+    "inclusion_path_sides",
     "inclusion_proof",
     "merkle_root",
     "parse_digest",
     "provenance_chain_head",
+    "public_key_for",
     "root_from_proof",
+    "sign_commitment",
+    "sign_frame_attestation",
     "verify_commitment",
     "verify_frame_attestation",
+    "verify_frame_inclusion",
 ]
 
 #: The signature algorithm this revision defines (``SPEC.md`` §6.5).
@@ -126,6 +147,18 @@ class ProvenanceAttestation:
             issued_at=obj["issued_at"],
         )
 
+    def to_wire(self) -> Dict[str, str]:
+        """The JSON object this attestation travels as — :meth:`from_wire`'s
+        inverse."""
+        return {
+            "signed_commitment": self.signed_commitment,
+            "key_id": self.key_id,
+            "algorithm": self.algorithm,
+            "attester_id": self.attester_id,
+            "signature": self.signature,
+            "issued_at": self.issued_at,
+        }
+
     def uses_known_algorithm(self) -> bool:
         """Whether this names a scheme this revision defines."""
         return self.algorithm == ALGORITHM_ED25519
@@ -166,6 +199,32 @@ class InclusionProof:
     #: Sibling hashes from the leaf upward.
     path: Sequence[InclusionStep]
 
+    def is_well_shaped(self) -> bool:
+        """Whether this proof has exactly the shape RFC 6962 gives its
+        ``(leaf_index, leaf_count)`` (``SPEC.md`` §6.5.3, ADR 0031).
+
+        The path must be exactly as long as the one
+        :func:`inclusion_path_sides` computes, with every step's
+        ``sibling_is_left`` equal to it. Mirrors
+        ``contextgraph_types::InclusionProof::is_well_shaped``.
+
+        This is what makes ``leaf_count`` mean something. Without it a genuine
+        path could be presented under a false ``leaf_index`` or ``leaf_count``
+        and still recompute the signed root, because the walk never reads
+        either field. The check hashes nothing and is bounded: a path longer
+        than :data:`MAX_INCLUSION_PATH_STEPS` is refused on its length before
+        the shape is computed.
+        """
+        path = self.path
+        if len(path) > MAX_INCLUSION_PATH_STEPS:
+            return False
+        sides = inclusion_path_sides(self.leaf_index, self.leaf_count)
+        if sides is None or len(sides) != len(path):
+            return False
+        return all(
+            step.sibling_is_left is left for left, step in zip(sides, path)
+        )
+
 
 @dataclass(frozen=True)
 class AttestationVerdict:
@@ -191,7 +250,28 @@ class AttestationVerdict:
 
         No other verdict is provisionally acceptable: the point of an
         attestation is that "I could not check it" and "it is good" are never
-        the same answer.
+        the same answer. That includes :data:`Verdict.VALID_IDENTITY_ONLY`,
+        whose signature verifies over a preimage that says nothing about the
+        bytes in hand (ADR 0018).
+        """
+        return self.verdict == Verdict.VALID
+
+    def signature_verifies(self) -> bool:
+        """Whether the signature itself checked out, whatever it covers.
+
+        True for :data:`Verdict.VALID` and :data:`Verdict.VALID_IDENTITY_ONLY`.
+        The question to ask on purpose when a caller wants provider identity
+        and provenance without a claim about content; a separate method rather
+        than a looser :meth:`is_valid` so the choice is legible at the call
+        site. Mirrors the Rust reference's ``signature_verifies``.
+        """
+        return self.verdict in (Verdict.VALID, Verdict.VALID_IDENTITY_ONLY)
+
+    def binds_content(self) -> bool:
+        """Whether the verified commitment binds the frame's content bytes.
+
+        Only :data:`Verdict.VALID` does; a verdict that did not verify at all
+        binds nothing. Mirrors the Rust reference's ``binds_content``.
         """
         return self.verdict == Verdict.VALID
 
@@ -200,6 +280,12 @@ class Verdict:
     """The named outcomes :class:`AttestationVerdict` can carry."""
 
     VALID = "valid"
+    #: The signature verifies, but over a frame that declares no
+    #: ``content_digest``, so it binds the frame's identity and provenance and
+    #: none of its bytes (``SPEC.md`` §6.5.2, ADR 0018).
+    #: :meth:`AttestationVerdict.is_valid` is false for it;
+    #: :meth:`AttestationVerdict.signature_verifies` is true.
+    VALID_IDENTITY_ONLY = "valid_identity_only"
     COMMITMENT_MISMATCH = "commitment_mismatch"
     BAD_SIGNATURE = "bad_signature"
     UNKNOWN_ALGORITHM = "unknown_algorithm"
@@ -365,11 +451,10 @@ def _node_hash(left: bytes, right: bytes) -> bytes:
 
 
 def _split_point(n: int) -> int:
-    """The largest power of two strictly less than ``n`` (RFC 6962's split)."""
-    k = 1
-    while k * 2 < n:
-        k *= 2
-    return k
+    """The largest power of two strictly less than ``n`` (RFC 6962's split),
+    for ``n >= 2``. Bit arithmetic rather than a doubling loop, so its cost
+    does not grow with a provider-supplied ``leaf_count``."""
+    return 1 << ((n - 1).bit_length() - 1)
 
 
 def merkle_root(commitments: Sequence[bytes]) -> bytes:
@@ -426,14 +511,93 @@ def _collect_path(
         )
 
 
+#: The longest inclusion path a verifier walks (``SPEC.md`` §6.5.3).
+#:
+#: Matches ``contextgraph_types::MAX_INCLUSION_PATH_STEPS``: 64 steps covers
+#: any tree a 64-bit ``leaf_count`` can describe. The cap is about work, not
+#: correctness — each step costs a hash and the path arrives from the provider.
+MAX_INCLUSION_PATH_STEPS = 64
+
+#: The largest ``leaf_count`` a proof may state. The Rust reference carries it
+#: as a ``usize``; a Python ``int`` is unbounded, so the bound is explicit here
+#: to keep the shape walk at most :data:`MAX_INCLUSION_PATH_STEPS` iterations
+#: and to refuse exactly what the reference cannot represent.
+_MAX_LEAF_COUNT = (1 << 64) - 1
+
+
+def _is_proof_int(value: object) -> bool:
+    """A proof index or count: a non-negative ``int`` a ``u64`` can hold.
+
+    ``bool`` is an ``int`` subclass in Python and is refused, as serde refuses
+    ``true`` for a ``usize``.
+    """
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and 0 <= value <= _MAX_LEAF_COUNT
+    )
+
+
+def inclusion_path_sides(leaf_index: int, leaf_count: int) -> Optional[List[bool]]:
+    """The RFC 6962 inclusion-path shape for leaf ``leaf_index`` of a tree of
+    ``leaf_count`` leaves (``SPEC.md`` §6.5.3).
+
+    One entry per step, **leaf upward**, each ``True`` when that step's
+    sibling is the left operand — exactly the ``sibling_is_left`` sequence
+    :func:`inclusion_proof` emits. Mirrors
+    ``contextgraph_types::inclusion_path_sides``.
+
+    ``None`` when ``leaf_index >= leaf_count`` (including an empty tree, which
+    has no leaves to prove), when either is negative or not an ``int``, or when
+    ``leaf_count`` exceeds what a 64-bit count can hold. The walk descends the
+    tree's split points from the root, so it takes at most 64 steps, and it
+    hashes nothing.
+
+    >>> inclusion_path_sides(0, 1)
+    []
+    >>> inclusion_path_sides(3, 7)
+    [True, True, False]
+    >>> inclusion_path_sides(6, 7)
+    [True, True]
+    >>> inclusion_path_sides(7, 7) is None
+    True
+    """
+    if not (_is_proof_int(leaf_index) and _is_proof_int(leaf_count)):
+        return None
+    if leaf_index >= leaf_count:
+        return None
+    sides: List[bool] = []
+    index, count = leaf_index, leaf_count
+    while count > 1:
+        split = _split_point(count)
+        if index < split:
+            # In the left subtree: the sibling is the right one.
+            sides.append(False)
+            count = split
+        else:
+            sides.append(True)
+            index -= split
+            count -= split
+    # Collected root-downward; a proof lists its steps leaf-upward.
+    sides.reverse()
+    return sides
+
+
 def root_from_proof(commitment: bytes, proof: InclusionProof) -> Optional[bytes]:
     """Recompute a Merkle root from a leaf commitment and its proof.
 
     The whole offline story: an auditor holding one frame, its proof and a
-    signed root needs nothing else. ``None`` if any sibling is malformed or the
-    index does not sit inside the stated leaf count.
+    signed root needs nothing else.
+
+    ``None`` if any sibling is malformed, or if the proof is not
+    :meth:`well-shaped <InclusionProof.is_well_shaped>` for the tree it
+    states: an index outside ``leaf_count``, or a path whose length or sides
+    are not the ones RFC 6962 gives that ``(leaf_index, leaf_count)``. That
+    check runs first and hashes nothing, and it is what makes ``leaf_count``
+    mean something — a verifier that ignored it could be shown a proof from a
+    differently-shaped tree (``SPEC.md`` §6.5.3, ADR 0031).
     """
-    if proof.leaf_index >= proof.leaf_count:
+    if not proof.is_well_shaped():
         return None
     acc = _leaf_hash(commitment)
     for step in proof.path:
@@ -498,7 +662,178 @@ def verify_frame_attestation(
     attestation: ProvenanceAttestation,
     public_key: bytes,
 ) -> AttestationVerdict:
-    """Verify a detached attestation over a single frame (``SPEC.md`` §6.5.4)."""
-    return verify_commitment(
+    """Verify a detached attestation over a single frame (``SPEC.md`` §6.5.4).
+
+    A frame that declares no ``content_digest`` was committed to by id and
+    provenance alone, so a signature that checks out over it says nothing
+    about the bytes. That case is reported as
+    :data:`Verdict.VALID_IDENTITY_ONLY` rather than :data:`Verdict.VALID`
+    (ADR 0018), exactly as the Rust reference does; every failing verdict is
+    left as it is, because it is already the more specific answer.
+    """
+    verdict = verify_commitment(
         frame_commitment(provider_id, frame), attestation, public_key
+    )
+    if verdict.verdict == Verdict.VALID and _frame_content_digest(frame) is None:
+        return AttestationVerdict(Verdict.VALID_IDENTITY_ONLY)
+    return verdict
+
+
+def verify_frame_inclusion(
+    provider_id: str,
+    frame: FrameLike,
+    proof: InclusionProof,
+    result_attestation: ProvenanceAttestation,
+    public_key: bytes,
+) -> AttestationVerdict:
+    """Verify that a frame was a leaf of a signed result-set root
+    (``SPEC.md`` §6.5.3, F13). Mirrors
+    ``contextgraph_types::attest::verify_frame_inclusion``.
+
+    The other half of §6.5: a provider that signs one Merkle root and ships a
+    per-frame :class:`InclusionProof` has attested every frame with a single
+    signature. This recomputes the root from the frame's own
+    :func:`frame_commitment` and its proof, then checks ``result_attestation``
+    over that root. The content-binding rule is
+    :func:`verify_frame_attestation`'s (ADR 0018): the leaf is a frame
+    commitment, so a frame with no ``content_digest`` is
+    :data:`Verdict.VALID_IDENTITY_ONLY` however many hashes sit above it.
+
+    A proof that is not :meth:`well-shaped <InclusionProof.is_well_shaped>` —
+    a path longer than :data:`MAX_INCLUSION_PATH_STEPS`, a leaf index outside
+    the stated tree, or a path whose length or sides disagree with its
+    ``(leaf_index, leaf_count)`` — or one with a malformed sibling is
+    :data:`Verdict.MALFORMED_COMMITMENT`: there is no root to compare against.
+    The length and shape are decided before anything is hashed, the frame
+    commitment included (ADR 0031).
+
+    A host checking an answer as it arrived also compares ``proof.leaf_count``
+    with the number of frames the answer carries (``SPEC.md`` §6.5.3): the
+    shape cannot tell every tree size apart, and that comparison needs the
+    whole answer, which this function never sees.
+    """
+    if not proof.is_well_shaped():
+        return AttestationVerdict(Verdict.MALFORMED_COMMITMENT)
+    root = root_from_proof(frame_commitment(provider_id, frame), proof)
+    if root is None:
+        return AttestationVerdict(Verdict.MALFORMED_COMMITMENT)
+    verdict = verify_commitment(root, result_attestation, public_key)
+    if verdict.verdict == Verdict.VALID and _frame_content_digest(frame) is None:
+        return AttestationVerdict(Verdict.VALID_IDENTITY_ONLY)
+    return verdict
+
+
+def _frame_content_digest(frame: FrameLike) -> Any:
+    """A frame's declared ``content_digest``, or ``None`` when it declares none.
+
+    ``Any`` because a mapping frame is decoded JSON and may hold anything;
+    callers decide what a non-string means for them.
+    """
+    if isinstance(frame, AttestableFrame):
+        return frame.content_digest
+    return frame.get("content_digest")
+
+
+# ---------------------------------------------------------------------------
+# Signing — optional, needs the ``cryptography`` backend (``[signing]`` extra)
+# ---------------------------------------------------------------------------
+
+
+def public_key_for(signing_key_seed: bytes) -> bytes:
+    """The raw 32-byte public key matching a signing seed — the form
+    :func:`verify_frame_attestation` accepts.
+
+    Needs the optional backend: deriving a public key multiplies by the secret
+    scalar, so it is signing's risk and goes where signing goes.
+
+    :raises SigningUnavailableError: ``cryptography`` is not installed.
+    :raises ValueError: the seed is not 32 bytes.
+    """
+    return _signing.public_key(signing_key_seed)
+
+
+def sign_commitment(
+    commitment: bytes,
+    signing_key_seed: bytes,
+    key_id: str,
+    attester_id: str,
+    issued_at: str,
+) -> ProvenanceAttestation:
+    """Sign an arbitrary commitment (a frame commitment or a Merkle root)
+    in-process, for providers content to hold key material in memory.
+
+    Mirrors ``contextgraph_types::attest::sign_commitment``: Ed25519 over the
+    commitment's 32 raw bytes, the signature rendered as lowercase hex. Ed25519
+    is deterministic, so the same seed and commitment always produce the same
+    attestation — which is how ``tests/test_signing.py`` pins this against the
+    published vector byte for byte.
+
+    A provider whose key lives in an HSM or KMS does not call this: it signs
+    the same 32 bytes with its own backend and builds the
+    :class:`ProvenanceAttestation` itself. The protocol specifies the preimage,
+    never the custody of the key.
+
+    :raises SigningUnavailableError: ``cryptography`` is not installed.
+    :raises ValueError: the commitment or the seed is not 32 bytes.
+    """
+    if len(commitment) != 32:
+        raise ValueError(
+            f"a commitment is 32 raw bytes, got {len(commitment)}; pass "
+            "frame_commitment(...) or merkle_root(...), not a digest string"
+        )
+    signature = _signing.sign(signing_key_seed, bytes(commitment))
+    return ProvenanceAttestation(
+        signed_commitment=digest_string(bytes(commitment)),
+        key_id=key_id,
+        algorithm=ALGORITHM_ED25519,
+        attester_id=attester_id,
+        signature=signature.hex(),
+        issued_at=issued_at,
+    )
+
+
+def sign_frame_attestation(
+    provider_id: str,
+    frame: FrameLike,
+    signing_key_seed: bytes,
+    key_id: str,
+    attester_id: str,
+    issued_at: str,
+) -> ProvenanceAttestation:
+    """Sign one frame's :func:`frame_commitment` in-process.
+
+    **Refuses a frame that declares no ``content_digest``.** ``SPEC.md`` §6.5.2
+    requires an attester to populate it on any frame it signs (ADR 0018): a
+    digest-less commitment binds the frame's identity and provenance but none
+    of its content, so the provider could re-serve entirely different bytes
+    under the same id with the signature still checking out. The reference
+    verifier reports such an attestation as identity-only rather than valid;
+    this signer declines to produce one. A ``content_digest`` that is present
+    but not ``sha256:<64 lowercase hex>`` is refused too: such a frame already
+    fails ``SPEC.md`` D1, and a signature over it binds a string rather than
+    the bytes it claims to name. :func:`sign_commitment` remains for a caller
+    with a reason to sign an arbitrary commitment.
+
+    :raises ValueError: the frame declares no well-formed ``content_digest``,
+        or the seed is not 32 bytes.
+    :raises SigningUnavailableError: ``cryptography`` is not installed.
+    """
+    content_digest = _frame_content_digest(frame)
+    if content_digest is None:
+        raise ValueError(
+            "refusing to sign a frame that declares no content_digest: the "
+            "signature would cover its identity but none of its content "
+            "(SPEC.md §6.5.2, ADR 0018)"
+        )
+    if not isinstance(content_digest, str) or parse_digest(content_digest) is None:
+        raise ValueError(
+            "refusing to sign a frame whose content_digest is not "
+            f"sha256:<64 lowercase hex> (SPEC.md D1): {content_digest!r}"
+        )
+    return sign_commitment(
+        frame_commitment(provider_id, frame),
+        signing_key_seed,
+        key_id,
+        attester_id,
+        issued_at,
     )

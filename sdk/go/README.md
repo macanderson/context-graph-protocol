@@ -143,11 +143,6 @@ if !result.IsValid() {
 }
 ```
 
-Signing is not here. The protocol specifies the preimage, never the custody of
-the key: a provider computes `attest.FrameCommitment(...)`, signs those 32
-bytes with whatever backend holds its key, and assembles the attestation
-itself.
-
 Two things worth knowing:
 
 - **`attest.Link` is not `contextgraph.Provenance`.** `Link` is the encoding's
@@ -171,15 +166,123 @@ Two things worth knowing:
 - **Go's `crypto/ed25519` accepts a small-order public key.** §6.5.4 asks for a
   strict verifier, so `VerifyCommitment` declines those keys — and any key
   whose `y` is not reduced — before the standard library sees them.
+- **A frame with no `content_digest` verifies as `valid_identity_only`.** Its
+  commitment binds the frame's identity and provenance but not its content, so
+  the signature would still check out after the content was swapped (F15, ADR
+  0018). `IsValid()` is false for it. Call `SignatureVerifies()` when you want
+  provider identity without a claim about content, and say so in your code.
+  `attest.VerifyFrameInclusion` applies the same rule to a frame attested
+  through a signed result-set root, and refuses an inclusion path longer than
+  `attest.MaxInclusionPathSteps` (64) before hashing any of it.
+- **An inclusion proof must have the shape its `leaf_count` gives it.** RFC
+  6962 fixes the path for leaf *i* of *n*: its length and every step's side.
+  `attest.RootFromProof` and `attest.VerifyFrameInclusion` refuse a proof that
+  is not `IsWellShaped()` before any hashing, so a genuine path presented under
+  a false `leaf_index` or `leaf_count` is `malformed_commitment` (§6.5.3, ADR
+  0031). `attest.InclusionPathSides(i, n)` returns the expected shape.
+
+## Sign a provenance attestation
+
+The protocol specifies the preimage and never the custody of the key, so every
+signing function takes a `crypto.Signer` — the interface `ed25519.PrivateKey`
+implements, and the one KMS clients, PKCS#11 wrappers and `ssh-agent` bindings
+implement too. One call serves both kinds of provider:
+
+```go
+// In-process: a key derived from a 32-byte seed.
+key, err := attest.PrivateKeyFromSeed(seed)
+attestation, err := attest.SignFrameAttestation("repo-graph", frame, key,
+    "key-2026-09", "acme", "2026-09-28T00:00:00Z")
+
+// Out of process: anything that implements crypto.Signer with an Ed25519 key.
+rootAttestation, err := attest.SignCommitment(attest.MerkleRoot(commitments), kmsSigner,
+    "kms-key-2026-09", "acme", "2026-09-28T00:00:00Z")
+```
+
+`attest.PublicKeyFor(seed)` gives the matching public key in the raw form
+the verifiers take. Before an attestation leaves the process, the signer's
+public key is checked against the same strictness rules a verifier applies, and
+the signature is verified under it — so a faulty backend, or one that hashed
+the message first, is an error here rather than a `bad_signature` at a
+consumer. `SignFrameAttestation` refuses a frame with no `ContentDigest`: its
+commitment binds identity and provenance but not content, so the signature
+would outlive a change to the frame's content (§6.5.2, ADR 0018). It refuses a
+`ContentDigest` that is not `sha256:<64 lowercase hex>` (§D1) for the same
+reason, with `ErrMalformedContentDigest`.
+
+Signing is pinned to the published vector byte for byte. Ed25519 is
+deterministic, and `tests/vectors/attestation-vectors.json` publishes the seed,
+so the test signs the published commitment and compares the result with the
+published signature.
+
+### Key custody
+
+`PrivateKeyFromSeed` puts a long-lived signing key in your application's
+memory. Know what that costs before you choose it:
+
+- **Anything that can read the process can sign as you.** A core dump, a heap
+  profile, a debugger attached in production, or a memory-disclosure bug hands
+  over the key, and every attestation it signs afterwards is indistinguishable
+  from yours until the key is rotated and consumers stop trusting its `key_id`.
+- **Zeroing it afterwards is not a reliable mitigation.** You can overwrite
+  the slice you hold, but copies made along the way — the seed you read, a
+  buffer a library allocated, a stack the runtime moved — are not yours to
+  reach, and Go does not promise to clear them.
+- **The seed is the key.** Wherever the seed is stored — an environment
+  variable, a config file, a secret mount — has the same exposure as the key.
+
+That is an acceptable trade for tests, for a local provider signing its own
+index on a developer machine, and for a short-lived key whose rotation you
+automate. For an attestation anyone else will rely on, keep the key in a KMS or
+an HSM and pass its `crypto.Signer`: the process then holds only a handle, a
+compromise can sign only while it lasts, and the backend's audit log records
+every signature. Name each key with a fresh `key_id` and never reuse one after
+rotation (§6.5).
+
+## Content-address and attest a lifecycle record
+
+A Context Exchange Provider identifies each record by its `record_hash`:
+SHA-256 over the RFC 8785 (JCS) canonical form of the record with its own
+top-level `record_hash` member removed (profile `LH1`, ADR 0017). Package
+`contextgraph/jcs` is the canonicalizer — ECMAScript number formatting, UTF-16
+member ordering, and a strict parser that refuses the lone surrogates,
+duplicated members and invalid UTF-8 that `encoding/json` would silently
+repair — and `attest` builds the record layer on it:
+
+```go
+hash, err := attest.RecordHash(recordJSON)            // "sha256:…"
+preimage, err := attest.RecordHashPreimage(recordJSON) // the exact bytes hashed
+
+attestation, err := attest.SignRecord(recordJSON, key, "key-1", "acme", issuedAt)
+result, err := attest.VerifyRecordAttestation(recordJSON, attestation, publicKey)
+```
+
+The record functions take the record's JSON **text**. Hashing from the bytes
+you received is the faithful path; decoding into `map[string]any` first turns
+every number into a `float64` and resolves duplicated members silently.
+`attest.RecordHashOf(v)` is there for a record you are building in Go.
+
+`VerifyRecordAttestation` recomputes the hash from the record's content rather
+than trusting its stored `record_hash` (profile `LC5`), so a record edited
+after signing and then given a matching `record_hash` is still a
+`commitment_mismatch`. The signed message is `"contextgraph/attest/1/record"`
+followed by the digest's 32 raw bytes (`LC4`); `attest.RecordAttestationMessage`
+builds it for a backend that is not a `crypto.Signer`.
+
+## Reproduce the published vectors
 
 The vectors are shared across every language:
 
 ```sh
-cd sdk/go && go test ./contextgraph/attest/
+cd sdk/go && go test ./contextgraph/attest/ ./contextgraph/jcs/
 ```
 
-They come from `tests/vectors/attestation-vectors.json`, which the Rust
-reference publishes and pins.
+The provenance vectors come from `tests/vectors/attestation-vectors.json`, and
+the record vectors from `tests/fixtures/record-hash-vectors.json`,
+`record-attestation.json` and `record-attestation-key.json`; the Rust reference
+publishes and pins all of them. The `jcs` suite pins RFC 8785's own examples,
+including the Appendix B number table, where `strconv.FormatFloat` and
+ECMAScript part ways.
 
 ## Prove it conformant
 

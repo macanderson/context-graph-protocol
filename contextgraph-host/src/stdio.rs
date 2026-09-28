@@ -60,7 +60,16 @@ use crate::wire::{
 /// How long the handshake waits for a provider's ack before giving up —
 /// bounds the "version mismatch = never a hang" guarantee even against a
 /// provider that never answers (task deliverable 1).
-const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+///
+/// This is the production default. A caller that knows its provider does real
+/// work before it can answer — a bridge that spawns and initializes a wrapped
+/// server first, or a test binary launching cold processes under a loaded
+/// parallel test run — passes its own bound through
+/// [`RawStdioConnection::handshake_with_timeout`],
+/// [`StdioProvider::spawn_with_handshake_timeout`], or
+/// [`Host::set_handshake_timeout`](crate::Host::set_handshake_timeout), rather
+/// than this default being raised for everyone (issue #142).
+pub const DEFAULT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How long a graceful `shutdown` waits for the child to exit before the
 /// process-group kill backstop fires (task deliverable 2).
@@ -293,20 +302,36 @@ impl RawStdioConnection {
 
     /// Perform the Context Graph Protocol handshake (SPEC.md §3): send `handshake`, expect
     /// `handshake_ack`, and reject an incompatible protocol version with a
-    /// named error. Bounded by `HANDSHAKE_TIMEOUT` so a silent provider
-    /// fails cleanly rather than hanging (task deliverable 1).
+    /// named error. Bounded by [`DEFAULT_HANDSHAKE_TIMEOUT`] so a silent
+    /// provider fails cleanly rather than hanging (task deliverable 1).
     pub async fn handshake(&mut self) -> Result<(ProviderInfo, Capabilities), HostError> {
+        self.handshake_with_timeout(DEFAULT_HANDSHAKE_TIMEOUT).await
+    }
+
+    /// [`handshake`](Self::handshake) with a caller-chosen bound on the wait
+    /// for the ack. A silent provider still fails with [`HostError::Timeout`]
+    /// (carrying `timeout`), never a hang; only the size of the bound changes.
+    ///
+    /// The bound covers everything the provider does between being spawned and
+    /// writing its ack — for a provider that wraps another server (the MCP
+    /// bridge spawns its MCP server and fetches every resource before it reads
+    /// its own stdin), that is the whole upstream startup, not one line of
+    /// I/O. That is why the bound is a parameter and not only a constant.
+    pub async fn handshake_with_timeout(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<(ProviderInfo, Capabilities), HostError> {
         self.send(&Envelope::Handshake {
             protocol_version: PROTOCOL_VERSION.to_string(),
         })
         .await?;
 
-        let ack = match tokio::time::timeout(HANDSHAKE_TIMEOUT, self.recv()).await {
+        let ack = match tokio::time::timeout(timeout, self.recv()).await {
             Ok(result) => result?,
             Err(_) => {
                 return Err(HostError::Timeout {
                     id: self.label.clone(),
-                    timeout_ms: HANDSHAKE_TIMEOUT.as_millis() as u64,
+                    timeout_ms: timeout.as_millis() as u64,
                 });
             }
         };
@@ -641,6 +666,10 @@ pub struct StdioProvider {
     /// The reader task; aborted on `Drop` as a backstop (the child's death
     /// already ends it via EOF).
     reader: JoinHandle<()>,
+    /// The attester keys the handshake published (`SPEC.md` §6.5.5), kept so
+    /// [`ContextProvider::attester_keys`] can hand them to a host that pins on
+    /// first use (ADR 0030). Empty for a provider that signs nothing.
+    attester_keys: Vec<AttesterKey>,
 }
 
 impl StdioProvider {
@@ -654,11 +683,24 @@ impl StdioProvider {
         program: &str,
         args: &[String],
     ) -> Result<Self, HostError> {
+        Self::spawn_with_handshake_timeout(id, program, args, DEFAULT_HANDSHAKE_TIMEOUT).await
+    }
+
+    /// [`spawn`](Self::spawn) with a caller-chosen bound on the handshake (see
+    /// [`RawStdioConnection::handshake_with_timeout`]). Everything else —
+    /// isolation, the split, the reader task — is identical.
+    pub async fn spawn_with_handshake_timeout(
+        id: impl Into<String>,
+        program: &str,
+        args: &[String],
+        handshake_timeout: Duration,
+    ) -> Result<Self, HostError> {
         let id = id.into();
         let mut conn = RawStdioConnection::spawn(program, args)
             .await?
             .with_label(id.clone());
-        let (info, capabilities) = conn.handshake().await?;
+        let (info, capabilities) = conn.handshake_with_timeout(handshake_timeout).await?;
+        let attester_keys = conn.attester_keys().to_vec();
 
         // Handshake done: split the connection. The `BufReader` carries any
         // bytes it buffered past the ack, so nothing is lost across the move.
@@ -683,6 +725,7 @@ impl StdioProvider {
             no_id_lock: TokioMutex::new(()),
             control: TokioMutex::new(control),
             reader,
+            attester_keys,
         })
     }
 
@@ -733,6 +776,10 @@ impl ContextProvider for StdioProvider {
 
     fn capabilities(&self) -> &Capabilities {
         &self.capabilities
+    }
+
+    fn attester_keys(&self) -> &[AttesterKey] {
+        &self.attester_keys
     }
 
     async fn query(&self, query: &ContextQuery) -> Result<ContextQueryResult, HostError> {
@@ -1152,6 +1199,37 @@ printf '%s\n' "$r1"
             } => assert_eq!(provider_version, "contextgraph/2.0"),
             other => panic!("expected VersionMismatch, got {other}"),
         }
+    }
+
+    /// Issue #142: the handshake bound is a caller setting, and a silent
+    /// provider is still a named `Timeout` carrying the bound it was given —
+    /// never a hang. The default stays what production has always had.
+    #[tokio::test]
+    async fn a_silent_provider_times_out_at_the_caller_chosen_handshake_bound() {
+        assert_eq!(DEFAULT_HANDSHAKE_TIMEOUT, Duration::from_secs(10));
+
+        // Reads the handshake and never answers it.
+        let (program, args) = bash_provider("read h; sleep 30");
+        let bound = Duration::from_millis(200);
+        let started = std::time::Instant::now();
+        let spawned =
+            StdioProvider::spawn_with_handshake_timeout("silent", &program, &args, bound).await;
+        let err = match spawned {
+            Ok(_) => panic!("a provider that never acks must not register"),
+            Err(e) => e,
+        };
+        match err {
+            HostError::Timeout { id, timeout_ms } => {
+                assert_eq!(id, "silent");
+                assert_eq!(timeout_ms, 200);
+            }
+            other => panic!("expected Timeout, got {other}"),
+        }
+        // It gave up at the short bound, not the 10s default.
+        assert!(
+            started.elapsed() < DEFAULT_HANDSHAKE_TIMEOUT,
+            "the caller's bound, not the default, must govern the handshake"
+        );
     }
 
     #[tokio::test]

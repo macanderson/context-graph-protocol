@@ -1,0 +1,355 @@
+// Signing, pinned to the published vector (issue #127).
+//
+// Ed25519 is deterministic, so a signature is reproducible by anyone holding
+// the seed, and tests/vectors/attestation-vectors.json publishes the seed, the
+// public key it derives, and the signature it produces over the published
+// frame commitment. Every signing test here compares against those bytes —
+// a signer that agrees only with this package's own verifier is what the
+// vector exists to catch.
+package attest
+
+import (
+	"bytes"
+	"crypto"
+	"crypto/ed25519"
+	"errors"
+	"io"
+	"strings"
+	"testing"
+)
+
+// publishedFrame rebuilds the frame the published attestation signs.
+func publishedFrame(v vectorFile) (string, Frame) {
+	spec := v.FrameCommitment
+	links := make([]Link, 0, len(spec.Frame.Provenance))
+	for _, name := range spec.Frame.Provenance {
+		links = append(links, link(v, name))
+	}
+	digest := spec.Frame.ContentDigest
+	return spec.ProviderID, Frame{ID: spec.Frame.ID, ContentDigest: &digest, Provenance: links}
+}
+
+func publishedKey(t *testing.T, v vectorFile) ed25519.PrivateKey {
+	t.Helper()
+	key, err := PrivateKeyFromSeed(mustHex(t, v.Signature.SigningKeySeedHex))
+	if err != nil {
+		t.Fatalf("the published seed: %v", err)
+	}
+	return key
+}
+
+// TestSigningThePublishedCommitmentReproducesThePublishedSignature is the
+// witness #127 names: sign the published commitment with the published seed,
+// and compare to the published signature byte for byte.
+func TestSigningThePublishedCommitmentReproducesThePublishedSignature(t *testing.T) {
+	v := loadVectors(t)
+	want := v.Signature.Attestation
+	got, err := SignCommitment(mustDigest(t, want.SignedCommitment), publishedKey(t, v),
+		want.KeyID, want.AttesterID, want.IssuedAt)
+	if err != nil {
+		t.Fatalf("signing the published commitment: %v", err)
+	}
+	if !bytes.Equal(mustHex(t, got.Signature), mustHex(t, want.Signature)) {
+		t.Errorf("signature\n got %s\nwant %s", got.Signature, want.Signature)
+	}
+	if got != want {
+		t.Errorf("attestation\n got %+v\nwant %+v", got, want)
+	}
+}
+
+func TestPublicKeyForIsThePublishedKey(t *testing.T) {
+	v := loadVectors(t)
+	public, err := PublicKeyFor(mustHex(t, v.Signature.SigningKeySeedHex))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(public, mustHex(t, v.Signature.PublicKeyHex)) {
+		t.Errorf("public key\n got %x\nwant %s", []byte(public), v.Signature.PublicKeyHex)
+	}
+}
+
+func TestSignFrameAttestationSignsThePublishedFrame(t *testing.T) {
+	v := loadVectors(t)
+	providerID, frame := publishedFrame(v)
+	want := v.Signature.Attestation
+	got, err := SignFrameAttestation(providerID, frame, publishedKey(t, v), want.KeyID, want.AttesterID, want.IssuedAt)
+	if err != nil {
+		t.Fatalf("signing the published frame: %v", err)
+	}
+	if got != want {
+		t.Errorf("attestation\n got %+v\nwant %+v", got, want)
+	}
+	if result := VerifyFrameAttestation(providerID, frame, got, mustHex(t, v.Signature.PublicKeyHex)); !result.IsValid() {
+		t.Errorf("a fresh signature must verify under the published key, got %+v", result)
+	}
+}
+
+// TestSigningAFrameWithoutAContentDigestIsRefused holds the SDK to §6.5.2 and
+// ADR 0018: a digest-less commitment binds identity and provenance but not
+// content, so its signature would survive the frame's content being replaced.
+func TestSigningAFrameWithoutAContentDigestIsRefused(t *testing.T) {
+	v := loadVectors(t)
+	providerID, frame := publishedFrame(v)
+	frame.ContentDigest = nil
+	_, err := SignFrameAttestation(providerID, frame, publishedKey(t, v), "key-1", "oxagen", "2026-08-27T00:00:00Z")
+	if !errors.Is(err, ErrFrameHasNoContentDigest) {
+		t.Errorf("got %v, want ErrFrameHasNoContentDigest", err)
+	}
+}
+
+// TestSigningAFrameWithAMalformedContentDigestIsRefused holds the SDK to §D1:
+// a declared digest that is not sha256:<64 lowercase hex> identifies no bytes,
+// so a signature over it would read as content-bound without binding content.
+func TestSigningAFrameWithAMalformedContentDigestIsRefused(t *testing.T) {
+	v := loadVectors(t)
+	providerID, frame := publishedFrame(v)
+	for _, bad := range []string{"sha256:short", "sha256:aaaa", "md5:abcd", "sha256:" + strings.Repeat("AB", 32)} {
+		digest := bad
+		frame.ContentDigest = &digest
+		_, err := SignFrameAttestation(providerID, frame, publishedKey(t, v), "key-1", "oxagen", "2026-08-27T00:00:00Z")
+		if !errors.Is(err, ErrMalformedContentDigest) {
+			t.Errorf("%q: got %v, want ErrMalformedContentDigest", bad, err)
+		}
+	}
+}
+
+func TestASeedIsExactlyThirtyTwoBytes(t *testing.T) {
+	for _, n := range []int{0, 31, 33, 64} {
+		if _, err := PrivateKeyFromSeed(make([]byte, n)); !errors.Is(err, ErrSeedLength) {
+			t.Errorf("%d-byte seed: got %v, want ErrSeedLength", n, err)
+		}
+		if _, err := PublicKeyFor(make([]byte, n)); !errors.Is(err, ErrSeedLength) {
+			t.Errorf("%d-byte seed: got %v, want ErrSeedLength", n, err)
+		}
+	}
+}
+
+// hsmSigner stands in for a key held outside the process: it exposes only
+// crypto.Signer, and a caller never sees its key bytes.
+type hsmSigner struct {
+	key   ed25519.PrivateKey
+	calls int
+}
+
+func (s *hsmSigner) Public() crypto.PublicKey { return s.key.Public() }
+
+func (s *hsmSigner) Sign(_ io.Reader, message []byte, opts crypto.SignerOpts) ([]byte, error) {
+	s.calls++
+	if opts.HashFunc() != 0 {
+		return nil, errors.New("this key signs pure Ed25519 only")
+	}
+	return ed25519.Sign(s.key, message), nil
+}
+
+// TestAnHSMBackedSignerProducesThePublishedAttestation is the custody path:
+// the same call, a signer that never hands over its key, the same bytes.
+func TestAnHSMBackedSignerProducesThePublishedAttestation(t *testing.T) {
+	v := loadVectors(t)
+	providerID, frame := publishedFrame(v)
+	want := v.Signature.Attestation
+	hsm := &hsmSigner{key: publishedKey(t, v)}
+	got, err := SignFrameAttestation(providerID, frame, hsm, want.KeyID, want.AttesterID, want.IssuedAt)
+	if err != nil {
+		t.Fatalf("signing through crypto.Signer: %v", err)
+	}
+	if got != want {
+		t.Errorf("attestation\n got %+v\nwant %+v", got, want)
+	}
+	if hsm.calls != 1 {
+		t.Errorf("the backend must be asked to sign exactly once, was asked %d times", hsm.calls)
+	}
+}
+
+// fixedSigner is a crypto.Signer assembled from parts, for the refusals.
+type fixedSigner struct {
+	public crypto.PublicKey
+	sign   func(message []byte) ([]byte, error)
+}
+
+func (s fixedSigner) Public() crypto.PublicKey { return s.public }
+
+func (s fixedSigner) Sign(_ io.Reader, message []byte, _ crypto.SignerOpts) ([]byte, error) {
+	return s.sign(message)
+}
+
+func TestSigningRefusalsAreNamed(t *testing.T) {
+	v := loadVectors(t)
+	key := publishedKey(t, v)
+	commitment := mustDigest(t, v.Signature.Attestation.SignedCommitment)
+	sign := func(message []byte) ([]byte, error) { return ed25519.Sign(key, message), nil }
+
+	cases := []struct {
+		name   string
+		signer crypto.Signer
+		want   error
+	}{
+		{"nil signer", nil, ErrNotEd25519Signer},
+		{
+			"a signer that is not Ed25519",
+			fixedSigner{public: "not a key", sign: sign},
+			ErrNotEd25519Signer,
+		},
+		{
+			// The first small-order encoding the fixture publishes: a strict
+			// verifier declines it, so signing under it publishes nothing.
+			"a small-order public key",
+			fixedSigner{public: ed25519.PublicKey(mustHex(t, v.VerifierStrictness.SmallOrderPublicKeysHex[0])), sign: sign},
+			ErrUnusableSigningKey,
+		},
+		{
+			"a backend whose signature does not verify",
+			fixedSigner{public: key.Public(), sign: func(message []byte) ([]byte, error) {
+				signature := ed25519.Sign(key, message)
+				signature[0] ^= 0x01
+				return signature, nil
+			}},
+			ErrSignatureDoesNotVerify,
+		},
+		{
+			"a backend that returns the wrong length",
+			fixedSigner{public: key.Public(), sign: func([]byte) ([]byte, error) { return make([]byte, 10), nil }},
+			ErrSignatureDoesNotVerify,
+		},
+	}
+	for _, c := range cases {
+		if _, err := SignCommitment(commitment, c.signer, "key-1", "oxagen", "2026-08-27T00:00:00Z"); !errors.Is(err, c.want) {
+			t.Errorf("%s: got %v, want %v", c.name, err, c.want)
+		}
+	}
+
+	backendDown := errors.New("the HSM is unreachable")
+	failing := fixedSigner{public: key.Public(), sign: func([]byte) ([]byte, error) { return nil, backendDown }}
+	if _, err := SignCommitment(commitment, failing, "key-1", "oxagen", "2026-08-27T00:00:00Z"); !errors.Is(err, backendDown) {
+		t.Errorf("a backend's own error must reach the caller: got %v", err)
+	}
+}
+
+func TestASignedMerkleRootVerifies(t *testing.T) {
+	v := loadVectors(t)
+	root := MerkleRoot(merkleLeaves(v, 7))
+	attestation, err := SignCommitment(root, publishedKey(t, v), "key-1", "oxagen", "2026-08-27T00:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attestation.SignedCommitment != v.Merkle.RootsByLeafCount["7"] {
+		t.Errorf("the attestation must name the root it signs: %s", attestation.SignedCommitment)
+	}
+	if got := VerifyCommitment(root, attestation, mustHex(t, v.Signature.PublicKeyHex)); !got.IsValid() {
+		t.Errorf("a signed root must verify, got %+v", got)
+	}
+}
+
+// TestADigestLessFrameVerifiesAsIdentityOnly is F15 (ADR 0018): a signature
+// over a frame with no content_digest checks out, but binds identity and
+// provenance only, and must never be reported as the content-binding valid.
+func TestADigestLessFrameVerifiesAsIdentityOnly(t *testing.T) {
+	v := loadVectors(t)
+	providerID, frame := publishedFrame(v)
+	frame.ContentDigest = nil
+	public := mustHex(t, v.Signature.PublicKeyHex)
+	// SignFrameAttestation refuses this frame, so sign its commitment
+	// directly, as a non-conformant or pre-ADR-0018 attester would have.
+	attestation, err := SignCommitment(FrameCommitment(providerID, frame), publishedKey(t, v), "key-1", "oxagen", "2026-08-27T00:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := VerifyFrameAttestation(providerID, frame, attestation, public)
+	if got.Verdict != VerdictValidIdentityOnly {
+		t.Fatalf("got %s, want %s", got.Verdict, VerdictValidIdentityOnly)
+	}
+	if got.IsValid() || got.BindsContent() || !got.SignatureVerifies() {
+		t.Errorf("identity-only: IsValid and BindsContent must be false and SignatureVerifies true, got %+v", got)
+	}
+
+	// A failing verdict over a digest-less frame is returned unchanged.
+	forged := attestation
+	forged.Signature = v.Signature.Attestation.Signature
+	if got := VerifyFrameAttestation(providerID, frame, forged, public); got.Verdict != VerdictBadSignature {
+		t.Errorf("a bad signature over a digest-less frame: got %s, want %s", got.Verdict, VerdictBadSignature)
+	}
+
+	// A frame that declares its digest keeps the full verdict.
+	providerID, frame = publishedFrame(v)
+	full := VerifyFrameAttestation(providerID, frame, v.Signature.Attestation, public)
+	if !full.IsValid() || !full.BindsContent() || !full.SignatureVerifies() {
+		t.Errorf("a digest-bearing frame must be valid and bind content, got %+v", full)
+	}
+}
+
+// TestVerifyFrameInclusionChecksALeafOfASignedRoot covers the result-set path
+// of §6.5.3: one signature over a root, one proof per frame, and the same
+// content-binding rule as a per-frame signature.
+func TestVerifyFrameInclusionChecksALeafOfASignedRoot(t *testing.T) {
+	v := loadVectors(t)
+	public := mustHex(t, v.Signature.PublicKeyHex)
+	leafFrame := func(i int, withDigest bool) Frame {
+		spec := v.Merkle.LeafFrames[i]
+		frame := Frame{ID: spec.ID}
+		if withDigest {
+			digest := spec.ContentDigest
+			frame.ContentDigest = &digest
+		}
+		return frame
+	}
+
+	frames := []Frame{leafFrame(0, false), leafFrame(1, true), leafFrame(2, true)}
+	commitments := make([][32]byte, 0, len(frames))
+	for _, frame := range frames {
+		commitments = append(commitments, FrameCommitment(v.Merkle.ProviderID, frame))
+	}
+	root := MerkleRoot(commitments)
+	signed, err := SignCommitment(root, publishedKey(t, v), "key-1", "oxagen", "2026-08-27T00:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proofFor := func(i int) InclusionProof {
+		proof, ok := BuildInclusionProof(commitments, i)
+		if !ok {
+			t.Fatalf("no proof for leaf %d", i)
+		}
+		return proof
+	}
+
+	if got := VerifyFrameInclusion(v.Merkle.ProviderID, frames[1], proofFor(1), signed, public); !got.IsValid() {
+		t.Errorf("a digest-bearing leaf of a signed root must be valid, got %+v", got)
+	}
+	if got := VerifyFrameInclusion(v.Merkle.ProviderID, frames[0], proofFor(0), signed, public); got.Verdict != VerdictValidIdentityOnly {
+		t.Errorf("a digest-less leaf binds identity only: got %s", got.Verdict)
+	}
+
+	// A frame that is not the leaf the proof names recomputes another root.
+	outsider := leafFrame(3, true)
+	if got := VerifyFrameInclusion(v.Merkle.ProviderID, outsider, proofFor(1), signed, public); got.Verdict != VerdictCommitmentMismatch {
+		t.Errorf("an outsider: got %s, want %s", got.Verdict, VerdictCommitmentMismatch)
+	}
+
+	// Bounded work: an over-long path is refused on its length alone.
+	long := proofFor(1)
+	for len(long.Path) <= MaxInclusionPathSteps {
+		long.Path = append(long.Path, InclusionStep{Sibling: DigestString(root)})
+	}
+	if got := VerifyFrameInclusion(v.Merkle.ProviderID, frames[1], long, signed, public); got.Verdict != VerdictMalformedCommitment {
+		t.Errorf("a path of %d steps: got %s, want %s", len(long.Path), got.Verdict, VerdictMalformedCommitment)
+	}
+
+	outOfRange := proofFor(1)
+	outOfRange.LeafIndex = outOfRange.LeafCount
+	if got := VerifyFrameInclusion(v.Merkle.ProviderID, frames[1], outOfRange, signed, public); got.Verdict != VerdictMalformedCommitment {
+		t.Errorf("a leaf index outside the tree: got %s, want %s", got.Verdict, VerdictMalformedCommitment)
+	}
+
+	// A genuine path under a false position or tree size is refused on its
+	// shape (§6.5.3, ADR 0031): leaf 1 of 3 is two levels down, its first
+	// sibling on the left and its second on the right, so neither leaf 0 of 3
+	// nor leaf 1 of 2 has this path.
+	falseIndex := proofFor(1)
+	falseIndex.LeafIndex = 0
+	if got := VerifyFrameInclusion(v.Merkle.ProviderID, frames[1], falseIndex, signed, public); got.Verdict != VerdictMalformedCommitment {
+		t.Errorf("a genuine path under a false index: got %s, want %s", got.Verdict, VerdictMalformedCommitment)
+	}
+	falseCount := proofFor(1)
+	falseCount.LeafCount = 2
+	if got := VerifyFrameInclusion(v.Merkle.ProviderID, frames[1], falseCount, signed, public); got.Verdict != VerdictMalformedCommitment {
+		t.Errorf("a genuine path under a false count: got %s, want %s", got.Verdict, VerdictMalformedCommitment)
+	}
+}

@@ -13,22 +13,35 @@ import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { createPublicKey, generateKeyPairSync } from "node:crypto";
+
 import {
   ALGORITHM_ED25519,
+  bindsContent,
   digestString,
   encodeProvenanceLink,
   frameCommitment,
   fromHex,
+  inclusionPathSides,
   inclusionProof,
   isValid,
+  isWellShaped,
+  MAX_INCLUSION_PATH_STEPS,
   merkleRoot,
   parseDigest,
   provenanceChainHead,
+  publicKeyFor,
   rootFromProof,
+  signatureVerifies,
+  signCommitment,
+  signFrameAttestation,
+  signingKeyFromSeed,
   toHex,
   verifyCommitment,
   verifyFrameAttestation,
+  verifyFrameInclusion,
   type AttestableFrame,
+  type InclusionProof,
   type ProvenanceAttestation,
 } from "../src/attest.js";
 import type { Provenance } from "../src/types.js";
@@ -303,5 +316,299 @@ test("a strict verifier declines a small-order or non-canonical public key", () 
       { verdict: "malformed_key" },
       `${hex} must not be usable as a verification key`,
     );
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Signing (#127, ADR 0033). Pinned to the published signature, never
+// round-tripped against this port's own verifier alone: a signer and a
+// verifier that share a bug agree with each other and with nothing else.
+// ---------------------------------------------------------------------------
+
+const seed = (): Uint8Array => fromHex(V.signature.signing_key_seed_hex)!;
+
+test("the published seed derives the published public key", () => {
+  assert.equal(toHex(publicKeyFor(seed())), V.signature.public_key_hex);
+  assert.equal(toHex(publicKeyFor(signingKeyFromSeed(seed()))), V.signature.public_key_hex);
+});
+
+test("signing the published commitment with the published seed reproduces the published signature byte for byte", () => {
+  const published: ProvenanceAttestation = V.signature.attestation;
+  const signed = signCommitment(
+    signedCommitment(),
+    seed(),
+    published.key_id,
+    published.attester_id,
+    published.issued_at,
+  );
+  // Ed25519 is deterministic (RFC 8032), so equality here is exact, not
+  // "also verifies".
+  assert.equal(signed.signature, published.signature);
+  assert.deepEqual(signed, published);
+  assert.deepEqual(verifyCommitment(signedCommitment(), signed, publicKey()), { verdict: "valid" });
+});
+
+test("a KeyObject built once signs the same bytes as the raw seed", () => {
+  const key = signingKeyFromSeed(seed());
+  const published: ProvenanceAttestation = V.signature.attestation;
+  assert.equal(
+    signCommitment(signedCommitment(), key, "key-1", "oxagen", published.issued_at).signature,
+    published.signature,
+  );
+});
+
+test("signFrameAttestation over the published frame reproduces the published attestation", () => {
+  const spec = V.frame_commitment;
+  const frame: AttestableFrame = {
+    id: spec.frame.id,
+    content_digest: spec.frame.content_digest,
+    provenance: (spec.frame.provenance as string[]).map(link),
+  };
+  const published: ProvenanceAttestation = V.signature.attestation;
+  const signed = signFrameAttestation(
+    spec.provider_id,
+    frame,
+    seed(),
+    published.key_id,
+    published.attester_id,
+    published.issued_at,
+  );
+  assert.deepEqual(signed, published);
+  assert.deepEqual(verifyFrameAttestation(spec.provider_id, frame, signed, publicKey()), {
+    verdict: "valid",
+  });
+});
+
+test("signFrameAttestation refuses a frame that declares no content_digest (ADR 0018)", () => {
+  for (const frame of [
+    { id: "no-digest" },
+    { id: "null-digest", content_digest: null as unknown as string },
+  ] as AttestableFrame[]) {
+    assert.throws(
+      () => signFrameAttestation("repo-graph", frame, seed(), "key-1", "oxagen", "2026-08-27T00:00:00Z"),
+      TypeError,
+    );
+  }
+});
+
+test("signFrameAttestation refuses a content_digest that is not sha256:<64 lowercase hex> (SPEC §D1)", () => {
+  for (const digest of ["sha256:short", "sha256:aaaa", "md5:abcd", `sha256:${"AB".repeat(32)}`]) {
+    const frame: AttestableFrame = { id: "malformed-digest", content_digest: digest };
+    assert.throws(
+      () => signFrameAttestation("repo-graph", frame, seed(), "key-1", "oxagen", "2026-08-27T00:00:00Z"),
+      TypeError,
+      digest,
+    );
+  }
+});
+
+test("a verified signature over a digest-less frame is identity-only, not valid (ADR 0018)", () => {
+  // Such signatures predate the refusal above and must still be readable —
+  // labelled, not rejected, and never mistaken for a binding of the bytes.
+  const frame: AttestableFrame = { id: "legacy", provenance: [link("file")] };
+  const legacy = signCommitment(
+    frameCommitment("repo-graph", frame),
+    seed(),
+    "key-1",
+    "oxagen",
+    "2026-08-27T00:00:00Z",
+  );
+  const verdict = verifyFrameAttestation("repo-graph", frame, legacy, publicKey());
+  assert.deepEqual(verdict, { verdict: "valid_identity_only" });
+  assert.ok(!isValid(verdict));
+  assert.ok(signatureVerifies(verdict));
+  assert.ok(!bindsContent(verdict));
+
+  // Adding a digest after the fact is a different commitment, not an upgrade.
+  assert.equal(
+    verifyFrameAttestation(
+      "repo-graph",
+      { ...frame, content_digest: `sha256:${"ab".repeat(32)}` },
+      legacy,
+      publicKey(),
+    ).verdict,
+    "commitment_mismatch",
+  );
+});
+
+test("a signing key that is not a private Ed25519 key is refused, not misused", () => {
+  const commitment = signedCommitment();
+  assert.throws(() => signCommitment(commitment, new Uint8Array(31), "k", "a", "t"), RangeError);
+  assert.throws(() => signCommitment(new Uint8Array(31), seed(), "k", "a", "t"), RangeError);
+
+  const publicOnly = createPublicKey(signingKeyFromSeed(seed()));
+  assert.throws(() => signCommitment(commitment, publicOnly, "k", "a", "t"), TypeError);
+
+  const { privateKey: ecKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  assert.throws(() => signCommitment(commitment, ecKey, "k", "a", "t"), TypeError);
+});
+
+test("verifyFrameInclusion checks a frame against a signed root, and bounds the walk", () => {
+  const providerId: string = V.merkle.provider_id;
+  const frames = V.merkle.leaf_frames as AttestableFrame[];
+  const leaves = merkleLeaves(7);
+  const root = merkleRoot(leaves);
+  assert.equal(digestString(root), V.merkle.roots_by_leaf_count["7"]);
+  const signedRoot = signCommitment(root, seed(), "key-1", "oxagen", "2026-08-27T00:00:00Z");
+  const proof = inclusionProof(leaves, 3)!;
+
+  assert.deepEqual(verifyFrameInclusion(providerId, frames[3]!, proof, signedRoot, publicKey()), {
+    verdict: "valid",
+  });
+  // Another frame under the same proof recomputes a different root.
+  assert.equal(
+    verifyFrameInclusion(providerId, frames[2]!, proof, signedRoot, publicKey()).verdict,
+    "commitment_mismatch",
+  );
+
+  // ADR 0018 holds through the tree: a digest-less leaf is identity-only.
+  const bare: AttestableFrame = { id: "bare" };
+  const bareLeaves = [frameCommitment(providerId, bare), ...leaves.slice(1)];
+  const bareRoot = signCommitment(merkleRoot(bareLeaves), seed(), "key-1", "oxagen", "2026-08-27T00:00:00Z");
+  const bareVerdict = verifyFrameInclusion(providerId, bare, inclusionProof(bareLeaves, 0)!, bareRoot, publicKey());
+  assert.deepEqual(bareVerdict, { verdict: "valid_identity_only" });
+  assert.ok(!isValid(bareVerdict));
+
+  // Every step costs a hash, and the provider chose the path: an over-long
+  // one is refused on its length before anything is hashed.
+  const overlong = {
+    ...proof,
+    path: Array.from({ length: MAX_INCLUSION_PATH_STEPS + 1 }, () => proof.path[0]!),
+  };
+  assert.deepEqual(verifyFrameInclusion(providerId, frames[3]!, overlong, signedRoot, publicKey()), {
+    verdict: "malformed_commitment",
+  });
+  // So is a leaf index outside the tree the proof describes.
+  assert.deepEqual(
+    verifyFrameInclusion(providerId, frames[3]!, { ...proof, leaf_index: 7 }, signedRoot, publicKey()),
+    { verdict: "malformed_commitment" },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Inclusion-proof shape (`SPEC.md` §6.5.3, ADR 0031)
+// ---------------------------------------------------------------------------
+
+test("the shape function predicts every honest proof, odd tree sizes included", () => {
+  // Mirrors the Rust reference's
+  // `every_honest_proof_is_well_shaped_and_its_sides_are_predicted`.
+  for (let count = 1; count <= 40; count += 1) {
+    const commitments = Array.from({ length: count }, (_, i) =>
+      frameCommitment("repo-graph", { id: `f${i}` }),
+    );
+    const root = digestString(merkleRoot(commitments));
+    for (let index = 0; index < count; index += 1) {
+      const proof = inclusionProof(commitments, index)!;
+      assert.deepEqual(
+        inclusionPathSides(index, count),
+        proof.path.map((step) => step.sibling_is_left),
+        `leaf ${index} of ${count}`,
+      );
+      assert.ok(isWellShaped(proof), `leaf ${index} of ${count}`);
+      assert.equal(digestString(rootFromProof(commitments[index]!, proof)!), root);
+    }
+  }
+});
+
+test("the shape function's published examples, and every index that is not one", () => {
+  assert.deepEqual(inclusionPathSides(0, 1), []);
+  assert.deepEqual(inclusionPathSides(3, 7), [true, true, false]);
+  assert.deepEqual(inclusionPathSides(6, 7), [true, true]);
+  assert.equal(inclusionPathSides(7, 7), null);
+  assert.equal(inclusionPathSides(0, 0), null, "an empty tree has no leaf");
+  // Rust types these as `usize`; JSON hands this port anything, and a count
+  // or an index that is not a non-negative safe integer describes no tree.
+  for (const [index, count] of [
+    [-1, 7],
+    [1.5, 7],
+    [3, 7.5],
+    [Number.NaN, 7],
+    [0, Number.POSITIVE_INFINITY],
+    [0, 2 ** 53],
+  ] as const) {
+    assert.equal(inclusionPathSides(index, count), null, `leaf ${index} of ${count}`);
+  }
+  // A provider-supplied count at the top of the safe range is arithmetic, not
+  // a long loop: 53 levels.
+  assert.equal(inclusionPathSides(0, Number.MAX_SAFE_INTEGER)?.length, 53);
+});
+
+test("every published inclusion vector is well-shaped and still verifies", () => {
+  // The fixture's own proof object, not one rebuilt here: the refusal must
+  // never reach a proof the reference emitted.
+  const spec = V.merkle.inclusion_proof as InclusionProof;
+  assert.ok(isWellShaped(spec));
+  assert.equal(
+    digestString(rootFromProof(merkleLeaves(spec.leaf_count)[spec.leaf_index]!, spec)!),
+    V.merkle.roots_by_leaf_count[String(spec.leaf_count)],
+  );
+  // And every leaf of every published root.
+  for (const [count, root] of Object.entries(V.merkle.roots_by_leaf_count)) {
+    const leaves = merkleLeaves(Number(count));
+    leaves.forEach((leaf, index) => {
+      const proof = inclusionProof(leaves, index)!;
+      assert.ok(isWellShaped(proof), `leaf ${index} of ${count}`);
+      assert.equal(digestString(rootFromProof(leaf, proof)!), root, `leaf ${index} of ${count}`);
+    });
+  }
+});
+
+test("a genuine path under a false leaf_count or leaf_index is refused before hashing", () => {
+  // Mirrors the Rust reference's
+  // `a_proof_is_refused_when_its_stated_tree_does_not_produce_its_path`.
+  const providerId: string = V.merkle.provider_id;
+  const frames = V.merkle.leaf_frames as AttestableFrame[];
+  const leaves = merkleLeaves(7);
+  const signedRoot = signCommitment(merkleRoot(leaves), seed(), "key-1", "oxagen", "2026-08-27T00:00:00Z");
+  const honest = V.merkle.inclusion_proof as InclusionProof;
+  const verify = (proof: InclusionProof) =>
+    verifyFrameInclusion(providerId, frames[3]!, proof, signedRoot, publicKey());
+  assert.deepEqual(verify(honest), { verdict: "valid" });
+
+  // The witness: the siblings are genuine, so a walk that ignored the stated
+  // tree would recompute the signed root and call these "valid". Leaf 3 of 4
+  // sits two levels down, not three; leaf 3 of 9 and of 16 sit four down.
+  // (Leaf 3 of 5, 6 or 8 has the same three sides as leaf 3 of 7, so no shape
+  // check can tell them apart; a host refuses those on F12, by comparing
+  // `leaf_count` with the frames the answer carries.)
+  for (const leaf_count of [0, 1, 2, 3, 4, 9, 16, 1000]) {
+    const resized = { ...honest, leaf_count };
+    assert.ok(!isWellShaped(resized), `leaf 3 of ${leaf_count}`);
+    assert.equal(rootFromProof(leaves[3]!, resized), null, `leaf 3 of ${leaf_count}`);
+    assert.deepEqual(verify(resized), { verdict: "malformed_commitment" }, `leaf 3 of ${leaf_count}`);
+  }
+  // Every other index of the same seven-leaf tree has a different shape, so
+  // the same path relabelled with it is refused too.
+  for (const leaf_index of [0, 1, 2, 4, 5, 6, 7, -1, 3.5]) {
+    const relabelled = { ...honest, leaf_index };
+    assert.ok(!isWellShaped(relabelled), `leaf ${leaf_index} of 7`);
+    assert.equal(rootFromProof(leaves[3]!, relabelled), null, `leaf ${leaf_index} of 7`);
+    assert.deepEqual(verify(relabelled), { verdict: "malformed_commitment" }, `leaf ${leaf_index} of 7`);
+  }
+
+  // A side flipped: the walk would compute a different root, and the shape
+  // check refuses it before it does.
+  const flipped = {
+    ...honest,
+    path: honest.path.map((step, i) => (i === 0 ? { ...step, sibling_is_left: !step.sibling_is_left } : step)),
+  };
+  assert.equal(rootFromProof(leaves[3]!, flipped), null);
+  assert.deepEqual(verify(flipped), { verdict: "malformed_commitment" });
+
+  // One step too many, one too few, and a side that is not a boolean.
+  const longer = { ...honest, path: [...honest.path, honest.path[0]!] };
+  const shorter = { ...honest, path: honest.path.slice(0, -1) };
+  const stringly = {
+    ...honest,
+    path: honest.path.map((step) => ({ ...step, sibling_is_left: String(step.sibling_is_left) as unknown as boolean })),
+  };
+  for (const [name, proof] of [
+    ["longer", longer],
+    ["shorter", shorter],
+    ["stringly", stringly],
+  ] as const) {
+    assert.ok(!isWellShaped(proof), name);
+    assert.equal(rootFromProof(leaves[3]!, proof), null, name);
+    assert.deepEqual(verify(proof), { verdict: "malformed_commitment" }, name);
   }
 });

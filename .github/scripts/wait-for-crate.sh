@@ -33,9 +33,11 @@ fi
 url="https://index.crates.io/$path"
 
 # The version crosses into Python through the environment, never through the
-# program text. `$version` is a git tag name with a fixed prefix stripped
-# (`release.yml` passes "${GITHUB_REF_NAME#contextgraph-v}"), and git accepts
-# apostrophes and newlines in a tag. Interpolated into the source of the
+# program text. `$version` used to be a git tag name with a fixed prefix
+# stripped. `release.yml` now passes the version check-release-tag.py read
+# from the manifests and held to semver (ADR 0034), but this script is also
+# run by hand (PUBLISHING.md), so it keeps treating the value as hostile. Git
+# accepts apostrophes and newlines in a tag. Interpolated into the source of the
 # snippet below, an apostrophe closed the string literal and killed the release
 # with a bare SyntaxError, and a newline plus a statement ran arbitrary Python
 # in the job that holds CARGO_REGISTRY_TOKEN. Reading it from os.environ is the

@@ -49,10 +49,14 @@ jobs:
       - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
-      # `attestation` is off by default, so the line above reaches
+      # The reranker hook is shown as a runnable example rather than argued in
+      # prose (ADR 0015, 2026-09-28 amendment). `cargo test` only compiles
+      # examples; running it keeps its assertions true, not just its types.
+      - run: cargo run -p contextgraph-host --example rerank_before_compose
+      # `attestation` is off by default, so the workspace test run above reaches
       # contextgraph_types::attest and the cross-language vectors the SDK
       # suites reconcile against only through feature unification with
-      # contextgraph-conformance's dev-dependency. That is a resolver detail,
+      # contextgraph-conformance's dependency on it. That is a resolver detail,
       # and a guarantee resting on one is not a guarantee: ask for the feature
       # by name, so those constructions are checked whatever the resolver
       # decides and whatever any other crate happens to request.
@@ -200,6 +204,40 @@ jobs:
             -- ./target/debug/contextgraph-mcp-bridge \
                -- ./target/debug/contextgraph-mcp-fixture
 
+  bridge-parallel:
+    name: mcp-bridge tests at default parallelism (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # bridge_via_host's two tests each spawn the bridge, which spawns the MCP
+    # fixture, so running them together is four cold child processes over two
+    # nested stdio pipe pairs. They timed out together and passed one at a
+    # time (#142), and the report came from macOS while every other job here
+    # runs on Linux. `test` above runs them once, on Linux. This runs them at
+    # cargo's default test threads, several times over, on both systems, so a
+    # timing-dependent handshake goes red here rather than on some later
+    # unrelated pull request. No `--test-threads` anywhere: a pass that needs
+    # it has stopped testing what #142 reported.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/rust
+      - uses: Swatinem/rust-cache@v2
+      # Compile first, so each timed run below measures the tests and not the
+      # link. The first run still meets freshly linked binaries, which is the
+      # cold-launch case #142 describes.
+      - run: cargo test -p contextgraph-mcp-bridge --test bridge_via_host --no-run
+      - name: bridge_via_host passes five times in a row at default parallelism
+        shell: bash
+        run: |
+          set -euo pipefail
+          for run in 1 2 3 4 5; do
+            echo "::group::bridge_via_host run $run of 5"
+            cargo test -p contextgraph-mcp-bridge --test bridge_via_host
+            echo "::endgroup::"
+          done
+
   sdk-typescript:
     name: sdk (typescript) is a conformant implementation
     runs-on: ubuntu-latest
@@ -221,6 +259,13 @@ jobs:
       - name: TS attestation port reproduces the published vectors
         working-directory: sdk/typescript
         run: node --test "dist/test/*.test.js"
+      # record_hash (RFC 8785) and RecordAttestation against tests/fixtures/
+      # record-hash-vectors.json and record-attestation.json (#119). A
+      # separate directory, so this is its own step and the glob above never
+      # runs it twice.
+      - name: TS record_hash and RecordAttestation port reproduces the published record vectors
+        working-directory: sdk/typescript
+        run: node --test "dist/test/record/*.test.js"
 
   sdk-python:
     name: sdk (python) is a conformant implementation
@@ -235,8 +280,19 @@ jobs:
           python-version: "3.12"
       - name: Python example provider passes the conformance suite
         run: ./.github/scripts/conformance-external.sh -- python3 sdk/python/examples/example_docs.py
-      - name: Python attestation port reproduces the published vectors
+      # The optional `[signing]` extra, installed from this checkout so the
+      # declared extra is what gets exercised (#127). With it present and
+      # CONTEXTGRAPH_REQUIRE_SIGNING=1, tests/test_signing.py pins the signers
+      # to the published signatures byte for byte and cannot skip. The
+      # interpreter matrix below runs without it, which is what proves the
+      # zero-dependency path (#119's record_hash and RecordAttestation
+      # verification included) needs nothing installed.
+      - name: Install the optional signing backend
+        run: python3 -m pip install "./sdk/python[signing]"
+      - name: Python attestation, record-hash and signing ports reproduce the published vectors
         working-directory: sdk/python
+        env:
+          CONTEXTGRAPH_REQUIRE_SIGNING: "1"
         run: python3 -m unittest discover -s tests -v
 
   sdk-go:
@@ -257,9 +313,11 @@ jobs:
           go build -o "$GITHUB_WORKSPACE/cg-go-example" ./examples/example-docs
       - name: Go example provider passes the conformance suite
         run: ./.github/scripts/conformance-external.sh -- ./cg-go-example
-      - name: Go attestation port reproduces the published vectors
+      # Provenance signing and verification, record_hash and RecordAttestation
+      # against tests/vectors/ and tests/fixtures/, and RFC 8785's own vectors.
+      - name: Go attestation and record-hash ports reproduce the published vectors
         working-directory: sdk/go
-        run: go test ./contextgraph/attest/
+        run: go test ./contextgraph/attest/ ./contextgraph/jcs/
 
   sdk-typescript-http:
     name: sdk (typescript) HTTP adapter is conformant

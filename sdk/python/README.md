@@ -14,6 +14,13 @@ passes the same conformance suite that judges the Rust reference provider.
 pip install contextgraph-sdk
 ```
 
+Signing attestations needs one optional package; everything else needs none
+(see [Sign an attestation](#sign-an-attestation-optional)):
+
+```sh
+pip install "contextgraph-sdk[signing]"
+```
+
 Python 3.9 or newer. CI runs the SDK's tests on the declared floor (3.9) and
 on the newest CPython release, and typechecks it with `mypy --strict` against
 the floor as well as 3.10.
@@ -92,7 +99,10 @@ tamper-evident: a detached Ed25519 signature over a commitment to the frame's
 identity and its provenance chain. `contextgraph_sdk.attest` implements the
 whole construction — the length-prefixed link encoding, the source-first chain
 fold, the frame commitment, an RFC 6962 Merkle root over a result set with
-inclusion proofs, and verification.
+inclusion proofs, and verification. `root_from_proof` refuses a proof whose
+path is not exactly the RFC 6962 shape for its `(leaf_index, leaf_count)`
+before hashing anything (`InclusionProof.is_well_shaped`, ADR 0031), so a
+genuine path cannot be replayed under a false index or tree size.
 
 ```python
 from contextgraph_sdk import verify_frame_attestation, Verdict
@@ -105,9 +115,23 @@ if result.verdict != Verdict.VALID:
     print(result)
 ```
 
-Signing is not here. The protocol specifies the preimage, never the custody of
-the key: a provider computes `frame_commitment(...)`, signs those 32 bytes with
-whatever backend holds its key, and assembles the attestation itself.
+A frame that declares no `content_digest` verifies as
+`Verdict.VALID_IDENTITY_ONLY`, not `Verdict.VALID`. Its signature checks out,
+but it covers the frame's identity and provenance and none of its bytes (ADR
+0018). `is_valid()` is false for it. Call `signature_verifies()` when you want
+to accept it on purpose, and `binds_content()` to ask whether the signature
+covers the bytes.
+
+A frame attested through a signed result-set root rather than its own
+signature is checked with `verify_frame_inclusion(provider_id, frame, proof,
+root_attestation, public_key)`. It applies the same rule, and returns
+`Verdict.MALFORMED_COMMITMENT` before hashing anything when the proof's path is
+longer than `MAX_INCLUSION_PATH_STEPS` (64) or does not have exactly the length
+and `sibling_is_left` sides RFC 6962 gives its `(leaf_index, leaf_count)`
+(`SPEC.md` §6.5.3). `inclusion_path_sides(leaf_index, leaf_count)` returns the
+expected sides. The shape cannot tell every tree size apart (leaf 3 of 5 and
+leaf 3 of 7 share a path), so a host checking a live answer also compares
+`leaf_count` with the number of frames the answer carries.
 
 Two things worth knowing:
 
@@ -130,6 +154,115 @@ cd sdk/python && python3 -m unittest discover -s tests -v
 
 They come from `tests/vectors/attestation-vectors.json`, which the Rust
 reference publishes and pins.
+
+## Sign an attestation (optional)
+
+Producing an attestation needs a signer, and this SDK does not sign in pure
+Python. Signing multiplies by a secret scalar, and big-integer arithmetic in
+Python leaks that scalar through timing. The in-package code is a verifier
+only. Signing goes through the `cryptography` package instead, which uses
+OpenSSL's constant-time Ed25519. It ships as an optional extra:
+
+```sh
+pip install "contextgraph-sdk[signing]"
+```
+
+```python
+from contextgraph_sdk import public_key_for, sign_frame_attestation
+
+attestation = sign_frame_attestation(
+    "repo-graph", frame, seed, key_id="key-1", attester_id="acme",
+    issued_at="2026-09-28T00:00:00Z",
+)
+wire = attestation.to_wire()          # the JSON object that travels
+public_key = public_key_for(seed)     # what a verifier needs
+```
+
+`sign_commitment(...)` signs any 32-byte commitment, such as a `merkle_root(...)`
+over a result set. `sign_frame_attestation` refuses a frame that declares no
+`content_digest`: `SPEC.md` §6.5.2 requires one on every frame you sign,
+because without it the signature covers the frame's name and none of its
+content (ADR 0018). It also refuses a `content_digest` that is not
+`sha256:<64 lowercase hex>` (`SPEC.md` D1).
+
+Without the extra, every signing function raises `SigningUnavailableError`,
+and the message names the extra to install. There is no fallback, so you never
+get a different answer depending on what is installed. Verification, hashing
+and the provider runtime never need the extra.
+
+The signers are pinned, not round-tripped. `tests/test_signing.py` signs the
+published commitment and the published record with the published seeds. It
+compares the result to the published signatures byte for byte, and CI runs it
+with the extra installed on every pull request.
+
+### Key custody
+
+These functions take a raw 32-byte seed, and holding a long-lived signing seed
+in application memory has a cost. Anything that can read the process can read
+the seed: a core dump, a debugger, a heap-disclosure bug, a compromised
+dependency. Python `bytes` cannot be wiped, so the seed stays readable until
+the garbage collector reclaims it, and possibly after. A key that leaks lets
+anyone sign as you until every verifier stops trusting its `key_id`.
+
+That is acceptable for tests, local tools, and short-lived keys you rotate
+often. For a long-lived key, keep it in an HSM, a cloud KMS, or a signing
+service, and do not call these functions at all. The protocol specifies the
+preimage, never the custody of the key:
+
+```python
+from contextgraph_sdk import ProvenanceAttestation, digest_string, frame_commitment
+
+commitment = frame_commitment("repo-graph", frame)   # 32 bytes
+signature = kms.sign_ed25519(key_ref, commitment)    # your backend, 64 bytes
+attestation = ProvenanceAttestation(
+    signed_commitment=digest_string(commitment), key_id="key-1",
+    algorithm="ed25519", attester_id="acme", signature=signature.hex(),
+    issued_at="2026-09-28T00:00:00Z",
+)
+```
+
+For a record attestation, the bytes to sign are
+`record_attestation_message(record_hash(record))`.
+
+## Hash and verify a lifecycle record
+
+The lifecycle profile (`docs/profiles/context-exchange-provider.md`) addresses
+a record by its `record_hash`: SHA-256 over the RFC 8785 (JCS)
+canonicalization of the record, with its own top-level `record_hash` member
+removed. A `RecordAttestation` is a detached Ed25519 signature over
+`"contextgraph/attest/1/record"` followed by that hash's 32 raw bytes.
+
+```python
+from contextgraph_sdk import (
+    RecordAttestation, Verdict, record_hash, verify_record_attestation,
+)
+
+digest = record_hash(record)          # "sha256:…", the record's identity
+result = verify_record_attestation(record, RecordAttestation.from_wire(att), key)
+assert result.verdict == Verdict.VALID
+```
+
+`verify_record_attestation` recomputes the hash from the record's content. It
+never trusts the stored `record_hash` member, so a record edited after signing
+and then given a matching `record_hash` is still reported as
+`commitment_mismatch`.
+
+The canonicalizer is a conforming RFC 8785 implementation in the standard
+library alone. `json.dumps(sort_keys=True, separators=(",", ":"))` is not one,
+for three reasons:
+
+- **Numbers.** It lays numbers out as Python's `repr` does, and JCS requires
+  ECMAScript's `Number::toString`. The two disagree at `1e16`–`1e21`, below
+  `1e-4`, and on every whole-number float (`1.0` against `1`).
+- **Member order.** It sorts names by code point, and JCS sorts by UTF-16
+  code unit.
+- **Strings.** It escapes differently, and it lets a lone surrogate through
+  where JCS requires a refusal.
+
+`canonicalize(value)` and `record_hash_preimage(record)` return the exact
+bytes, for diffing against another implementation. `tests/test_record.py`
+checks the RFC's Appendix B number table and its worked example, and
+reproduces every vector in `tests/fixtures/record-hash-vectors.json`.
 
 ## Prove it conformant
 

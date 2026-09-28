@@ -56,6 +56,11 @@ query (`--query "goal text"`), then runs the full conformance suite and
 prints a colored (or `--json`) verdict — exiting non-zero when the provider
 isn't conformant, so it's CI-friendly.
 
+For the lifecycle profile's record layer it also works offline, with no
+provider: `contextgraph-inspect record hash|preimage|verify|attest` computes a
+record's `record_hash`, prints the canonical RFC 8785 bytes that hash covers,
+checks a stored hash, and verifies a detached record attestation.
+
 See [Running conformance][conformance] for the full guide.
 
 ## Golden fixtures

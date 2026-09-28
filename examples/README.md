@@ -33,14 +33,14 @@ Every message is one Context Graph Protocol **envelope** — an internally-tagge
 (`#[serde(tag = "type", rename_all = "snake_case")]`). The `type` field selects
 the variant and sits at the same level as the payload fields:
 
-| `type`          | direction        | payload                                        |
-| --------------- | ---------------- | ---------------------------------------------- |
-| `handshake`     | host → provider  | `protocol_version`                             |
-| `handshake_ack` | provider → host  | `protocol_version`, `provider`, `capabilities` |
-| `query`         | host → provider  | `query` (a `ContextQuery`)                     |
-| `frames`        | provider → host  | `result` (a `ContextQueryResult`)              |
-| `shutdown`      | host → provider  | *(none)*                                       |
-| `error`         | provider → host  | `message`                                      |
+| `type`          | direction       | payload                                                                  |
+| --------------- | --------------- | ------------------------------------------------------------------------ |
+| `handshake`     | host → provider | `protocol_version`                                                       |
+| `handshake_ack` | provider → host | `protocol_version`, `provider`, `capabilities`, optional `attester_keys` |
+| `query`         | host → provider | `query` (a `ContextQuery`)                                               |
+| `frames`        | provider → host | `result` (a `ContextQueryResult`)                                        |
+| `shutdown`      | host → provider | *(none)*                                                                 |
+| `error`         | provider → host | `message`                                                                |
 
 Over **stdio**, each envelope is one line of compact JSON (NDJSON) on the
 provider's stdin/stdout. Over **streamable HTTP**, each exchange is one POST
@@ -160,7 +160,12 @@ Ed25519 over a signing key derived from a seed of thirty-two `0x2a` bytes; the
 matching public key is
 `197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61`. An example
 signature nobody can verify demonstrates nothing. This key signs the fixtures in
-this repository and must never sign anything else.
+this repository and must never sign anything else. The `repo-graph`
+`handshake_ack` in `reference-messages.json` publishes it in `attester_keys`, the
+optional member a signing provider uses to name its keys (`SPEC.md` §6.5.5). A
+receiver tolerates its absence — the NDJSON session's handshake omits it — and a
+host may pin a published key on first use, as a tier below a key its operator
+configured ([ADR 0030](../docs/adr/0030-a-pinned-trust-tier-below-configured.md)).
 `contextgraph-conformance/tests/attestation_wire.rs` recomputes every commitment
 and root in these files and verifies every signature against it, so a forged or
 stale example is a red build rather than something an implementer copies.

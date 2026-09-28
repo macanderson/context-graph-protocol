@@ -18,6 +18,7 @@ pub mod error_code;
 pub mod extension;
 pub mod frame;
 pub mod identity;
+pub mod key_validity;
 pub mod query;
 pub mod range;
 pub mod record;
@@ -31,12 +32,14 @@ pub mod verify;
 pub use attest::{
     ALGORITHM_ED25519, AttestationVerdict, FrameAttestation, InclusionProof, InclusionStep,
     MAX_INCLUSION_PATH_STEPS, ProvenanceAttestation, digest_string, encode_provenance_link,
+    inclusion_path_sides,
 };
 #[cfg(feature = "attestation")]
 pub use attest::{
-    frame_commitment, inclusion_proof, merkle_root, provenance_chain_head, public_key_for,
-    result_set_commitments, result_set_root, root_from_proof, sign_commitment,
-    sign_frame_attestation, verify_commitment, verify_frame_attestation, verify_frame_inclusion,
+    FrameSigningError, frame_commitment, frame_inclusion_under_verified_root, inclusion_proof,
+    merkle_root, provenance_chain_head, public_key_for, result_set_commitments, result_set_root,
+    root_from_proof, sign_commitment, sign_frame_attestation, try_sign_frame_attestation,
+    verify_commitment, verify_frame_attestation, verify_frame_inclusion,
 };
 pub use attribution::{AttributionReport, ContextUse};
 pub use capability::{
@@ -51,6 +54,7 @@ pub use frame::{
     Provenance, Relation, Representation, Transform, rel,
 };
 pub use identity::{FrameId, canonical_order};
+pub use key_validity::{KeyValidity, KeyValidityError, WindowPosition};
 pub use query::{ContextQuery, ContextQueryResult};
 pub use range::{LineRange, LineRangeError, is_well_formed_line_range};
 pub use record::{
@@ -60,7 +64,8 @@ pub use record::{
     RequirementResult, SharingScope, ValidationOutcome, is_reserved_record_member,
 };
 pub use record_attest::{
-    RECORD_ATTESTATION_DOMAIN, RECORD_HASH_MEMBER, RecordHashError, record_attestation_message,
+    RECORD_ATTESTATION_DOMAIN, RECORD_HASH_MEMBER, RecordHashError, RecordKey, RecordKeyRing,
+    RecordKeyVerdict, record_attestation_message,
 };
 #[cfg(feature = "record-hash")]
 pub use record_attest::{
@@ -76,7 +81,8 @@ pub use token::{
 };
 pub use usage::{ProviderUsage, ServedFrame, UsageReport};
 pub use validate::{
-    DIGEST_ALGORITHMS, format_protocol_timestamp, is_protocol_timestamp, is_well_formed_digest,
+    DIGEST_ALGORITHMS, compare_protocol_timestamps, format_protocol_timestamp,
+    is_protocol_timestamp, is_well_formed_digest,
 };
 pub use verify::{FrameVerdict, Verdict, VerifyRequest, VerifyResponse};
 

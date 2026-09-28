@@ -65,6 +65,10 @@ error on a malformed line rather than crashing.
 - **`createHttpHandler(provider)`** — the same lifecycle behind one HTTP POST
   endpoint (see below).
 - **`budgetTokens(content)`** — the canonical B3 cost, `ceil(utf8_len/4)`.
+- **Provenance attestation** (`SPEC.md` §6.5) — verify and sign frames and
+  result sets.
+- **Record hashing and attestation** (the lifecycle profile) — `recordHash`
+  over RFC 8785, and `RecordAttestation` verify and sign.
 - Runnable **example providers** — `examples/example-docs.ts` (stdio) and
   `examples/example-docs-http.ts` (HTTP) — that pass the conformance suite.
 
@@ -110,9 +114,101 @@ if (verdict.verdict !== "valid") {
 }
 ```
 
-Signing is not here. The protocol specifies the preimage, never the custody of
-the key: a provider computes `frameCommitment(...)`, signs those 32 bytes with
-whatever backend holds its key, and assembles the attestation itself.
+A frame that declares no `content_digest` verifies as `valid_identity_only`,
+not `valid` ([ADR 0018](../../docs/adr/0018-signing-a-frame-requires-a-content-digest.md)):
+the signature binds who served it and its provenance, but not its bytes.
+`isValid` is `false` for it; `signatureVerifies` is `true`.
+
+A frame attested through a signed result-set root rather than its own signature
+is checked with `verifyFrameInclusion(providerId, frame, proof, rootAttestation,
+publicKey)`. It applies the same rule, and refuses a proof as
+`malformed_commitment` before hashing anything when its path is longer than
+`MAX_INCLUSION_PATH_STEPS` (64) or does not have exactly the length and
+`sibling_is_left` sides RFC 6962 gives its `(leaf_index, leaf_count)`
+(`SPEC.md` §6.5.3). `isWellShaped(proof)` runs that check alone, and
+`inclusionPathSides(leafIndex, leafCount)` returns the expected sides. The
+shape cannot tell every tree size apart (leaf 3 of 5 and leaf 3 of 7 share a
+path), so a host checking a live answer also compares `leaf_count` with the
+number of frames the answer carries.
+
+## Sign a provenance attestation
+
+The SDK signs as well as verifies
+([ADR 0033](../../docs/adr/0033-sdks-can-sign-provenance-attestations.md)),
+mirroring the Rust reference's `sign_frame_attestation`, `sign_commitment` and
+`public_key_for`:
+
+```ts
+import { publicKeyFor, signFrameAttestation, signingKeyFromSeed }
+  from "@contextgraphprotocol/typescript-sdk";
+
+// Once, at startup. A KeyObject keeps the key in OpenSSL's memory rather than
+// in a JavaScript Uint8Array (see "Key custody" below).
+const signingKey = signingKeyFromSeed(seedFromYourSecretStore); // 32 raw bytes
+const publicKey = publicKeyFor(signingKey); // hand this to hosts out of band
+
+const attestation = signFrameAttestation(
+  "repo-graph", frame, signingKey, "key-2026-09", "acme-docs", "2026-09-28T00:00:00Z",
+);
+```
+
+`signCommitment(commitment, signingKey, keyId, attesterId, issuedAt)` signs any
+32-byte commitment, including a `merkleRoot(...)` over a whole result set.
+`signFrameAttestation` refuses a frame with no `content_digest`, or one that is
+not `sha256:<64 lowercase hex>` (§D1), because ADR 0018 forbids signing a frame
+whose bytes the signature would not bind.
+
+The test suite signs the published commitment with the published seed from
+`tests/vectors/attestation-vectors.json` and compares the result to the
+published signature byte for byte. Ed25519 is deterministic, so that is exact
+equality, not "it also verifies".
+
+### Key custody
+
+The protocol specifies the preimage and never the custody of the key. The
+in-process signers are for a provider that has decided to hold its key in
+application memory, and that decision has a cost:
+
+- **Whatever can read the process can sign as you.** A heap snapshot, a core
+  dump, a debugger, a dependency with a supply-chain compromise, or a log line
+  that serialized the wrong object each hand over the key. Nothing on the wire
+  tells a host that a signature came from a stolen copy.
+- **A long-lived key makes every leak retroactive and ongoing.** Everything the
+  key ever signed stays verifiable, and everything an attacker signs with it
+  verifies too, until every host that trusts it has removed it from its trust
+  store ([ADR 0016](../../docs/adr/0016-attestation-trust-roots.md)).
+  Rotation issues a new `key_id`; it never reuses one. Rotate on a schedule
+  short enough that you would accept that window of forgery.
+- **Prefer a `KeyObject` to a raw seed.** `signingKeyFromSeed` zeroes the
+  buffer it builds, and the `KeyObject` it returns keeps the key outside the
+  JavaScript heap. It does not remove the key from the process.
+
+A provider whose key lives in an HSM or a KMS never passes it to this SDK.
+It computes the 32 bytes, has the backend sign them, and assembles the
+attestation:
+
+```ts
+import { ALGORITHM_ED25519, digestString, frameCommitment, toHex }
+  from "@contextgraphprotocol/typescript-sdk";
+
+const commitment = frameCommitment("repo-graph", frame); // 32 bytes
+const signature: Uint8Array = await kms.signEd25519(keyRef, commitment); // your backend, 64 bytes
+
+const attestation = {
+  signed_commitment: digestString(commitment),
+  key_id: "key-2026-09",
+  algorithm: ALGORITHM_ED25519,
+  attester_id: "acme-docs",
+  signature: toHex(signature),
+  issued_at: "2026-09-28T00:00:00Z",
+};
+```
+
+The backend must produce a pure Ed25519 signature (RFC 8032, not Ed25519ph)
+over exactly those 32 bytes. Check the first one against `verifyCommitment`
+before you ship it.
+
+### What a port of the attestation encoding gets wrong
 
 Two things a port of this encoding gets wrong, both of which the test suite
 catches:
@@ -133,6 +229,47 @@ npm run build && node --test "dist/test/*.test.js"
 
 They come from `tests/vectors/attestation-vectors.json`, which the Rust
 reference publishes and pins.
+
+## Hash and attest a lifecycle record
+
+The Context Exchange Provider profile
+([`docs/profiles/context-exchange-provider.md`](../../docs/profiles/context-exchange-provider.md))
+content-addresses a record by `record_hash` and signs that hash with a
+`RecordAttestation` ([ADR 0017](../../docs/adr/0017-record-hash-and-record-attestation.md)).
+
+```ts
+import { recordHash, signRecord, verifyRecordAttestation }
+  from "@contextgraphprotocol/typescript-sdk";
+
+record.record_hash = recordHash(record); // LH1: JCS, with record_hash itself left out
+const attestation = signRecord(record, signingKey, "cep-key-2026-09", "acme", "2026-09-28T00:00:00Z");
+
+const verdict = verifyRecordAttestation(record, attestation, publicKey);
+// Recomputes the hash (LC5), so rewriting record_hash to match edited
+// content is still caught as `commitment_mismatch`.
+```
+
+- **`recordHash(record)`** is `sha256:` over the RFC 8785 (JCS)
+  canonicalization of the record, with its **top-level** `record_hash` member
+  removed. A nested `record_hash` is content and stays in. When two
+  implementations disagree, diff `recordHashPreimage(record)`.
+- **`canonicalizeJson(value)`** is the RFC 8785 canonicalizer on its own. It
+  refuses `NaN`, the infinities and lone surrogates with a `RecordHashError`
+  instead of coercing them the way `JSON.stringify` does, and refuses a value
+  that contains itself instead of overflowing the stack.
+- **The signed message is `"contextgraph/attest/1/record"` followed by the
+  digest's 32 raw bytes** (`recordAttestationMessage`), so a frame-layer
+  signature over the same digest never verifies as a record attestation. An
+  HSM or KMS signs those bytes itself, as in "Key custody" above.
+
+The tests reproduce every `jcs_utf8` and `record_hash` in
+`tests/fixtures/record-hash-vectors.json` byte for byte, verify
+`record-attestation.json` under `record-attestation-key.json`, and re-sign it
+with the published test seed:
+
+```sh
+npm run build && node --test "dist/test/record/*.test.js"
+```
 
 ## Prove it conformant
 

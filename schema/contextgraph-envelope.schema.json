@@ -72,7 +72,7 @@
         "attester_keys": {
           "type": "array",
           "items": { "$ref": "#/$defs/AttesterKey" },
-          "description": "Public keys this provider signs its provenance attestations with (SPEC.md §6.5). Absent or empty means the provider offers no attestation, which is conformant: §6.5 makes the construction mandatory and the signing optional."
+          "description": "Public keys this provider signs its provenance attestations with (SPEC.md §6.5.5). Optional: a receiver MUST tolerate its absence and treat it exactly as an empty list, which means the provider offers no attestation — conformant, because §6.5 makes the construction mandatory and the signing optional. A host MAY pin a published key on first use as a trust tier strictly below an operator-configured key (ADR 0030): a pin proves continuity, never identity."
         }
       },
       "required": [

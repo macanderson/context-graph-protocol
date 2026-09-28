@@ -84,6 +84,10 @@ impl ConsentRecord {
 /// [`format_protocol_timestamp`] handles rather than saturating — a wrong-but-
 /// well-formed timestamp is still auditable, where a clamped one silently
 /// claims the epoch.
+///
+/// Whole seconds, which is the precision a consent grant is recorded at. Key
+/// validity windows are evaluated against
+/// [`now_receipt_timestamp`] instead, which keeps the sub-second part.
 fn now_protocol_timestamp() -> String {
     let now = SystemTime::now();
     let seconds = match now.duration_since(UNIX_EPOCH) {
@@ -91,6 +95,28 @@ fn now_protocol_timestamp() -> String {
         Err(before_epoch) => -(before_epoch.duration().as_secs() as i64),
     };
     format_protocol_timestamp(seconds)
+}
+
+/// The current instant as a protocol timestamp **with** nanosecond precision
+/// (`SPEC.md` §6.1 F4 allows a fractional second).
+///
+/// The trust store evaluates key validity windows at the instant an answer
+/// arrives
+/// ([ADR 0028](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0028-key-validity-windows-are-evaluated-at-receipt.md)),
+/// and a window bound may itself carry a fractional second. Flooring the
+/// receipt to whole seconds would accept evidence received at `12:00:00.9Z`
+/// under a key whose `not_after` is `12:00:00.1Z`, so the receipt keeps the
+/// clock's sub-second part. A clock set before 1970 falls back to whole
+/// seconds, as [`now_protocol_timestamp`] does.
+pub(crate) fn now_receipt_timestamp() -> String {
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(elapsed) => {
+            let whole = format_protocol_timestamp(elapsed.as_secs() as i64);
+            let stem = whole.strip_suffix('Z').unwrap_or(&whole);
+            format!("{stem}.{:09}Z", elapsed.subsec_nanos())
+        }
+        Err(_) => now_protocol_timestamp(),
+    }
 }
 
 /// The host's pre-query consent verdict for one provider — the gate result the
@@ -259,6 +285,28 @@ impl ConsentStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Codex review on #222: key validity windows may carry fractional
+    /// seconds, so the receipt instant they are checked against must keep the
+    /// clock's sub-second part rather than floor it to a whole second.
+    #[test]
+    fn a_receipt_timestamp_keeps_the_sub_second_part() {
+        let floor = now_protocol_timestamp();
+        let receipt = now_receipt_timestamp();
+        assert!(is_protocol_timestamp(&receipt), "{receipt}");
+        let fraction = receipt
+            .strip_suffix('Z')
+            .and_then(|stem| stem.rsplit_once('.'))
+            .map(|(_, digits)| digits)
+            .expect("a receipt carries a fractional second");
+        assert_eq!(fraction.len(), 9, "nanosecond precision: {receipt}");
+        assert!(fraction.bytes().all(|b| b.is_ascii_digit()), "{receipt}");
+        assert_ne!(
+            contextgraph_types::compare_protocol_timestamps(&receipt, &floor),
+            Some(std::cmp::Ordering::Less),
+            "a receipt read later is never earlier than a floored stamp read before it"
+        );
+    }
 
     #[test]
     fn recording_consent_stamps_when_it_was_granted() {

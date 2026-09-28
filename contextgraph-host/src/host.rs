@@ -24,7 +24,7 @@ use contextgraph_types::{
 use crate::consent::{ConsentDecision, ConsentRecord, ConsentStore};
 use crate::error::HostError;
 use crate::provider::{ContextProvider, capability_matches};
-use crate::stdio::StdioProvider;
+use crate::stdio::{DEFAULT_HANDSHAKE_TIMEOUT, StdioProvider};
 use crate::trust::{AttestationLedger, FrameAttestationOutcome, TrustStore, TrustedKey};
 
 /// Default per-provider query budget — a slow or hung provider is cut off at
@@ -39,6 +39,10 @@ pub struct Host {
     consent: ConsentStore,
     trust: TrustStore,
     per_provider_timeout: Duration,
+    /// Bound on each stdio provider's handshake in [`Host::add_stdio`].
+    /// Separate from `per_provider_timeout`: the handshake covers a provider's
+    /// startup, a query covers one answer.
+    handshake_timeout: Duration,
 }
 
 impl Default for Host {
@@ -55,6 +59,7 @@ impl Host {
             consent: ConsentStore::new(),
             trust: TrustStore::new(),
             per_provider_timeout: DEFAULT_PROVIDER_TIMEOUT,
+            handshake_timeout: DEFAULT_HANDSHAKE_TIMEOUT,
         }
     }
 
@@ -66,20 +71,41 @@ impl Host {
         }
     }
 
+    /// Bound how long [`Host::add_stdio`] waits for a provider's
+    /// `handshake_ack` (default [`DEFAULT_HANDSHAKE_TIMEOUT`], 10s). A provider
+    /// that misses it is refused with [`HostError::Timeout`], so a silent
+    /// provider is still never a hang.
+    ///
+    /// The bound covers the provider's whole startup, not one line of I/O: a
+    /// bridge such as `contextgraph-mcp-bridge` spawns and initializes the
+    /// server it wraps before it can ack. A host whose providers start slowly,
+    /// or a test launching several cold processes at once, raises it here for
+    /// itself instead of the default changing for every host (issue #142).
+    pub fn set_handshake_timeout(&mut self, handshake_timeout: Duration) {
+        self.handshake_timeout = handshake_timeout;
+    }
+
+    /// The bound [`Host::add_stdio`] puts on a provider's handshake.
+    pub fn handshake_timeout(&self) -> Duration {
+        self.handshake_timeout
+    }
+
     /// Register an in-process provider (a built-in, e.g. the code graph).
     pub fn register(&mut self, provider: Box<dyn ContextProvider>) {
         self.providers.push(provider);
     }
 
     /// Spawn and register a child-process provider over stdio, completing the
-    /// handshake (`SPEC.md` §3).
+    /// handshake (`SPEC.md` §3) within [`Host::handshake_timeout`].
     pub async fn add_stdio(
         &mut self,
         id: impl Into<String>,
         program: &str,
         args: &[String],
     ) -> Result<(), HostError> {
-        let provider = StdioProvider::spawn(id, program, args).await?;
+        let provider =
+            StdioProvider::spawn_with_handshake_timeout(id, program, args, self.handshake_timeout)
+                .await?;
         self.providers.push(Box::new(provider));
         Ok(())
     }
@@ -124,9 +150,11 @@ impl Host {
     /// Trust `key` for `provider_id`'s provenance attestations
     /// ([ADR 0016](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0016-attestation-trust-roots.md)).
     ///
-    /// The operator is the trust root: there is no discovery and no
-    /// trust-on-first-use, so a key is here because a person put it here, from
-    /// the same material as the provider's own configuration. A host with a UI
+    /// The operator is the trust root: there is no discovery, so a key is here
+    /// because a person put it here, from the same material as the provider's
+    /// own configuration. (A key pinned on first use is a separate, lower tier
+    /// the host opts into with [`pin_attester_keys`](Self::pin_attester_keys),
+    /// and a key trusted here replaces a pin under the same `key_id`.) A host with a UI
     /// shows [`TrustedKey::fingerprint`] beside the consent prompt, so "I
     /// consent to this provider" and "I trust this key" are one decision.
     ///
@@ -138,6 +166,44 @@ impl Host {
         self.trust.trust(provider_id, key);
     }
 
+    /// Pin the attester keys `provider_id` published in its handshake
+    /// (`handshake_ack.attester_keys`) as the **trust-on-first-use** tier —
+    /// strictly below a key the operator configured
+    /// ([ADR 0030](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0030-a-pinned-trust-tier-below-configured.md)).
+    ///
+    /// Opt-in and explicit: nothing pins unless the host calls this, and it is
+    /// never called from a query path, so a fan-out never mutates the store it
+    /// reads. Call it after registering a provider — and again on every later
+    /// connect, which is when a changed key is noticed.
+    ///
+    /// A signature verified against a pinned key reads as
+    /// [`AttestationState::Pinned`](crate::AttestationState::Pinned), never as
+    /// `Attested`: pinning proves **continuity with the first contact, never
+    /// identity**, and an attacker present at first contact is pinned too.
+    ///
+    /// Every outcome is returned, and the host **must** surface the alarms
+    /// ([`PinOutcome::is_alarm`](crate::PinOutcome::is_alarm)) to a person: a
+    /// provider publishing different bytes under a pinned `key_id` is
+    /// [`KeyChanged`](crate::PinOutcome::KeyChanged), and the pin stands rather
+    /// than being silently replaced. Persist the store afterwards
+    /// ([`TrustStore::save`]) so the pin survives a restart.
+    ///
+    /// [`HostError::UnknownProvider`] if no provider is registered under
+    /// `provider_id`.
+    pub fn pin_attester_keys(
+        &mut self,
+        provider_id: &str,
+    ) -> Result<Vec<crate::PinOutcome>, HostError> {
+        let offered = self
+            .providers
+            .iter()
+            .find(|provider| provider.id() == provider_id)
+            .ok_or_else(|| HostError::UnknownProvider(provider_id.to_string()))?
+            .attester_keys()
+            .to_vec();
+        Ok(self.trust.pin_all(provider_id, &offered))
+    }
+
     /// The trust store (read-only), e.g. to persist it beside the consent
     /// ledger or to render what an operator has trusted.
     pub fn trust(&self) -> &TrustStore {
@@ -145,6 +211,13 @@ impl Host {
     }
 
     /// Replace the whole trust store — for a host restoring one it persisted.
+    ///
+    /// The documented way to persist one is the trust file
+    /// ([ADR 0029](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0029-the-trust-store-file.md)):
+    /// `host.set_trust_store(TrustStore::load(path)?)` at startup, with a path
+    /// the operator named, and [`TrustStore::save`] after the operator trusts
+    /// or revokes a key. A file that cannot be read or parsed is a named
+    /// [`TrustFileError`](crate::TrustFileError), never an empty store.
     pub fn set_trust_store(&mut self, trust: TrustStore) {
         self.trust = trust;
     }
@@ -329,6 +402,13 @@ impl Host {
     /// attestation covered. **No frame is ever withheld for failing the check**
     /// (`SPEC.md` F9): the outcomes are a fact recorded beside the evidence, not
     /// a filter over it.
+    ///
+    /// Key validity windows are evaluated at the host clock as the answer
+    /// returns (ADR 0028). This door does not hand that instant back, so a
+    /// caller that archives the evidence for a later replay with
+    /// [`TrustStore::check_result_signed_as_at`] records its own receipt
+    /// instant; [`query_all`](Self::query_all) records it for every leg on
+    /// [`ProviderOutcome::received_at`].
     pub async fn query_provider_attested(
         &self,
         id: &str,
@@ -502,6 +582,12 @@ impl Host {
                     return ProviderOutcome::unattested(id, ProviderResult::Failed(error));
                 }
             };
+        // The receipt instant, read once, as the answer arrives: the instant
+        // every key validity window in this leg is evaluated at (ADR 0028). It
+        // is the host's own clock — never the attestations' unsigned
+        // `issued_at` — and it is recorded on the outcome so the check can be
+        // replayed later with the same result.
+        let received_at = crate::consent::now_receipt_timestamp();
 
         // Budget honesty, axis 1 (§7, B2): frames that sum above the query
         // budget are a lie about `token_cost`. Drop them, report loudly.
@@ -542,12 +628,15 @@ impl Host {
         // would silently read every attested frame as unattested whenever the
         // two differ.
         let signing_id = provider.info().name.clone();
-        let attestations = self.trust.check_result_signed_as(&id, &signing_id, &result);
+        let attestations =
+            self.trust
+                .check_result_signed_as_at(&id, &signing_id, &result, &received_at);
 
         ProviderOutcome {
             provider_id: id,
             result: ProviderResult::Frames(result),
             attestations,
+            received_at: Some(received_at),
         }
     }
 
@@ -814,6 +903,18 @@ pub struct ProviderOutcome {
     /// out, or dropped for a budget lie. Nothing here ever removes a frame
     /// from `result` (`SPEC.md` F9).
     pub attestations: Vec<FrameAttestationOutcome>,
+    /// The instant this host received the leg's answer, read from the host
+    /// clock as it arrived — the instant every trusted key's validity window
+    /// was evaluated at when [`attestations`](Self::attestations) was computed
+    /// ([ADR 0028](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0028-key-validity-windows-are-evaluated-at-receipt.md)).
+    ///
+    /// Persist it beside the evidence. It is what lets an auditor replay the
+    /// check years later with
+    /// [`TrustStore::check_result_signed_as_at`] and get the same states: a
+    /// key that has lapsed since still vouches for what arrived while it was in
+    /// service. It is this host's own record, never a value a provider
+    /// supplied. `None` for a leg that produced no frames to check.
+    pub received_at: Option<String>,
 }
 
 impl ProviderOutcome {
@@ -824,6 +925,7 @@ impl ProviderOutcome {
             provider_id,
             result,
             attestations: Vec::new(),
+            received_at: None,
         }
     }
 }
@@ -1438,6 +1540,25 @@ mod tests {
         assert_eq!(failures.len(), 1);
         assert_eq!(failures[0].0, "slow");
         assert!(matches!(failures[0].1, HostError::Timeout { .. }));
+    }
+
+    /// Issue #142: the stdio handshake bound is a per-host setting whose
+    /// default is unchanged, and it is independent of the query timeout.
+    #[test]
+    fn the_handshake_timeout_defaults_to_the_stdio_default_and_is_per_host() {
+        let host = Host::new();
+        assert_eq!(host.handshake_timeout(), DEFAULT_HANDSHAKE_TIMEOUT);
+        assert_eq!(
+            Host::with_timeout(Duration::from_millis(50)).handshake_timeout(),
+            DEFAULT_HANDSHAKE_TIMEOUT,
+            "the query timeout must not move the handshake bound"
+        );
+
+        let mut patient = Host::new();
+        patient.set_handshake_timeout(Duration::from_secs(60));
+        assert_eq!(patient.handshake_timeout(), Duration::from_secs(60));
+        // Raising one host's bound leaves every other host on the default.
+        assert_eq!(Host::new().handshake_timeout(), DEFAULT_HANDSHAKE_TIMEOUT);
     }
 
     #[tokio::test]

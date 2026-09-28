@@ -38,9 +38,11 @@
 //!   consent, and budget honesty (SPEC.md §4 and §7).
 //! - [`trust`] — the keys a host trusts for provenance attestation, and the
 //!   verifier that consumes them (SPEC.md §6.5). The operator is the trust
-//!   root: nothing is discovered and nothing is trusted on first use. An
+//!   root: nothing is discovered, and a key pinned on first use is a separate,
+//!   opt-in tier that is never reported as operator-attested. An
 //!   attestation the host cannot check degrades its frame to *unattested* and
-//!   never removes it (F9).
+//!   never removes it (F9). [`trust_file`] reads and writes the store as a
+//!   documented file at a path the operator names.
 //! - [`verify`] — the *bytes* half of F5: re-reads the local source a `file`
 //!   provenance addresses and checks its declared digest against the actual
 //!   bytes (SPEC.md §6.2). A host API, not an automatic re-read of any provider
@@ -81,12 +83,13 @@ pub mod ingest;
 pub mod provider;
 pub mod stdio;
 pub mod trust;
+pub mod trust_file;
 pub mod verify;
 pub mod wire;
 
 pub use compose::ranking::{
-    PerProviderQuota, RankingStrategy, RoundRobinByRank, ScoreDescending, is_ranking_permutation,
-    rank_with,
+    PerProviderQuota, PrecomputedOrder, RankingStrategy, RoundRobinByRank, ScoreDescending,
+    TrustWeighted, is_ranking_permutation, rank_with,
 };
 pub use compose::{
     AuditEntry, Citation, ComposedPrompt, CompositionAudit, DedupDrop, Deduped, ExclusionReason,
@@ -113,8 +116,10 @@ pub use ingest::{
 pub use provider::{ContextProvider, capability_matches, frame_kind_name};
 pub use stdio::{RawStdioConnection, StdioProvider};
 pub use trust::{
-    AttestationLedger, AttestationState, FrameAttestationOutcome, TrustStore, TrustedKey,
+    AttestationLedger, AttestationState, FrameAttestationOutcome, MAX_PINNED_KEYS_PER_PROVIDER,
+    PinOutcome, PinRefusal, TrustStore, TrustTier, TrustedKey,
 };
+pub use trust_file::{MAX_TRUST_FILE_BYTES, TRUST_FILE_FORMAT, TrustFileError, TrustFileProblem};
 pub use verify::{DigestVerification, verify_file_provenance, verify_provenance_digest};
 pub use wire::{
     AttesterKey, Envelope, decode_line, encode_line, envelope_kind, versions_compatible,

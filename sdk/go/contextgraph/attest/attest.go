@@ -1,11 +1,27 @@
 // Package attest implements the provenance-attestation constructions of
 // SPEC.md §6.5: the length-prefixed link encoding, the source-first chain
 // fold, the frame commitment, the RFC 6962 Merkle root and inclusion proofs,
-// and strict Ed25519 verification.
+// strict Ed25519 verification, and signing through any crypto.Signer.
 //
-// This is a port of contextgraph_types::attest, and the Rust crate is the
-// reference: the vectors in tests/vectors/attestation-vectors.json come from
-// it, and vectors_test.go reconciles every function here against them.
+// It also carries the record layer of the lifecycle profile: [RecordHash],
+// the RFC 8785 content address of a record, and [RecordAttestation], a
+// detached signature over one (ADR 0017).
+//
+// This is a port of contextgraph_types::attest and
+// contextgraph_types::record_attest, and the Rust crate is the reference: the
+// vectors in tests/vectors/attestation-vectors.json and tests/fixtures/ come
+// from it, and vectors_test.go and record_test.go reconcile every function
+// here against them — signing included, byte for byte, because Ed25519 is
+// deterministic and the vectors publish their seeds.
+//
+// # Signing and key custody
+//
+// [SignCommitment], [SignFrameAttestation] and [SignRecord] take a
+// crypto.Signer, so the same call serves an in-process key from
+// [PrivateKeyFromSeed] and a key that never leaves an HSM or KMS. The protocol
+// specifies the preimage, never the custody of the key; the README's
+// key-custody section says what holding a long-lived key in application
+// memory costs (ADR 0033).
 //
 // # Why a Link type of its own
 //
@@ -22,11 +38,13 @@
 // Score and a TokenCost to check a commitment. [FrameFromContextFrame] is the
 // decode-side bridge.
 //
-// # No JSON canonicalizer
+// # No JSON canonicalizer on the frame layer
 //
-// The encoding was chosen over RFC 8785 (JCS) so this port needs none (ADR
-// 0010). A provenance link is six optional strings; if you find yourself
-// reaching for encoding/json here, re-read §6.5.1.
+// The frame encoding was chosen over RFC 8785 (JCS) so the frame layer needs
+// none (ADR 0010). A provenance link is six optional strings; if you find
+// yourself reaching for encoding/json in the frame code, re-read §6.5.1. The
+// record layer is the opposite shape — an open-ended JSON document — and uses
+// the jcs package, which exists for it alone.
 package attest
 
 import (
@@ -37,6 +55,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/big"
+	"math/bits"
 	"strings"
 
 	"github.com/macanderson/context-graph-protocol/sdk/go/contextgraph"
@@ -183,7 +202,16 @@ type Verdict string
 
 // The named outcomes a [Verdict] can carry.
 const (
-	VerdictValid               Verdict = "valid"
+	VerdictValid Verdict = "valid"
+	// VerdictValidIdentityOnly is a signature that verifies over a frame that
+	// declares no content_digest (§6.5.2, F15, ADR 0018). Its commitment binds
+	// the frame's identity and provenance but not its content, so the provider
+	// could serve different content under the same id and the signature would
+	// still check out. [Result.IsValid] is false for it; ask
+	// [Result.SignatureVerifies] to accept it on purpose. A conformant attester
+	// never produces it: seeing it means the frame was signed by one that is
+	// not, or before the rule existed.
+	VerdictValidIdentityOnly   Verdict = "valid_identity_only"
 	VerdictCommitmentMismatch  Verdict = "commitment_mismatch"
 	VerdictBadSignature        Verdict = "bad_signature"
 	VerdictUnknownAlgorithm    Verdict = "unknown_algorithm"
@@ -204,11 +232,29 @@ type Result struct {
 	Algorithm string
 }
 
-// IsValid reports whether the signature verified.
+// IsValid reports whether the signature verified and binds the frame's
+// content — the verdict is [VerdictValid].
 //
 // No other verdict is provisionally acceptable: the point of an attestation is
-// that "I could not check it" and "it is good" are never the same answer.
+// that "I could not check it" and "it is good" are never the same answer. That
+// includes [VerdictValidIdentityOnly], whose signature verifies over a
+// preimage that says nothing about the bytes in hand (F15).
 func (r Result) IsValid() bool { return r.Verdict == VerdictValid }
+
+// SignatureVerifies reports whether the signature itself checked out, whatever
+// it covers: true for [VerdictValid] and [VerdictValidIdentityOnly].
+//
+// This is the narrower question, for a caller that wants provider identity and
+// provenance without a claim about content — an audit trail of who answered,
+// say. It is a separate method rather than a looser IsValid so that the choice
+// is legible at the call site.
+func (r Result) SignatureVerifies() bool {
+	return r.Verdict == VerdictValid || r.Verdict == VerdictValidIdentityOnly
+}
+
+// BindsContent reports whether the verified commitment binds the frame's
+// content bytes. Only [VerdictValid] does; a failing verdict binds nothing.
+func (r Result) BindsContent() bool { return r.Verdict == VerdictValid }
 
 // ---------------------------------------------------------------------------
 // Canonical encoding (§6.5.1)
@@ -351,12 +397,15 @@ func nodeHash(left, right [32]byte) [32]byte {
 
 // splitPoint is the largest power of two strictly less than n (RFC 6962's
 // split). Only meaningful for n >= 2.
+//
+// Bit arithmetic rather than a doubling loop, as in the Rust reference's
+// largest_power_of_two_below: a leaf count reaches [InclusionPathSides] from
+// the provider, and a doubling loop overflows for a count near math.MaxInt.
 func splitPoint(n int) int {
-	k := 1
-	for k*2 < n {
-		k *= 2
+	if n&(n-1) == 0 {
+		return n / 2
 	}
-	return k
+	return 1 << (bits.Len(uint(n)) - 1)
 }
 
 // MerkleRoot returns the root over a set of frame commitments (§6.5.3).
@@ -413,13 +462,75 @@ func collectPath(commitments [][32]byte, index int, path *[]InclusionStep) {
 	})
 }
 
+// InclusionPathSides returns the RFC 6962 inclusion-path shape for leaf
+// leafIndex of a tree of leafCount leaves: one entry per step, leaf upward,
+// each true when that step's sibling is the left operand — exactly the
+// SiblingIsLeft sequence [BuildInclusionProof] emits (§6.5.3). It is the port
+// of the Rust reference's inclusion_path_sides.
+//
+// ok is false when leafIndex is negative or not below leafCount, including for
+// an empty tree, which has no leaves to prove. The walk descends the tree's
+// split points from the root, so it takes at most ceil(log2(leafCount)) steps
+// and hashes nothing.
+func InclusionPathSides(leafIndex, leafCount int) (sides []bool, ok bool) {
+	if leafIndex < 0 || leafIndex >= leafCount {
+		return nil, false
+	}
+	sides = make([]bool, 0, bits.Len(uint(leafCount)))
+	index, count := leafIndex, leafCount
+	for count > 1 {
+		split := splitPoint(count)
+		if index < split {
+			// In the left subtree: the sibling is the right one.
+			sides = append(sides, false)
+			count = split
+		} else {
+			sides = append(sides, true)
+			index -= split
+			count -= split
+		}
+	}
+	// Collected root-downward; a proof lists its steps leaf-upward.
+	for i, j := 0, len(sides)-1; i < j; i, j = i+1, j-1 {
+		sides[i], sides[j] = sides[j], sides[i]
+	}
+	return sides, true
+}
+
+// IsWellShaped reports whether the proof's path has exactly the length and
+// sides RFC 6962 gives its (LeafIndex, LeafCount), and is no longer than
+// [MaxInclusionPathSteps] (§6.5.3, ADR 0031). It hashes nothing.
+//
+// A proof's LeafCount means something only if the path is held to it. RFC
+// 6962 fixes the path for leaf i of n: without this check a verifier can be
+// shown a genuine path from one tree under an index or a count that describes
+// another, and would recompute the same root for both.
+func (p InclusionProof) IsWellShaped() bool {
+	if len(p.Path) > MaxInclusionPathSteps {
+		return false
+	}
+	sides, ok := InclusionPathSides(p.LeafIndex, p.LeafCount)
+	if !ok || len(sides) != len(p.Path) {
+		return false
+	}
+	for i, left := range sides {
+		if p.Path[i].SiblingIsLeft != left {
+			return false
+		}
+	}
+	return true
+}
+
 // RootFromProof recomputes a Merkle root from a leaf commitment and its proof.
 //
 // The whole offline story: an auditor holding one frame, its proof and a
 // signed root needs nothing else. ok is false if any sibling is malformed, or
-// the index does not sit inside the stated leaf count.
+// the proof is not [InclusionProof.IsWellShaped] for the tree it states: an
+// index outside LeafCount, or a path whose length or sides are not the ones
+// RFC 6962 gives that (LeafIndex, LeafCount). That check runs first and hashes
+// nothing, and it is what makes LeafCount mean something (§6.5.3, ADR 0031).
 func RootFromProof(commitment [32]byte, proof InclusionProof) (root [32]byte, ok bool) {
-	if proof.LeafIndex < 0 || proof.LeafIndex >= proof.LeafCount {
+	if !proof.IsWellShaped() {
 		return root, false
 	}
 	acc := leafHash(commitment)
@@ -522,6 +633,59 @@ func VerifyCommitment(expected [32]byte, attestation ProvenanceAttestation, publ
 
 // VerifyFrameAttestation checks a detached attestation over a single frame
 // (§6.5.4).
+//
+// A frame with no ContentDigest was committed to by identity and provenance
+// alone, so a signature that verifies over it is reported as
+// [VerdictValidIdentityOnly] rather than [VerdictValid] (F15, ADR 0018), as the
+// Rust reference's verify_frame_attestation does. Every failing verdict is
+// returned unchanged: it is already the more specific answer.
 func VerifyFrameAttestation(providerID string, frame Frame, attestation ProvenanceAttestation, publicKey []byte) Result {
-	return VerifyCommitment(FrameCommitment(providerID, frame), attestation, publicKey)
+	return downgradeIdentityOnly(frame,
+		VerifyCommitment(FrameCommitment(providerID, frame), attestation, publicKey))
+}
+
+// MaxInclusionPathSteps is the longest inclusion path [VerifyFrameInclusion]
+// walks (§6.5.3), the same bound as the Rust reference's
+// MAX_INCLUSION_PATH_STEPS.
+//
+// A path of n steps describes a tree of up to 2^n leaves, so 64 covers every
+// answer that could exist. The bound is about work, not correctness: each step
+// costs a hash, the path arrives from the provider, and a verifier that walked
+// an arbitrary one would hash for as long as a peer cared to make it.
+const MaxInclusionPathSteps = 64
+
+// VerifyFrameInclusion checks that a frame was a leaf of a signed result-set
+// root (§6.5.3, F13): it recomputes the root from the frame's own commitment
+// and proof, then checks resultAttestation over that root.
+//
+// This is the other half of §6.5. A provider that signs one root and ships a
+// per-frame [InclusionProof] has attested every frame with a single signature.
+// The content-binding rule is [VerifyFrameAttestation]'s: the leaf is a
+// [FrameCommitment], so a frame with no ContentDigest is
+// [VerdictValidIdentityOnly] however many hashes sit between it and the
+// signature.
+//
+// A path longer than [MaxInclusionPathSteps], a proof that is not
+// [InclusionProof.IsWellShaped] (a leaf index outside the stated tree, or a
+// path whose length or sides disagree with its (LeafIndex, LeafCount)), or a
+// malformed sibling is [VerdictMalformedCommitment]. The length and shape are
+// decided before anything is hashed, the frame commitment included.
+func VerifyFrameInclusion(providerID string, frame Frame, proof InclusionProof, resultAttestation ProvenanceAttestation, publicKey []byte) Result {
+	if len(proof.Path) > MaxInclusionPathSteps || !proof.IsWellShaped() {
+		return Result{Verdict: VerdictMalformedCommitment}
+	}
+	root, ok := RootFromProof(FrameCommitment(providerID, frame), proof)
+	if !ok {
+		return Result{Verdict: VerdictMalformedCommitment}
+	}
+	return downgradeIdentityOnly(frame, VerifyCommitment(root, resultAttestation, publicKey))
+}
+
+// downgradeIdentityOnly turns a valid verdict over a digest-less frame into
+// [VerdictValidIdentityOnly], and leaves every other result alone.
+func downgradeIdentityOnly(frame Frame, result Result) Result {
+	if result.Verdict == VerdictValid && frame.ContentDigest == nil {
+		return Result{Verdict: VerdictValidIdentityOnly}
+	}
+	return result
 }

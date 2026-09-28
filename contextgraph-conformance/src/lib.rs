@@ -1131,6 +1131,18 @@ async fn attestation_stdio_probe(program: &str, args: &[String]) -> CheckResult 
                 uncheckable.push(format!("{named} (algorithm `{algorithm}`)"));
                 degraded.push(named.clone());
             }
+            // Through a proof, `MalformedCommitment` also covers the proof
+            // itself: a path whose length or sides are not the ones RFC 6962
+            // gives its `(leaf_index, leaf_count)`, or a sibling that is not a
+            // digest (§6.5.3, `InclusionProof::is_well_shaped`). Naming only
+            // `signed_commitment` would send the provider author to the wrong
+            // field.
+            AttestationVerdict::MalformedCommitment if proof.is_some() => {
+                problems.push(format!(
+                    "frame `{named}`: its inclusion proof or the answer's `signed_commitment` is malformed — the proof's path must have exactly the length and sides RFC 6962 gives its `leaf_index` and `leaf_count`, and every sibling and the signed root must be `sha256:<64 lowercase hex>` (§6.5.3, §F7) (MalformedCommitment)"
+                ));
+                degraded.push(named.clone());
+            }
             verdict => {
                 problems.push(describe_attestation_failure(named, &verdict));
                 degraded.push(named.clone());

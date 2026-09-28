@@ -111,19 +111,36 @@ the conservative provider is cited nowhere.
 
 [`compose::ranking::RankingStrategy`][ranking] is where a host's answer to that
 lives, and the strategy's order is what the budget packer walks —
-[`compose_for_prompt_with`][compose_for_prompt] takes one. Three ship:
+[`compose_for_prompt_with`][compose_for_prompt] takes one. Five ship:
 
 | Strategy | Order | Cross-provider score comparison |
 |---|---|---|
 | `ScoreDescending` (default) | raw `score` descending over the union | yes — the documented default |
 | `RoundRobinByRank` | every provider's best, then every provider's second | none |
 | `PerProviderQuota::new(k)` | each provider's top `k`, then each provider's next `k` | none |
+| `TrustWeighted` | a provider of weight `w` is dealt `w` frames per round; weight `0` is a last resort | none — a weight scales allocation, never `score` |
+| `PrecomputedOrder::new(name, ids)` | the order a host's own reranker produced, then any unnamed frames in round-robin order | whatever the host's reranker does |
 
-All three break the final tie on the canonical `FrameId`, and the two
-interleaving strategies ordinalize providers through a `BTreeMap`, so a
-ranking is a pure function of the frame set. With a single provider all three
-produce the same order — the cross-provider question does not arise, and none
-of them invents one.
+All five break the final tie on the canonical `FrameId`, and the interleaving
+strategies ordinalize providers through a `BTreeMap`, so a ranking is a pure
+function of the frame set. With a single provider the first four produce the
+same order — the cross-provider question does not arise, and none of them
+invents one.
+
+**A reranker runs before composition, not inside it.** A reranker does I/O and
+`RankingStrategy::order` is synchronous and pure, so the host awaits its
+reranker beside its fan-out and passes the verdict in as a
+`PrecomputedOrder` — a list of `FrameId`s, so composition's dedup step cannot
+shift it. [`examples/rerank_before_compose.rs`][rerank-example] runs the flow:
+
+```text
+cargo run -p contextgraph-host --example rerank_before_compose
+```
+
+Whichever strategy ran, the audit records it: `composed.audit.ranking_policy`
+is the strategy's `policy_name()` — `"score-descending"` for
+`compose_for_prompt`, the reranker's own name for a `PrecomputedOrder` — so
+the F10 choice is part of the record rather than the caller's memory.
 
 A strategy ranks; it never filters. Dropping a frame is the budget packer's
 decision because only the packer records an [`ExclusionReason`][audit] for the
@@ -193,7 +210,8 @@ pub struct CompositionAudit {
     pub entries: Vec<AuditEntry>, // one per offered frame
     pub global_budget: u32,
     pub tokens_used: u32,          // summed canonical cost of included frames; <= global_budget
-}
+    pub ranking_policy: String,    // RankingStrategy::policy_name() of the policy that ordered the frames
+}                                  // #[non_exhaustive]: read it, never build it
 
 pub struct AuditEntry {
     pub frame: FrameId,
@@ -219,6 +237,8 @@ So a host can answer, from the record alone:
 - **Why is the prompt within budget?** — `tokens_used <= global_budget`, and
   it is packed from the *canonical* cost of each frame (not the provider-declared
   `token_cost`), so an under-declared frame still cannot sneak past the budget.
+- **In what order, and by whose rule?** — `ranking_policy` names the
+  cross-provider ranking policy the call ran under (`SPEC.md` §6.6, F10).
 - **Which quoted evidence was signed?** — `entry.attestation`, below.
 
 `audit.included()`, `audit.excluded()`, `audit.attested()` and
@@ -231,17 +251,24 @@ asserts against a deliberately over-budget, duplicate-content fixture.
 `entry.attestation` records what the host found when it checked the frame's
 detached [provenance attestation](../SPEC.md) (§6.5) against its own
 [`TrustStore`][trust] — the keys **an operator** chose to trust for that
-provider ([ADR 0016](adr/0016-attestation-trust-roots.md); there is no registry
-and no trust-on-first-use, because a host that needs an organization behind it
-is not one an individual can run).
+provider ([ADR 0016](adr/0016-attestation-trust-roots.md); there is no registry,
+because a host that needs an organization behind it is not one an individual
+can run). A host may also opt in to pinning a provider's published keys on first
+use ([ADR 0030](adr/0030-a-pinned-trust-tier-below-configured.md)); a frame
+verified against a pinned key reads as `Pinned`, never `Attested`, because a pin
+proves the key has not changed since first contact and nothing about whose it
+is.
 
 | state                          | meaning                                                          |
 | ------------------------------ | ---------------------------------------------------------------- |
 | `NotChecked`                   | the host consulted no trust store — "I did not look"             |
 | `Unattested`                   | the provider offered no attestation for this frame               |
-| `Attested { .., covers_content }` | verified against a trusted key                                |
+| `Attested { .., covers_content }` | verified against a key the operator configured                |
+| `Pinned { .., covers_content }` | verified against a key pinned on first use — continuity, not identity; `is_attested()` is false |
 | `NoTrustedKey { key_id }`      | an attestation arrived; the host holds no key under that `key_id` |
+| `KeyNotInService { key_id, received_at, .. }` | the key is trusted, but its validity window did not cover the instant the answer arrived ([ADR 0028](adr/0028-key-validity-windows-are-evaluated-at-receipt.md)) |
 | `UnknownAlgorithm { .. }`      | a scheme this build cannot check (F8) — a refusal to guess        |
+| `UnusableEvidence`             | an entry named the frame but could not be turned into a check (a proof with no signed root, or an empty entry) |
 | `Invalid { verdict }`          | a trusted key was found and the check failed; the verdict says how |
 
 Two things this deliberately does **not** do. It never removes a frame: an
@@ -262,6 +289,92 @@ chain (§6.5.2), and `content_digest` is optional — so a signed frame that
 declares none has a valid signature over its identity and its provenance and
 **nothing over its text**. The flag is `false` there, and a host should not
 present such a frame as though its words were signed.
+
+#### Where the trusted keys come from, and how they survive a restart
+
+The store is filled by the operator and nobody else. Keep it in a **trust
+file** at a path the operator names
+([ADR 0029](adr/0029-the-trust-store-file.md)) — there is no default location
+and no discovery — and load it when the host starts:
+
+```rust
+use contextgraph_host::{Host, TrustStore};
+
+let mut host = Host::new();
+// A missing, unreadable or malformed file is a named TrustFileError — never a
+// silently empty store that verifies nothing.
+host.set_trust_store(TrustStore::load(&operator_named_path)?);
+```
+
+The file is a small JSON document:
+
+```json
+{
+  "format": "contextgraph-trust/1",
+  "providers": {
+    "docs": [
+      {
+        "key_id": "docs-2026-08",
+        "algorithm": "ed25519",
+        "public_key": "<64 hex characters>",
+        "fingerprint": "sha256:<64 hex characters>",
+        "not_before": "2026-08-01T00:00:00Z",
+        "not_after": "2027-07-31T23:59:59Z"
+      }
+    ]
+  }
+}
+```
+
+`providers` is keyed by the id the operator registered the provider under — the
+same id consent is recorded under. `fingerprint` is optional when you write the
+file by hand and must match the key when present; `not_before` / `not_after` are
+the key's optional, inclusive validity window, evaluated at the instant each
+answer arrives ([ADR 0028](adr/0028-key-validity-windows-are-evaluated-at-receipt.md)).
+A key the host pinned on first use carries `"tier": "pinned"`
+([ADR 0030](adr/0030-a-pinned-trust-tier-below-configured.md)); saving it is
+what lets the host notice, after a restart, that the provider's key changed.
+Any other member is an error. `TrustStore::save(path)` writes the file back
+atomically after the operator trusts or revokes a key.
+
+**Show the fingerprint in the consent flow.** "I consent to this provider" and
+"I trust this key" are one decision about one party (ADR 0016 §2), so a host
+that prompts for consent shows the keys it trusts for that provider beside the
+prompt:
+
+```rust
+for key in host.trust().keys_for(provider_id) {
+    println!(
+        "  signing key {}  fingerprint {}",
+        key.key_id,
+        key.fingerprint().unwrap_or_else(|| "(malformed key)".into()),
+    );
+}
+```
+
+The fingerprint is `sha256:` over the key bytes, the same string the trust file
+records beside the key, so a person can compare it with the one the provider's
+operator published before they say yes.
+
+**Pinning on first use is opt-in, and it is a lower tier.** A host that wants
+credit for a provider nobody handed it a key for can pin the keys the provider
+published at its handshake, then save the store so the pin survives:
+
+```rust
+for outcome in host.pin_attester_keys(provider_id)? {
+    if outcome.is_alarm() {
+        // KeyChanged or ConflictsWithConfigured: the provider now publishes
+        // different bytes under a key_id this host already holds. The held
+        // key stands. A person has to hear about this.
+        eprintln!("signing key changed for {provider_id}: {outcome:?}");
+    }
+}
+host.trust().save(&operator_named_path)?;
+```
+
+Frames verified against a pinned key read as `Pinned`, and `is_attested()` is
+false for them: a pin proves the key has not changed since first contact, not
+whose it is ([ADR 0030](adr/0030-a-pinned-trust-tier-below-configured.md)).
 
 [trust]: https://docs.rs/contextgraph-host/latest/contextgraph_host/trust/struct.TrustStore.html
 
@@ -290,6 +403,7 @@ catches the misbehaving input and accepts the well-behaved counterpart.
 [dedup_cross_provider]: ../contextgraph-host/src/compose.rs
 [order_by_value]: ../contextgraph-host/src/compose.rs
 [ranking]: ../contextgraph-host/src/compose/ranking.rs
+[rerank-example]: ../contextgraph-host/examples/rerank_before_compose.rs
 [budget_split]: ../contextgraph-host/src/compose.rs
 [query_all]: ../contextgraph-host/src/host.rs
 [query_all_budgeted]: ../contextgraph-host/src/host.rs

@@ -20,6 +20,55 @@ text lands without a human merge.
 ## [Unreleased]
 
 ### Added
+- Key validity windows for attestation keys (#136, #120; ADR 0028). A trusted key can carry an inclusive `not_before`/`not_after` window. It is checked against the time the verifier *received* the evidence, never the unsigned `issued_at`.
+  - New in `contextgraph-types`: `KeyValidity`, `WindowPosition` and `compare_protocol_timestamps`.
+  - Frames: `TrustedKey::validity` and the new state `AttestationState::KeyNotInService`. The frame is still served (F9).
+  - Replay: `TrustStore::check_signed_as_at` / `check_result_signed_as_at` let an auditor re-check archived evidence. `ProviderOutcome::received_at` records the receipt time a fan-out used.
+  - Records: `RecordKeyRing` / `RecordKey` / `RecordKeyVerdict` look up a record attestation's key by `key_id` and check its window.
+- A documented trust-store file, `contextgraph-trust/1` (#134; ADR 0029). `TrustStore::load` / `save` / `from_trust_file_json` / `to_trust_file_json` read and write it, from a path the operator names only.
+  - Reading is strict: a bad or unreadable file is a named `TrustFileError` / `TrustFileProblem`, never an empty store.
+  - Each key's fingerprint is recorded beside it and checked on load. Writes are atomic.
+  - `TrustStore::providers()` lists what an operator has trusted.
+- An opt-in trust-on-first-use tier, below operator-configured keys (#130; ADR 0030). `TrustTier` is stored on each `TrustedKey` and in the trust file.
+  - A match against a pinned key reads as `AttestationState::Pinned`, and `is_attested()` is false for it. `signature_verified()` and `trust_tier()` expose it.
+  - Pinning is an explicit call: `TrustStore::pin` / `pin_all` and `Host::pin_attester_keys`, capped by `MAX_PINNED_KEYS_PER_PROVIDER`.
+  - A key that changes under a pinned `key_id` returns a `PinOutcome::KeyChanged` alarm and is never re-pinned.
+  - `ContextProvider::attester_keys()` is a new method with a default of no keys. The stdio and HTTP providers keep the keys from the handshake.
+- New in `contextgraph-types`: `InclusionProof::is_well_shaped`, `inclusion_path_sides` and `frame_inclusion_under_verified_root` (#133; ADR 0031).
+- `contextgraph-host`: `TrustWeighted` ranking strategy (#115). Per-provider weights set by the host decide how many frames each provider is dealt per round. A weight never scales `score`, because that would be the cross-provider score comparison `SPEC.md` §6.6 (F10) forbids. Weight `0` ranks a provider last and never excludes it. With no weights set it equals `RoundRobinByRank`; a uniform weight `k` equals `PerProviderQuota::new(k)`.
+- `contextgraph-host`: `PrecomputedOrder` ranking strategy, the reranker hook (#115). A host awaits its own reranker before composing and passes the resulting `FrameId` order in, named after the reranker. Because the order is keyed by identity, cross-provider dedup cannot shift it. Frames the order does not name keep their relative order under `RoundRobinByRank`. `examples/rerank_before_compose.rs` runs the whole flow, and CI runs the example.
+- `contextgraph-host`: `CompositionAudit::ranking_policy` (#116). It records the `RankingStrategy::policy_name` of the policy that ordered the frames, so every composition's audit names the F10 policy choice.
+- TypeScript SDK: `signCommitment`, `signFrameAttestation`, `publicKeyFor` and `signingKeyFromSeed` produce provenance attestations in-process, mirroring the Rust reference's signing functions over `node:crypto`. They take a raw 32-byte seed or a private Ed25519 `KeyObject`. A test signs the published commitment with the published seed and matches the published signature byte for byte. The README gains a key custody section with an HSM/KMS recipe (#127, ADR 0033).
+- TypeScript SDK: `verifyFrameInclusion` and `MAX_INCLUSION_PATH_STEPS` mirror the Rust reference's `verify_frame_inclusion`. A frame attested through a signed result-set root is checked with the 64-step path bound applied before any hashing, and with the ADR 0018 content-binding rule (#127).
+- TypeScript SDK: `recordHash`, `recordHashPreimage`, `recordHashIsCurrent` and `canonicalizeJson` implement RFC 8785 with the top-level omit-self rule, refusing NaN, the infinities, lone surrogates and cyclic values. The SDK also verifies `RecordAttestation` (`verifyRecordAttestation`, which recomputes the hash per LC5, and `verifySignedRecordHash`) and signs one (`signRecord`, `signRecordAttestation`, `recordAttestationMessage`). Tests reproduce every published `jcs_utf8` and `record_hash` and the published record attestation, and a dedicated CI step runs them (#119).
+- ADR 0033: SDKs can sign provenance attestations. It covers TypeScript, Python (an optional `cryptography` extra, used for signing only) and Go.
+- Python SDK: `contextgraph_sdk.record` gains `record_hash`, `record_hash_preimage`, `record_hash_is_current`, `record_attestation_message`, `RecordAttestation`, `verify_record_attestation` and `verify_signed_record_hash`. It is backed by an RFC 8785 (JCS) canonicalizer that needs only the standard library (`canonicalize`). Numbers follow ECMAScript `Number::toString`, member names sort by UTF-16 code unit, and anything nested deeper than the stack allows is refused by name. Tests pin it to RFC 8785 Appendix B, to the §3.2.3 and §3.2.4 examples, to every vector in `tests/fixtures/record-hash-vectors.json`, and to the published record attestation (#119).
+- Python SDK: an optional signing path, `sign_commitment`, `sign_frame_attestation`, `public_key_for`, `sign_record_attestation` and `sign_record`. It uses the new `contextgraph-sdk[signing]` extra (`cryptography>=41`), so the SDK still has no required dependency. Without the extra, every signer raises `SigningUnavailableError` and never gives a different answer. `sign_frame_attestation` refuses a frame whose `content_digest` is absent (ADR 0018) or malformed (SPEC D1). Tests sign the published commitment and the published record with the published seeds and match the published signatures byte for byte. CI installs the extra so these tests cannot skip. The README gains key-custody guidance (#127).
+- Python SDK: `ProvenanceAttestation.to_wire()`, `AttestationVerdict.signature_verifies()` and `AttestationVerdict.binds_content()`, and a new `examples/sign_and_verify.py`.
+- Go SDK: `attest.SignCommitment`, `attest.SignFrameAttestation`, `attest.PrivateKeyFromSeed` and `attest.PublicKeyFor`. Signing takes any `crypto.Signer` with an Ed25519 key, so an in-process key and an HSM- or KMS-held key use the same call. The signer's key is held to the strict-verifier rules, the signature is verified before it is returned, and a frame with no `content_digest` is refused (§6.5.2, ADR 0018). Signing is pinned byte for byte to the published seed and signature in `tests/vectors/attestation-vectors.json` (#127).
+- Go SDK: package `contextgraph/jcs`, a stdlib-only RFC 8785 canonicalizer. Its strict parser refuses lone surrogates, invalid UTF-8 and duplicate members. It sorts members by UTF-16 code unit and formats numbers as ECMAScript does. It is tested against RFC 8785 §3.2.3, §3.2.4 and the Appendix B number table (#119).
+- Go SDK: `attest.RecordHash`, `RecordHashPreimage`, `RecordHashIsCurrent`, `RecordHashOf`, the `RecordAttestation` type, `VerifyRecordAttestation` (recomputes the hash, LC5), `VerifySignedRecordHash`, `RecordAttestationMessage` (LC4), `SignRecord` and `SignRecordAttestation`. They reproduce every vector in `tests/fixtures/record-hash-vectors.json`, verify `record-attestation.json`, and re-sign it byte for byte. The `sdk (go)` CI job runs both packages (#119).
+- Go SDK: `attest.VerifyFrameInclusion` checks a frame against a signed result-set root. It mirrors the Rust reference's `verify_frame_inclusion`, and `attest.MaxInclusionPathSteps` (64) bounds the path before any hashing. `Result.SignatureVerifies()` and `Result.BindsContent()` are also added.
+- Go SDK README: sections on signing, key custody, and record hashing.
+- `contextgraph-inspect record hash|preimage|verify|attest` (#121). These are offline record-layer verbs:
+  - `hash` prints a record's `record_hash`.
+  - `preimage` prints the exact RFC 8785 (JCS) preimage the hash is taken over. There is no trailing newline, so it pipes into `sha256sum` and diffs against another implementation's canonicalization.
+  - `verify` checks whether a stored `record_hash` is current.
+  - `attest` verifies a detached `RecordAttestation` against a record (`--record`) or a bare hash (`--record-hash`) under an Ed25519 public key (`--key`).
+
+  Every file argument accepts `-` for stdin. Exit statuses are 0 for a positive answer, 1 for a negative one, and 2 when the input cannot be checked. Documented in `docs/running-conformance.md` and covered by `contextgraph-conformance/tests/inspect_record.rs`.
+- `contextgraph-host`: the stdio handshake bound is now a per-host setting. New APIs: `Host::set_handshake_timeout` / `Host::handshake_timeout`, `StdioProvider::spawn_with_handshake_timeout`, `RawStdioConnection::handshake_with_timeout`, and the public `stdio::DEFAULT_HANDSHAKE_TIMEOUT`. The default is unchanged at 10s. A host whose providers do real work before they ack, such as `contextgraph-mcp-bridge`, can raise the bound for itself only (#142).
+- **Release tags are checked before anything publishes (#103, ADR 0034).** `release.yml`'s `preflight` job runs the new `.github/scripts/check-release-tag.py` first, on a pinned Python 3.12. It refuses to publish in three cases:
+  - the tag is not exactly `contextgraph-v` + the version the four published crates share;
+  - the tagged commit is not on `main`;
+  - that version is already on crates.io. This check fails closed when the index cannot be read.
+
+  The `publish` job then checks out the commit `preflight` checked, not the tag, and publishes the version `preflight` wrote as an output. Self-tests make each rule fail and then pass.
+- **ADR 0034: one release tag per release train.** `contextgraph-vX.Y.Z` for the crates, `sdk/go/vX.Y.Z` for the Go SDK (the shape Go requires), `npm-v*` / `pypi-v*` for SDK verification, and no bare `v*` tag. Every version already on crates.io gets a retroactive annotated tag on the commit its `.crate` file records in `.cargo_vcs_info.json`. PUBLISHING.md has the exact commands for a maintainer, including cancelling the release runs those old commits start.
+- README badges for `contextgraph-trace` on crates.io and docs.rs (#2).
+- `contextgraph-types`: `try_sign_frame_attestation` and `FrameSigningError` (behind the `attestation` feature, re-exported at the crate root). It refuses a frame that declares no `content_digest` with `FrameSigningError::NoContentDigest`, as SPEC.md §6.5.2 and ADR 0018 require and as every SDK signer does; it also refuses a declared digest that is not `sha256:<64 lowercase hex>` (SPEC §D1) with `FrameSigningError::MalformedContentDigest`, as the TypeScript (`TypeError`), Go (`ErrMalformedContentDigest`) and Python signers now all do. For a well-formed digest it returns the same attestation as `sign_frame_attestation`, whose docs now point providers at the checked variant (ADR 0033).
+- Python SDK: `verify_frame_inclusion`, the F13 check of a frame against a signed result-set root, matching the Rust reference, TypeScript and Go.
+- CI: a `bridge-parallel` job runs the `bridge_via_host` tests five times at default parallelism on Linux and macOS, so the #142 handshake timeout cannot return silently on either platform.
 - **CI guard scripts are tested against inputs built to be wrong** (#207) — a
   new `guard-self-tests` job runs `.github/scripts/tests/`. It holds that the
   scaffold action-pin guard goes red on a quoted or SHA-commented stale pin, an
@@ -325,6 +374,31 @@ text lands without a human merge.
   could never have seen it (#98).
 
 ### Changed
+- A host now verifies a signed result-set root once per answer instead of once per frame (#133; ADR 0031).
+- `root_from_proof` and `verify_frame_inclusion` reject an inclusion proof whose length or sides don't match its stated `leaf_index` / `leaf_count`, before any hashing. The host also rejects a proof whose `leaf_count` differs from the answer's frame count (F12). Honest proofs are unaffected.
+- `SPEC.md`:
+  - §6.5.2: a verifier that keeps key validity windows must check them against the receipt time, never `issued_at`.
+  - §6.5.3: a proof-shape MUST, and a SHOULD to verify the root once per answer.
+  - §6.5.5: receivers MUST tolerate an absent `attester_keys`, plus MUST rules for a host that pins keys.
+- Profile LC3 now says what a key-id validity window means and which time it is checked against.
+- The `attester_keys` schema description is updated, and `examples/reference-messages.json` now shows a published key.
+- ADRs 0016, 0019 and 0021 are amended to match.
+- Breaking for `contextgraph-host` at the Rust level: `TrustedKey` has two new fields, `AttestationState` has two new variants, and `ProviderOutcome` has a new field. See MIGRATION.md §5.7.
+- **Breaking (Rust semver), `contextgraph-host`:** `CompositionAudit` has a new public field, `ranking_policy: String`, and is now `#[non_exhaustive]` (#116). Downstream code can no longer build it with a struct literal or match all its fields exhaustively; read it through its fields and accessors. No wire change. ADR 0015 is amended (2026-09-28) to record this, the decision that a weight scales allocation, and the choice to rerank before composing (option 1).
+- TypeScript SDK: `signFrameAttestation` refuses a frame with no `content_digest`. `verifyFrameAttestation` and `verifyFrameInclusion` report a verified signature over such a frame as `valid_identity_only` rather than `valid`, bringing the SDK in line with ADR 0018. New helpers are `signatureVerifies` and `bindsContent`. `isValid` stays `false` for `valid_identity_only`.
+- ADR 0017 amended (2026-09-28): the TypeScript SDK canonicalizes with the runtime's own ECMAScript primitives, pinned to the same RFC 8785 vectors.
+- `contextgraph-conformance` now enables `contextgraph-types`' `record-attestation` feature on its ordinary dependency instead of only as a dev-dependency, because the `contextgraph-inspect record` verbs need it (#121).
+- **PUBLISHING.md's crate runbook is rewritten** for the four published crates:
+  - tag first, on `main`;
+  - publish by hand only from a checkout of the tag, to finish a failed run;
+  - check a release against its tag after publishing.
+
+  `check-published-crates.py` now holds PUBLISHING.md to naming all four crates.
+- `MIGRATION.md` §2 and `sdk/PUBLISHING.md` name the one tag convention, and §2 no longer tells readers to pin a release tag for a fix that has not been released.
+- The README CI badge reports `main` explicitly (`?branch=main`) and links to main's runs (#2).
+- `docs/GUIDE.md` describes `ContextQueryResult`'s `frame_attestations` and `result_attestation` (#162).
+- SDKs (Python, TypeScript, Go): the inclusion-proof verifiers refuse, before any hashing, a proof whose path is not exactly the RFC 6962 shape for its `(leaf_index, leaf_count)`, so a genuine path presented under a false index or tree size is `malformed_commitment` (SPEC.md §6.5.3, ADR 0031). New in each SDK: `inclusion_path_sides` / `inclusionPathSides` / `InclusionPathSides` and `is_well_shaped` / `isWellShaped` / `IsWellShaped`.
+- `contextgraph-host`: `AttestationState::covers_content()` is also true for a `Pinned` state whose signature binds the frame's bytes. Content binding is a property of the signature; `trust_tier()` reports how far the key is trusted.
 - **`/triage-sweep` quotes the SCR-005 record's own statement** (#210) — both
   Stella command files now quote the record verbatim, next to the sentence they
   attribute to the retired markdown record.
@@ -521,6 +595,16 @@ text lands without a human merge.
   `contextgraph/1.0` and the crates shipped `1.0.0`.
 
 ### Fixed
+- `docs/composing-frames-into-a-prompt.md` now lists the `UnusableEvidence` attestation state, which was missing.
+- Python SDK: `verify_frame_attestation` now reports `valid_identity_only` rather than `valid` for a signature over a frame that declares no `content_digest`, as ADR 0018 requires and as the Rust reference already does. `is_valid()` is false for it.
+- Go SDK: `attest.VerifyFrameAttestation` now returns the new `VerdictValidIdentityOnly` (`valid_identity_only`) instead of `valid` for a verified frame with no `content_digest`. This brings Go in line with SPEC F15, ADR 0018 and the Rust reference. `IsValid()` is false for this verdict.
+- `contextgraph-mcp-bridge`: `bridge_via_host` no longer times out when its two tests run in parallel. The cause was contention, not a pipe deadlock. The bridge acks only after it has launched its MCP server and fetched every resource, so four cold process launches under load overran the host's 10s handshake bound. The tests now set a 60s bound for their own hosts, and every assertion is kept (#142).
+- **`publish-spec.yml` can no longer publish from a branch other than `main` (#202).** The publish job now requires `github.ref == 'refs/heads/main'`. The comment beside `role-to-assume` no longer calls `environment: production` load-bearing on its own: the environment restricts publishing only when a deployment-branch policy limits `production` to `main`, and that policy must be set in the repository settings. PUBLISHING.md's one-time setup says the same.
+- The `contextgraph-host` README's example provider built `ContextQueryResult` with a three-field struct literal that no longer compiles. It now uses `ContextQueryResult::unattested` (#162).
+- `contextgraph-host`: a trust file that names a provider twice, or repeats a member inside a key entry (e.g. two `not_after`), is refused as a named `TrustFileError` instead of silently keeping the last copy; `TrustStore::save` creates its temporary with `create_new` under a unique name (#134, ADR 0029).
+- `contextgraph-host`: key validity windows are evaluated against a receipt instant with nanosecond precision (`ProviderOutcome::received_at` and the live `TrustStore::check*` paths). Flooring it to whole seconds accepted evidence received at `12:00:00.9Z` under a key whose `not_after` is `12:00:00.1Z` (ADR 0028).
+- `contextgraph-inspect record …` refuses a JSON document with a duplicate member, at any depth, as uncheckable (exit 2) instead of hashing the last copy — RFC 8785 requires unique member names.
+- The conformance attestation check names a malformed inclusion proof as the cause of an inclusion-proof `MalformedCommitment`, instead of blaming the answer's `signed_commitment`.
 - **The triage guard strips every label family SCR-005 reserves** (#137) —
   `triage-guard.yml` now removes a creator-applied size label (`size/*`) as well
   as any priority (`P<n>`). It re-queues the issue as `triage` only when no

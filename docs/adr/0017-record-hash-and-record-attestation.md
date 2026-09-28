@@ -165,3 +165,20 @@ pretended otherwise would be an agreeable coincidence rather than evidence.
 - The frame layer is untouched. ADR 0010's argument against JCS for a provenance
   link is unaffected by this ADR adopting JCS for a record, and the two modules
   each say so where a reader will meet the apparent contradiction.
+
+## Amendment — 2026-09-28: the TypeScript SDK canonicalizes with the runtime
+
+§1 says the rule is delegated, not hand-rolled, and the Rust crate keeps that
+decision. The TypeScript SDK's port (#119, `sdk/typescript/src/record.ts`)
+walks the value with the runtime's own primitives instead. It adds no
+dependency, and this does not reverse §1. RFC 8785 defines its number and
+string serialization *as* ECMAScript's `Number::toString` and
+`JSON.stringify`, and member order as UTF-16 code-unit order, which is what
+`Array.prototype.sort` compares by default. In JavaScript those primitives are
+the reference, and a library would call the same ones. The port adds only what
+the runtime does not do: it refuses `NaN`, the infinities and lone surrogates,
+which `JSON.stringify` would coerce to `null` or escape.
+
+The evidence rule in §1 applies unchanged. The TypeScript tests pin §3.2.4's
+byte listing, §3.2.3's sort order and Appendix B's full table, and reproduce
+every `jcs_utf8` in `tests/fixtures/record-hash-vectors.json` byte for byte.
