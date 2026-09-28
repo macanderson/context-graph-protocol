@@ -1,11 +1,27 @@
 // Package attest implements the provenance-attestation constructions of
 // SPEC.md §6.5: the length-prefixed link encoding, the source-first chain
 // fold, the frame commitment, the RFC 6962 Merkle root and inclusion proofs,
-// and strict Ed25519 verification.
+// strict Ed25519 verification, and signing through any crypto.Signer.
 //
-// This is a port of contextgraph_types::attest, and the Rust crate is the
-// reference: the vectors in tests/vectors/attestation-vectors.json come from
-// it, and vectors_test.go reconciles every function here against them.
+// It also carries the record layer of the lifecycle profile: [RecordHash],
+// the RFC 8785 content address of a record, and [RecordAttestation], a
+// detached signature over one (ADR 0017).
+//
+// This is a port of contextgraph_types::attest and
+// contextgraph_types::record_attest, and the Rust crate is the reference: the
+// vectors in tests/vectors/attestation-vectors.json and tests/fixtures/ come
+// from it, and vectors_test.go and record_test.go reconcile every function
+// here against them — signing included, byte for byte, because Ed25519 is
+// deterministic and the vectors publish their seeds.
+//
+// # Signing and key custody
+//
+// [SignCommitment], [SignFrameAttestation] and [SignRecord] take a
+// crypto.Signer, so the same call serves an in-process key from
+// [PrivateKeyFromSeed] and a key that never leaves an HSM or KMS. The protocol
+// specifies the preimage, never the custody of the key; the README's
+// key-custody section says what holding a long-lived key in application
+// memory costs (ADR 0033).
 //
 // # Why a Link type of its own
 //
@@ -22,11 +38,13 @@
 // Score and a TokenCost to check a commitment. [FrameFromContextFrame] is the
 // decode-side bridge.
 //
-// # No JSON canonicalizer
+// # No JSON canonicalizer on the frame layer
 //
-// The encoding was chosen over RFC 8785 (JCS) so this port needs none (ADR
-// 0010). A provenance link is six optional strings; if you find yourself
-// reaching for encoding/json here, re-read §6.5.1.
+// The frame encoding was chosen over RFC 8785 (JCS) so the frame layer needs
+// none (ADR 0010). A provenance link is six optional strings; if you find
+// yourself reaching for encoding/json in the frame code, re-read §6.5.1. The
+// record layer is the opposite shape — an open-ended JSON document — and uses
+// the jcs package, which exists for it alone.
 package attest
 
 import (
