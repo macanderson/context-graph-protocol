@@ -11,6 +11,7 @@ package attest
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -176,7 +177,7 @@ func TestSigningThePublishedRecordReproducesThePublishedAttestation(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	public, err := PublicKeyFromSeed(mustHex(t, key.SigningKeySeed))
+	public, err := PublicKeyFor(mustHex(t, key.SigningKeySeed))
 	if err != nil {
 		t.Fatal(err)
 	}

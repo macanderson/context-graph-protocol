@@ -10,7 +10,7 @@ package attest
 // provider whose key never leaves an HSM, and the second is not asked to
 // assemble the attestation by hand.
 //
-// [PrivateKeyFromSeed] and [PublicKeyFromSeed] mirror the Rust reference's
+// [PrivateKeyFromSeed] and [PublicKeyFor] mirror the Rust reference's
 // seed-based API (contextgraph_types::attest::sign_commitment and
 // public_key_for), which is what lets vectors_test.go pin signing to the
 // published seed and signature byte for byte rather than round-tripping it
@@ -70,10 +70,10 @@ func PrivateKeyFromSeed(seed []byte) (ed25519.PrivateKey, error) {
 	return ed25519.NewKeyFromSeed(seed), nil
 }
 
-// PublicKeyFromSeed returns the public key a 32-byte seed derives, in the raw
+// PublicKeyFor returns the public key a 32-byte seed derives, in the raw
 // form [VerifyCommitment] and [VerifyRecordAttestation] accept. It mirrors the
 // Rust reference's public_key_for.
-func PublicKeyFromSeed(seed []byte) (ed25519.PublicKey, error) {
+func PublicKeyFor(seed []byte) (ed25519.PublicKey, error) {
 	key, err := PrivateKeyFromSeed(seed)
 	if err != nil {
 		return nil, err
@@ -140,7 +140,9 @@ func SignCommitment(commitment [32]byte, signer crypto.Signer, keyID, attesterID
 // [ErrFrameHasNoContentDigest]: §6.5.2 requires an attester to populate it,
 // because a digest-less commitment does not bind the frame's content (ADR
 // 0018). [FrameCommitment] itself still computes such a commitment, because a
-// verifier has to be able to check signatures made before that rule.
+// verifier has to be able to check signatures made before that rule, and
+// [VerifyFrameAttestation] reports one that verifies as
+// [VerdictValidIdentityOnly].
 func SignFrameAttestation(providerID string, frame Frame, signer crypto.Signer, keyID, attesterID, issuedAt string) (ProvenanceAttestation, error) {
 	if frame.ContentDigest == nil {
 		return ProvenanceAttestation{}, ErrFrameHasNoContentDigest

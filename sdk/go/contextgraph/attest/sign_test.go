@@ -56,9 +56,9 @@ func TestSigningThePublishedCommitmentReproducesThePublishedSignature(t *testing
 	}
 }
 
-func TestPublicKeyFromSeedIsThePublishedKey(t *testing.T) {
+func TestPublicKeyForIsThePublishedKey(t *testing.T) {
 	v := loadVectors(t)
-	public, err := PublicKeyFromSeed(mustHex(t, v.Signature.SigningKeySeedHex))
+	public, err := PublicKeyFor(mustHex(t, v.Signature.SigningKeySeedHex))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestASeedIsExactlyThirtyTwoBytes(t *testing.T) {
 		if _, err := PrivateKeyFromSeed(make([]byte, n)); !errors.Is(err, ErrSeedLength) {
 			t.Errorf("%d-byte seed: got %v, want ErrSeedLength", n, err)
 		}
-		if _, err := PublicKeyFromSeed(make([]byte, n)); !errors.Is(err, ErrSeedLength) {
+		if _, err := PublicKeyFor(make([]byte, n)); !errors.Is(err, ErrSeedLength) {
 			t.Errorf("%d-byte seed: got %v, want ErrSeedLength", n, err)
 		}
 	}
@@ -219,5 +219,105 @@ func TestASignedMerkleRootVerifies(t *testing.T) {
 	}
 	if got := VerifyCommitment(root, attestation, mustHex(t, v.Signature.PublicKeyHex)); !got.IsValid() {
 		t.Errorf("a signed root must verify, got %+v", got)
+	}
+}
+
+// TestADigestLessFrameVerifiesAsIdentityOnly is F15 (ADR 0018): a signature
+// over a frame with no content_digest checks out, but binds identity and
+// provenance only, and must never be reported as the content-binding valid.
+func TestADigestLessFrameVerifiesAsIdentityOnly(t *testing.T) {
+	v := loadVectors(t)
+	providerID, frame := publishedFrame(v)
+	frame.ContentDigest = nil
+	public := mustHex(t, v.Signature.PublicKeyHex)
+	// SignFrameAttestation refuses this frame, so sign its commitment
+	// directly, as a non-conformant or pre-ADR-0018 attester would have.
+	attestation, err := SignCommitment(FrameCommitment(providerID, frame), publishedKey(t, v), "key-1", "oxagen", "2026-08-27T00:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := VerifyFrameAttestation(providerID, frame, attestation, public)
+	if got.Verdict != VerdictValidIdentityOnly {
+		t.Fatalf("got %s, want %s", got.Verdict, VerdictValidIdentityOnly)
+	}
+	if got.IsValid() || got.BindsContent() || !got.SignatureVerifies() {
+		t.Errorf("identity-only: IsValid and BindsContent must be false and SignatureVerifies true, got %+v", got)
+	}
+
+	// A failing verdict over a digest-less frame is returned unchanged.
+	forged := attestation
+	forged.Signature = v.Signature.Attestation.Signature
+	if got := VerifyFrameAttestation(providerID, frame, forged, public); got.Verdict != VerdictBadSignature {
+		t.Errorf("a bad signature over a digest-less frame: got %s, want %s", got.Verdict, VerdictBadSignature)
+	}
+
+	// A frame that declares its digest keeps the full verdict.
+	providerID, frame = publishedFrame(v)
+	full := VerifyFrameAttestation(providerID, frame, v.Signature.Attestation, public)
+	if !full.IsValid() || !full.BindsContent() || !full.SignatureVerifies() {
+		t.Errorf("a digest-bearing frame must be valid and bind content, got %+v", full)
+	}
+}
+
+// TestVerifyFrameInclusionChecksALeafOfASignedRoot covers the result-set path
+// of §6.5.3: one signature over a root, one proof per frame, and the same
+// content-binding rule as a per-frame signature.
+func TestVerifyFrameInclusionChecksALeafOfASignedRoot(t *testing.T) {
+	v := loadVectors(t)
+	public := mustHex(t, v.Signature.PublicKeyHex)
+	leafFrame := func(i int, withDigest bool) Frame {
+		spec := v.Merkle.LeafFrames[i]
+		frame := Frame{ID: spec.ID}
+		if withDigest {
+			digest := spec.ContentDigest
+			frame.ContentDigest = &digest
+		}
+		return frame
+	}
+
+	frames := []Frame{leafFrame(0, false), leafFrame(1, true), leafFrame(2, true)}
+	commitments := make([][32]byte, 0, len(frames))
+	for _, frame := range frames {
+		commitments = append(commitments, FrameCommitment(v.Merkle.ProviderID, frame))
+	}
+	root := MerkleRoot(commitments)
+	signed, err := SignCommitment(root, publishedKey(t, v), "key-1", "oxagen", "2026-08-27T00:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proofFor := func(i int) InclusionProof {
+		proof, ok := BuildInclusionProof(commitments, i)
+		if !ok {
+			t.Fatalf("no proof for leaf %d", i)
+		}
+		return proof
+	}
+
+	if got := VerifyFrameInclusion(v.Merkle.ProviderID, frames[1], proofFor(1), signed, public); !got.IsValid() {
+		t.Errorf("a digest-bearing leaf of a signed root must be valid, got %+v", got)
+	}
+	if got := VerifyFrameInclusion(v.Merkle.ProviderID, frames[0], proofFor(0), signed, public); got.Verdict != VerdictValidIdentityOnly {
+		t.Errorf("a digest-less leaf binds identity only: got %s", got.Verdict)
+	}
+
+	// A frame that is not the leaf the proof names recomputes another root.
+	outsider := leafFrame(3, true)
+	if got := VerifyFrameInclusion(v.Merkle.ProviderID, outsider, proofFor(1), signed, public); got.Verdict != VerdictCommitmentMismatch {
+		t.Errorf("an outsider: got %s, want %s", got.Verdict, VerdictCommitmentMismatch)
+	}
+
+	// Bounded work: an over-long path is refused on its length alone.
+	long := proofFor(1)
+	for len(long.Path) <= MaxInclusionPathSteps {
+		long.Path = append(long.Path, InclusionStep{Sibling: DigestString(root)})
+	}
+	if got := VerifyFrameInclusion(v.Merkle.ProviderID, frames[1], long, signed, public); got.Verdict != VerdictMalformedCommitment {
+		t.Errorf("a path of %d steps: got %s, want %s", len(long.Path), got.Verdict, VerdictMalformedCommitment)
+	}
+
+	outOfRange := proofFor(1)
+	outOfRange.LeafIndex = outOfRange.LeafCount
+	if got := VerifyFrameInclusion(v.Merkle.ProviderID, frames[1], outOfRange, signed, public); got.Verdict != VerdictMalformedCommitment {
+		t.Errorf("a leaf index outside the tree: got %s, want %s", got.Verdict, VerdictMalformedCommitment)
 	}
 }

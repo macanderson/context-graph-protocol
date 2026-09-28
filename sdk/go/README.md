@@ -166,6 +166,14 @@ Two things worth knowing:
 - **Go's `crypto/ed25519` accepts a small-order public key.** §6.5.4 asks for a
   strict verifier, so `VerifyCommitment` declines those keys — and any key
   whose `y` is not reduced — before the standard library sees them.
+- **A frame with no `content_digest` verifies as `valid_identity_only`.** Its
+  commitment binds the frame's identity and provenance but not its content, so
+  the signature would still check out after the content was swapped (F15, ADR
+  0018). `IsValid()` is false for it. Call `SignatureVerifies()` when you want
+  provider identity without a claim about content, and say so in your code.
+  `attest.VerifyFrameInclusion` applies the same rule to a frame attested
+  through a signed result-set root, and refuses an inclusion path longer than
+  `attest.MaxInclusionPathSteps` (64) before hashing any of it.
 
 ## Sign a provenance attestation
 
@@ -181,11 +189,11 @@ attestation, err := attest.SignFrameAttestation("repo-graph", frame, key,
     "key-2026-09", "acme", "2026-09-28T00:00:00Z")
 
 // Out of process: anything that implements crypto.Signer with an Ed25519 key.
-attestation, err := attest.SignCommitment(attest.MerkleRoot(commitments), kmsSigner,
+rootAttestation, err := attest.SignCommitment(attest.MerkleRoot(commitments), kmsSigner,
     "kms-key-2026-09", "acme", "2026-09-28T00:00:00Z")
 ```
 
-`attest.PublicKeyFromSeed(seed)` gives the matching public key in the raw form
+`attest.PublicKeyFor(seed)` gives the matching public key in the raw form
 the verifiers take. Before an attestation leaves the process, the signer's
 public key is checked against the same strictness rules a verifier applies, and
 the signature is verified under it — so a faulty backend, or one that hashed

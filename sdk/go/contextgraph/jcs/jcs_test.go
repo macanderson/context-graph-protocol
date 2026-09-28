@@ -151,7 +151,9 @@ func TestExponentThresholdsFollowECMAScript(t *testing.T) {
 		{1e21, "1e+21"},
 		{1.5e21, "1.5e+21"},
 		{0.1, "0.1"},
-		{0.1 + 0.2, "0.30000000000000004"},
+		// The double 0.1 + 0.2 evaluates to at run time. Written as a literal
+		// because Go folds the constant expression 0.1 + 0.2 exactly, to 0.3.
+		{0.30000000000000004, "0.30000000000000004"},
 		{0.00001, "0.00001"},
 		{1e-6, "0.000001"},
 		{1.5e-6, "0.0000015"},

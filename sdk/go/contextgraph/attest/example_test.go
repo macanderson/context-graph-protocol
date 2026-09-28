@@ -35,7 +35,7 @@ func ExampleSignFrameAttestation() {
 		log.Fatal(err)
 	}
 
-	public, err := attest.PublicKeyFromSeed(seed)
+	public, err := attest.PublicKeyFor(seed)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func ExampleSignRecord() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	public, err := attest.PublicKeyFromSeed(seed)
+	public, err := attest.PublicKeyFor(seed)
 	if err != nil {
 		log.Fatal(err)
 	}
