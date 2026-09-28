@@ -79,10 +79,9 @@ impl SigningProvider {
         self.published = vec![AttesterKey {
             key_id: KEY_ID.into(),
             algorithm: "ed25519".into(),
-            public_key: public_key_for(seed)
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect(),
+            // Lowercase hex, the wire's encoding — the same string a trusted
+            // key built from these bytes holds.
+            public_key: TrustedKey::ed25519_bytes(KEY_ID, &public_key_for(seed)).public_key,
         }];
         self
     }

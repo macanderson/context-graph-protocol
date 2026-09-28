@@ -180,8 +180,8 @@ fn raw_digest(digest: &str) -> Result<[u8; 32], RecordHashError> {
 /// verifying and evidence received after it lapsed never does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecordKey {
-    /// The `key_id` a [`RecordAttestation`](crate::RecordAttestation) must
-    /// name to be checked against this key.
+    /// The `key_id` a [record attestation](crate::RecordAttestation) must name
+    /// to be checked against this key.
     pub key_id: String,
     /// The raw public key, in the form the named algorithm's verifier takes
     /// (32 bytes for `ed25519`).
@@ -265,9 +265,9 @@ impl RecordKeyRing {
 
 /// What a [`RecordKeyRing`] found when it checked one record attestation.
 ///
-/// Named outcomes, for the reason [`AttestationVerdict`](crate::AttestationVerdict)
-/// is named: "I hold no such key", "the key was not in service when I received
-/// this", and "the signature is forged" call for three different responses.
+/// Named outcomes, for the reason [`AttestationVerdict`] is named: "I hold no
+/// such key", "the key was not in service when I received this", and "the
+/// signature is forged" call for three different responses.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RecordKeyVerdict {
     /// The ring holds no key under the attestation's `key_id`. Nothing was

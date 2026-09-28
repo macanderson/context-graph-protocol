@@ -323,16 +323,13 @@ impl InclusionProof {
         if self.path.len() > MAX_INCLUSION_PATH_STEPS {
             return false;
         }
-        match inclusion_path_sides(self.leaf_index, self.leaf_count) {
-            Some(sides) => {
-                sides.len() == self.path.len()
-                    && sides
-                        .iter()
-                        .zip(&self.path)
-                        .all(|(left, step)| *left == step.sibling_is_left)
-            }
-            None => false,
-        }
+        inclusion_path_sides(self.leaf_index, self.leaf_count).is_some_and(|sides| {
+            sides.len() == self.path.len()
+                && sides
+                    .iter()
+                    .zip(&self.path)
+                    .all(|(left, step)| *left == step.sibling_is_left)
+        })
     }
 }
 

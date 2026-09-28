@@ -376,6 +376,13 @@ impl Host {
     /// attestation covered. **No frame is ever withheld for failing the check**
     /// (`SPEC.md` F9): the outcomes are a fact recorded beside the evidence, not
     /// a filter over it.
+    ///
+    /// Key validity windows are evaluated at the host clock as the answer
+    /// returns (ADR 0028). This door does not hand that instant back, so a
+    /// caller that archives the evidence for a later replay with
+    /// [`TrustStore::check_result_signed_as_at`] records its own receipt
+    /// instant; [`query_all`](Self::query_all) records it for every leg on
+    /// [`ProviderOutcome::received_at`].
     pub async fn query_provider_attested(
         &self,
         id: &str,

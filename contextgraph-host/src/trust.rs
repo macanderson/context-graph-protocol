@@ -1042,11 +1042,13 @@ fn check_inclusion(
     }
 }
 
-/// How many times this thread has checked a result-set root's signature — the
-/// witness for the once-per-result bound (#133). Test builds only, and
-/// per-thread so parallel tests cannot see each other's counts.
+// The documentation sits inside the macro: a doc comment on a macro
+// invocation documents nothing, and rustc's `unused_doc_comments` lint says so.
 #[cfg(test)]
 thread_local! {
+    /// How many times this thread has checked a result-set root's signature —
+    /// the witness for the once-per-result bound (#133). Test builds only, and
+    /// per-thread so parallel tests cannot see each other's counts.
     static ROOT_SIGNATURE_CHECKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
