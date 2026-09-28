@@ -751,6 +751,18 @@ well-formed timestamp (F4) is the one part a forger has no reason to get wrong,
 and nothing in `contextgraph/1` supports reasoning about an attestation's age,
 freshness, or expiry.
 
+A verifier that keeps a **validity window** for a key it trusts — an optional
+`not_before` and `not_after`, both inclusive F4 timestamps, held in the
+verifier's own record of the key and never carried on the wire — **MUST**
+evaluate it at the instant the verifier *received* the evidence, and **MUST
+NOT** evaluate it at `issued_at`. The receipt instant is the one the signer
+cannot choose, and it bounds the signing time from above: a signature cannot be
+received before it exists. A verifier replaying archived evidence evaluates the
+window at the receipt instant it recorded, so a retired key keeps vouching for
+what arrived while it was in service. An attestation received outside its key's
+window is not attested, and per F9 its frame is still served. The reasoning is
+[ADR 0028](./docs/adr/0028-key-validity-windows-are-evaluated-at-receipt.md).
+
 * **F18.** A verifier **MUST NOT** present an attestation member outside the
   signed preimage — `attester_id`, `issued_at`, `key_id`, `algorithm` — as
   covered by the signature, and a host **SHOULD** mark `attester_id` and

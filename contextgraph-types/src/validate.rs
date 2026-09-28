@@ -131,6 +131,65 @@ pub fn format_protocol_timestamp(unix_seconds: i64) -> String {
 
 const SECONDS_PER_DAY: i64 = 86_400;
 
+/// Order two protocol timestamps (`SPEC.md` §6.1, F4) as **instants**.
+///
+/// `None` when either side is not a well-formed protocol timestamp: there is
+/// no honest answer to "which came first?" about a string that names no
+/// instant, and a caller deciding something on the answer — a key validity
+/// window (ADR 0028), say — must fail closed rather than compare garbage.
+///
+/// Byte comparison is **not** instant comparison once fractional seconds are
+/// allowed. `"…:00Z"` and `"…:00.5Z"` differ at the byte after the seconds, and
+/// `'.'` (0x2E) sorts below `'Z'` (0x5A), so a plain `<` puts half a second
+/// past the minute *before* the minute itself. This compares the fixed-width
+/// `YYYY-MM-DDTHH:MM:SS` prefix bytewise — every field is zero-padded and
+/// most-significant first, so that part is chronological — and then the
+/// fractional digits as a decimal fraction, where trailing zeros carry no
+/// weight (`.5` and `.500` are the same instant).
+///
+/// ```
+/// use core::cmp::Ordering;
+/// use contextgraph_types::compare_protocol_timestamps;
+///
+/// assert_eq!(
+///     compare_protocol_timestamps("2026-07-20T18:00:00Z", "2026-07-20T18:00:00.5Z"),
+///     Some(Ordering::Less),
+/// );
+/// assert_eq!(
+///     compare_protocol_timestamps("2026-07-20T18:00:00.5Z", "2026-07-20T18:00:00.500Z"),
+///     Some(Ordering::Equal),
+/// );
+/// assert_eq!(compare_protocol_timestamps("yesterday", "2026-07-20T18:00:00Z"), None);
+/// ```
+pub fn compare_protocol_timestamps(a: &str, b: &str) -> Option<core::cmp::Ordering> {
+    if !is_protocol_timestamp(a) || !is_protocol_timestamp(b) {
+        return None;
+    }
+    // Both are ASCII and at least 20 bytes long, so byte 19 is a boundary.
+    let (a_whole, a_rest) = a.split_at(19);
+    let (b_whole, b_rest) = b.split_at(19);
+    Some(
+        a_whole
+            .cmp(b_whole)
+            .then_with(|| fraction_digits(a_rest).cmp(fraction_digits(b_rest))),
+    )
+}
+
+/// The significant fractional-second digits of a timestamp's tail (`"Z"` or
+/// `".ddd…Z"`), most significant first, with trailing zeros removed so equal
+/// instants compare equal.
+///
+/// With trailing zeros gone, bytewise comparison of two such strings *is*
+/// numeric comparison of the fractions: the first differing digit decides, and
+/// a string that is a strict prefix of the other is the smaller fraction,
+/// because the longer one has a non-zero digit after it.
+fn fraction_digits(tail: &str) -> &str {
+    tail.strip_prefix('.')
+        .and_then(|rest| rest.strip_suffix('Z'))
+        .unwrap_or("")
+        .trim_end_matches('0')
+}
+
 /// Civil (proleptic Gregorian) date from a day count relative to 1970-01-01.
 ///
 /// Howard Hinnant's `civil_from_days`, the standard formulation. It shifts the
@@ -287,6 +346,57 @@ mod tests {
                 "format_protocol_timestamp({instant}) produced `{formatted}`, which the validator rejects"
             );
         }
+    }
+
+    #[test]
+    fn timestamps_compare_as_instants_not_as_bytes() {
+        use core::cmp::Ordering::{Equal, Greater, Less};
+        // The case bytewise comparison gets wrong: '.' sorts below 'Z'.
+        assert_eq!(
+            compare_protocol_timestamps("2026-07-20T18:00:00.1Z", "2026-07-20T18:00:00Z"),
+            Some(Greater)
+        );
+        assert!("2026-07-20T18:00:00.1Z" < "2026-07-20T18:00:00Z");
+        // Trailing zeros carry no weight.
+        assert_eq!(
+            compare_protocol_timestamps("2026-07-20T18:00:00.10Z", "2026-07-20T18:00:00.1Z"),
+            Some(Equal)
+        );
+        assert_eq!(
+            compare_protocol_timestamps("2026-07-20T18:00:00.000Z", "2026-07-20T18:00:00Z"),
+            Some(Equal)
+        );
+        // Precision differs, the first differing digit decides.
+        assert_eq!(
+            compare_protocol_timestamps("2026-07-20T18:00:00.09Z", "2026-07-20T18:00:00.1Z"),
+            Some(Less)
+        );
+        // Whole-second fields, most significant first.
+        assert_eq!(
+            compare_protocol_timestamps("2025-12-31T23:59:59Z", "2026-01-01T00:00:00Z"),
+            Some(Less)
+        );
+        // A leap second sits after :59 and before the next minute.
+        assert_eq!(
+            compare_protocol_timestamps("2016-12-31T23:59:60Z", "2016-12-31T23:59:59.9Z"),
+            Some(Greater)
+        );
+        assert_eq!(
+            compare_protocol_timestamps("2016-12-31T23:59:60Z", "2017-01-01T00:00:00Z"),
+            Some(Less)
+        );
+    }
+
+    #[test]
+    fn a_string_that_names_no_instant_has_no_order() {
+        assert_eq!(
+            compare_protocol_timestamps("last tuesday", "2026-07-20T18:00:00Z"),
+            None
+        );
+        assert_eq!(
+            compare_protocol_timestamps("2026-07-20T18:00:00Z", "2026-07-20T18:00:00+00:00"),
+            None
+        );
     }
 
     #[test]

@@ -241,7 +241,9 @@ is not one an individual can run).
 | `Unattested`                   | the provider offered no attestation for this frame               |
 | `Attested { .., covers_content }` | verified against a trusted key                                |
 | `NoTrustedKey { key_id }`      | an attestation arrived; the host holds no key under that `key_id` |
+| `KeyNotInService { key_id, received_at, .. }` | the key is trusted, but its validity window did not cover the instant the answer arrived ([ADR 0028](adr/0028-key-validity-windows-are-evaluated-at-receipt.md)) |
 | `UnknownAlgorithm { .. }`      | a scheme this build cannot check (F8) — a refusal to guess        |
+| `UnusableEvidence`             | an entry named the frame but could not be turned into a check (a proof with no signed root, or an empty entry) |
 | `Invalid { verdict }`          | a trusted key was found and the check failed; the verdict says how |
 
 Two things this deliberately does **not** do. It never removes a frame: an

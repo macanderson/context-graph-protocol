@@ -62,6 +62,10 @@
 //! Both halves are fixed length, so the encoding is injective without a length
 //! prefix, and any language can build it from the digest string alone.
 
+use std::collections::BTreeMap;
+
+use crate::attest::AttestationVerdict;
+use crate::key_validity::{KeyValidity, WindowPosition};
 // Only the signing and verifying code names the type; the hashing half and the
 // ungated constants below do not, so an import at file scope would be unused in
 // a default build.
@@ -164,6 +168,156 @@ fn raw_digest(digest: &str) -> Result<[u8; 32], RecordHashError> {
 }
 
 // ---------------------------------------------------------------------------
+// Key-id validity windows (profile LC3, ADR 0028).
+// ---------------------------------------------------------------------------
+
+/// One record-layer signing key a verifier holds: its `key_id`, its raw public
+/// key, and the [`KeyValidity`] window it was in service for.
+///
+/// Profile LC3 says rotation is "by key-id validity windows". This is the
+/// verifier's half of that sentence: a key is retired by closing its window,
+/// not by deleting it, so evidence received while it was in service keeps
+/// verifying and evidence received after it lapsed never does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordKey {
+    /// The `key_id` a [`RecordAttestation`](crate::RecordAttestation) must
+    /// name to be checked against this key.
+    pub key_id: String,
+    /// The raw public key, in the form the named algorithm's verifier takes
+    /// (32 bytes for `ed25519`).
+    pub public_key: Vec<u8>,
+    /// When the key is in service. [`KeyValidity::unbounded`] for a key that
+    /// never lapses — the behavior before windows existed.
+    pub validity: KeyValidity,
+}
+
+impl RecordKey {
+    /// A key with no window: in service at every instant.
+    pub fn unbounded(key_id: impl Into<String>, public_key: impl Into<Vec<u8>>) -> Self {
+        Self {
+            key_id: key_id.into(),
+            public_key: public_key.into(),
+            validity: KeyValidity::unbounded(),
+        }
+    }
+
+    /// The same key, in service only within `validity`.
+    pub fn with_validity(mut self, validity: KeyValidity) -> Self {
+        self.validity = validity;
+        self
+    }
+}
+
+/// A verifier's record-layer keys, by `key_id` — the registry profile LC3's
+/// "key-id validity windows" presuppose.
+///
+/// Held by the **verifier**, never carried by the wire: which keys a verifier
+/// believes, and for which instants, is its own decision about a producer, as
+/// [ADR 0016](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0016-attestation-trust-roots.md)
+/// decides for the frame layer. The protocol fixes only how a window is spelled
+/// ([`KeyValidity`]) and which instant it is evaluated at: the one at which the
+/// verifier **received** the attestation — never its unsigned `issued_at`
+/// ([ADR 0028](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0028-key-validity-windows-are-evaluated-at-receipt.md)).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RecordKeyRing {
+    keys: BTreeMap<String, RecordKey>,
+}
+
+impl RecordKeyRing {
+    /// An empty ring: every attestation resolves to
+    /// [`RecordKeyVerdict::UnknownKey`].
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Hold `key`, returning the key previously held under the same `key_id`.
+    pub fn insert(&mut self, key: RecordKey) -> Option<RecordKey> {
+        self.keys.insert(key.key_id.clone(), key)
+    }
+
+    /// The key held under `key_id`, if any.
+    pub fn get(&self, key_id: &str) -> Option<&RecordKey> {
+        self.keys.get(key_id)
+    }
+
+    /// Stop holding the key under `key_id`. Retiring a key is better done by
+    /// closing its window: removal also stops it verifying evidence received
+    /// while it was in service.
+    pub fn remove(&mut self, key_id: &str) -> Option<RecordKey> {
+        self.keys.remove(key_id)
+    }
+
+    /// Every key held, in `key_id` order.
+    pub fn keys(&self) -> impl Iterator<Item = &RecordKey> {
+        self.keys.values()
+    }
+
+    /// How many keys are held.
+    pub fn len(&self) -> usize {
+        self.keys.len()
+    }
+
+    /// Whether no key is held.
+    pub fn is_empty(&self) -> bool {
+        self.keys.is_empty()
+    }
+}
+
+/// What a [`RecordKeyRing`] found when it checked one record attestation.
+///
+/// Named outcomes, for the reason [`AttestationVerdict`](crate::AttestationVerdict)
+/// is named: "I hold no such key", "the key was not in service when I received
+/// this", and "the signature is forged" call for three different responses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RecordKeyVerdict {
+    /// The ring holds no key under the attestation's `key_id`. Nothing was
+    /// checked, so nothing is known about the signature.
+    UnknownKey {
+        /// The `key_id` the attestation named.
+        key_id: String,
+    },
+    /// The key is known, and the instant the verifier received the attestation
+    /// falls outside its window — or the window could not be evaluated. The
+    /// signature was not checked: no key was in service to check it against.
+    ///
+    /// This is the outcome rotation exists to produce. A compromised key whose
+    /// window has closed stops verifying new evidence however its holder
+    /// back-dates `issued_at`, because `issued_at` is never consulted.
+    KeyNotInService {
+        /// The key that was not in service.
+        key_id: String,
+        /// The receipt instant the window was evaluated at.
+        received_at: String,
+        /// Where that instant fell: before the window, after it, or
+        /// unevaluable.
+        position: WindowPosition,
+    },
+    /// The key was in service; this is what checking the signature found.
+    Checked {
+        /// The key that was checked.
+        key_id: String,
+        /// The signature verdict. Only
+        /// [`Valid`](crate::AttestationVerdict::Valid) is acceptable (LC5).
+        verdict: AttestationVerdict,
+    },
+}
+
+impl RecordKeyVerdict {
+    /// Whether the attestation verified under a key that was in service when
+    /// it was received. Every other outcome is `false` (profile LC5: "I cannot
+    /// check this" and "this is good" are never the same answer).
+    pub fn is_valid(&self) -> bool {
+        matches!(
+            self,
+            Self::Checked {
+                verdict: AttestationVerdict::Valid,
+                ..
+            }
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Hashing — gated, because RFC 8785 needs a conforming canonicalizer and SHA-256.
 // ---------------------------------------------------------------------------
 
@@ -246,7 +400,7 @@ pub use hashing::{record_hash, record_hash_is_current, record_hash_of, record_ha
 #[cfg(feature = "record-attestation")]
 mod crypto {
     use super::*;
-    use crate::attest::{ALGORITHM_ED25519, AttestationVerdict};
+    use crate::attest::ALGORITHM_ED25519;
     use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
     use serde_json::Value;
 
@@ -390,6 +544,86 @@ mod crypto {
 pub use crypto::{
     sign_record, sign_record_attestation, verify_record_attestation, verify_signed_record_hash,
 };
+
+#[cfg(feature = "record-attestation")]
+impl RecordKeyRing {
+    /// Verify a record attestation against the key its `key_id` names, as of
+    /// `received_at` — the instant **this verifier received the attestation**
+    /// (ADR 0028).
+    ///
+    /// The order is fixed and cheapest-first: the key is looked up, then its
+    /// window is evaluated, and only a key in service at `received_at` reaches
+    /// the hash and the signature. An unknown key or a key out of service costs
+    /// no hashing at all.
+    ///
+    /// `issued_at` is never read. It is outside the signed message (profile
+    /// LC4), so the holder of a lapsed key can write any date there; the
+    /// receipt instant is the one the signer cannot choose, and a signature
+    /// cannot be received before it is made, so it bounds the signing time from
+    /// above. An auditor replaying archived evidence passes the receipt
+    /// instant recorded when the evidence was first taken in.
+    ///
+    /// `Err` means the record could not be hashed — see
+    /// [`verify_record_attestation`].
+    pub fn verify_record(
+        &self,
+        record: &serde_json::Value,
+        attestation: &RecordAttestation,
+        received_at: &str,
+    ) -> Result<RecordKeyVerdict, RecordHashError> {
+        match self.key_in_service(attestation, received_at) {
+            Ok(key) => Ok(RecordKeyVerdict::Checked {
+                key_id: key.key_id.clone(),
+                verdict: verify_record_attestation(record, attestation, &key.public_key)?,
+            }),
+            Err(verdict) => Ok(verdict),
+        }
+    }
+
+    /// [`verify_record`](Self::verify_record) for a verifier holding the
+    /// `record_hash` but not the record — the detached-attestation case
+    /// [`verify_signed_record_hash`] serves.
+    pub fn verify_record_hash(
+        &self,
+        expected_record_hash: &str,
+        attestation: &RecordAttestation,
+        received_at: &str,
+    ) -> RecordKeyVerdict {
+        match self.key_in_service(attestation, received_at) {
+            Ok(key) => RecordKeyVerdict::Checked {
+                key_id: key.key_id.clone(),
+                verdict: verify_signed_record_hash(
+                    expected_record_hash,
+                    attestation,
+                    &key.public_key,
+                ),
+            },
+            Err(verdict) => verdict,
+        }
+    }
+
+    /// The key an attestation names, if the ring holds it and it was in
+    /// service at `received_at`; otherwise the verdict that says why not.
+    fn key_in_service(
+        &self,
+        attestation: &RecordAttestation,
+        received_at: &str,
+    ) -> Result<&RecordKey, RecordKeyVerdict> {
+        let Some(key) = self.keys.get(&attestation.key_id) else {
+            return Err(RecordKeyVerdict::UnknownKey {
+                key_id: attestation.key_id.clone(),
+            });
+        };
+        match key.validity.position(received_at) {
+            WindowPosition::Within => Ok(key),
+            position => Err(RecordKeyVerdict::KeyNotInService {
+                key_id: key.key_id.clone(),
+                received_at: received_at.to_string(),
+                position,
+            }),
+        }
+    }
+}
 
 #[cfg(all(test, feature = "record-attestation"))]
 mod tests {
@@ -819,5 +1053,164 @@ mod tests {
             verify_signed_record_hash(&hash, &attestation, &public_key_for(&SEED)),
             AttestationVerdict::Valid
         );
+    }
+
+    // -- key-id validity windows (profile LC3, ADR 0028) ---------------------
+
+    /// A ring holding `SEED`'s key under `key-2026`, in service for 2026 only.
+    fn ring_for_2026() -> RecordKeyRing {
+        let mut ring = RecordKeyRing::new();
+        ring.insert(
+            RecordKey::unbounded("key-2026", public_key_for(&SEED).to_vec()).with_validity(
+                KeyValidity::new(
+                    Some("2026-01-01T00:00:00Z".into()),
+                    Some("2026-12-31T23:59:59Z".into()),
+                )
+                .unwrap(),
+            ),
+        );
+        ring
+    }
+
+    fn signed_under_2026_key() -> RecordAttestation {
+        sign_record(
+            &record(),
+            &SEED,
+            "key-2026",
+            "provider_example",
+            "2026-07-29T14:00:05Z",
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn an_attestation_received_inside_its_keys_window_verifies() {
+        let verdict = ring_for_2026()
+            .verify_record(&record(), &signed_under_2026_key(), "2026-07-29T14:00:06Z")
+            .unwrap();
+        assert!(verdict.is_valid(), "{verdict:?}");
+        assert_eq!(
+            verdict,
+            RecordKeyVerdict::Checked {
+                key_id: "key-2026".into(),
+                verdict: AttestationVerdict::Valid,
+            }
+        );
+    }
+
+    /// The witness #120 asked for: an attestation received after its key's
+    /// window closed fails, and fails for that named reason — not as a bad
+    /// signature, and not as a pass.
+    #[test]
+    fn an_attestation_received_outside_its_keys_window_fails_for_that_reason() {
+        let ring = ring_for_2026();
+        let attestation = signed_under_2026_key();
+
+        let after = ring
+            .verify_record(&record(), &attestation, "2027-03-01T00:00:00Z")
+            .unwrap();
+        assert_eq!(
+            after,
+            RecordKeyVerdict::KeyNotInService {
+                key_id: "key-2026".into(),
+                received_at: "2027-03-01T00:00:00Z".into(),
+                position: WindowPosition::Expired,
+            }
+        );
+        assert!(!after.is_valid());
+
+        let before = ring
+            .verify_record(&record(), &attestation, "2025-06-01T00:00:00Z")
+            .unwrap();
+        assert!(matches!(
+            before,
+            RecordKeyVerdict::KeyNotInService {
+                position: WindowPosition::NotYetValid,
+                ..
+            }
+        ));
+    }
+
+    /// The attack a window checked against `issued_at` would miss: the holder
+    /// of a lapsed key signs new evidence and back-dates `issued_at` into the
+    /// window. `issued_at` is not in the signed message, so nothing about the
+    /// signature objects — and the ring never reads it, so the back-dating buys
+    /// nothing.
+    #[test]
+    fn back_dating_issued_at_into_the_window_does_not_revive_a_lapsed_key() {
+        let mut backdated = signed_under_2026_key();
+        backdated.issued_at = "2026-02-01T00:00:00Z".into();
+        let verdict = ring_for_2026()
+            .verify_record(&record(), &backdated, "2027-03-01T00:00:00Z")
+            .unwrap();
+        assert!(matches!(
+            verdict,
+            RecordKeyVerdict::KeyNotInService {
+                position: WindowPosition::Expired,
+                ..
+            }
+        ));
+    }
+
+    /// The auditor-replay case. A key closed at the end of 2026 still verifies
+    /// evidence the auditor's records show was received in 2026, replayed years
+    /// later — the verifier passes the recorded receipt instant, not its clock.
+    #[test]
+    fn an_auditor_replaying_archived_evidence_passes_the_recorded_receipt_instant() {
+        let ring = ring_for_2026();
+        let hash = record_hash(&record()).unwrap();
+        let attestation = signed_under_2026_key();
+        let recorded_receipt = "2026-07-29T14:00:06Z";
+        assert!(
+            ring.verify_record_hash(&hash, &attestation, recorded_receipt)
+                .is_valid()
+        );
+    }
+
+    #[test]
+    fn a_key_the_ring_does_not_hold_checks_nothing() {
+        let mut attestation = signed_under_2026_key();
+        attestation.key_id = "key-unknown".into();
+        assert_eq!(
+            ring_for_2026()
+                .verify_record(&record(), &attestation, "2026-07-29T14:00:06Z")
+                .unwrap(),
+            RecordKeyVerdict::UnknownKey {
+                key_id: "key-unknown".into()
+            }
+        );
+    }
+
+    #[test]
+    fn a_key_with_no_window_behaves_as_before_windows_existed() {
+        let mut ring = RecordKeyRing::new();
+        ring.insert(RecordKey::unbounded(
+            "key-2026",
+            public_key_for(&SEED).to_vec(),
+        ));
+        // Any receipt instant — even a malformed one — is in service.
+        for received_at in ["1999-01-01T00:00:00Z", "2999-01-01T00:00:00Z", "unknown"] {
+            assert!(
+                ring.verify_record(&record(), &signed_under_2026_key(), received_at)
+                    .unwrap()
+                    .is_valid(),
+                "{received_at}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_window_that_cannot_be_evaluated_does_not_pass() {
+        let ring = ring_for_2026();
+        let verdict = ring
+            .verify_record(&record(), &signed_under_2026_key(), "last tuesday")
+            .unwrap();
+        assert!(matches!(
+            verdict,
+            RecordKeyVerdict::KeyNotInService {
+                position: WindowPosition::MalformedInstant,
+                ..
+            }
+        ));
     }
 }

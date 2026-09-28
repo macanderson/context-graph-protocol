@@ -502,6 +502,12 @@ impl Host {
                     return ProviderOutcome::unattested(id, ProviderResult::Failed(error));
                 }
             };
+        // The receipt instant, read once, as the answer arrives: the instant
+        // every key validity window in this leg is evaluated at (ADR 0028). It
+        // is the host's own clock — never the attestations' unsigned
+        // `issued_at` — and it is recorded on the outcome so the check can be
+        // replayed later with the same result.
+        let received_at = crate::consent::now_protocol_timestamp();
 
         // Budget honesty, axis 1 (§7, B2): frames that sum above the query
         // budget are a lie about `token_cost`. Drop them, report loudly.
@@ -542,12 +548,15 @@ impl Host {
         // would silently read every attested frame as unattested whenever the
         // two differ.
         let signing_id = provider.info().name.clone();
-        let attestations = self.trust.check_result_signed_as(&id, &signing_id, &result);
+        let attestations =
+            self.trust
+                .check_result_signed_as_at(&id, &signing_id, &result, &received_at);
 
         ProviderOutcome {
             provider_id: id,
             result: ProviderResult::Frames(result),
             attestations,
+            received_at: Some(received_at),
         }
     }
 
@@ -814,6 +823,18 @@ pub struct ProviderOutcome {
     /// out, or dropped for a budget lie. Nothing here ever removes a frame
     /// from `result` (`SPEC.md` F9).
     pub attestations: Vec<FrameAttestationOutcome>,
+    /// The instant this host received the leg's answer, read from the host
+    /// clock as it arrived — the instant every trusted key's validity window
+    /// was evaluated at when [`attestations`](Self::attestations) was computed
+    /// ([ADR 0028](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0028-key-validity-windows-are-evaluated-at-receipt.md)).
+    ///
+    /// Persist it beside the evidence. It is what lets an auditor replay the
+    /// check years later with
+    /// [`TrustStore::check_result_signed_as_at`] and get the same states: a
+    /// key that has lapsed since still vouches for what arrived while it was in
+    /// service. It is this host's own record, never a value a provider
+    /// supplied. `None` for a leg that produced no frames to check.
+    pub received_at: Option<String>,
 }
 
 impl ProviderOutcome {
@@ -824,6 +845,7 @@ impl ProviderOutcome {
             provider_id,
             result,
             attestations: Vec::new(),
+            received_at: None,
         }
     }
 }

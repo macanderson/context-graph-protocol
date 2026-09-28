@@ -18,6 +18,7 @@ pub mod error_code;
 pub mod extension;
 pub mod frame;
 pub mod identity;
+pub mod key_validity;
 pub mod query;
 pub mod range;
 pub mod record;
@@ -51,6 +52,7 @@ pub use frame::{
     Provenance, Relation, Representation, Transform, rel,
 };
 pub use identity::{FrameId, canonical_order};
+pub use key_validity::{KeyValidity, KeyValidityError, WindowPosition};
 pub use query::{ContextQuery, ContextQueryResult};
 pub use range::{LineRange, LineRangeError, is_well_formed_line_range};
 pub use record::{
@@ -60,7 +62,8 @@ pub use record::{
     RequirementResult, SharingScope, ValidationOutcome, is_reserved_record_member,
 };
 pub use record_attest::{
-    RECORD_ATTESTATION_DOMAIN, RECORD_HASH_MEMBER, RecordHashError, record_attestation_message,
+    RECORD_ATTESTATION_DOMAIN, RECORD_HASH_MEMBER, RecordHashError, RecordKey, RecordKeyRing,
+    RecordKeyVerdict, record_attestation_message,
 };
 #[cfg(feature = "record-hash")]
 pub use record_attest::{
@@ -76,7 +79,8 @@ pub use token::{
 };
 pub use usage::{ProviderUsage, ServedFrame, UsageReport};
 pub use validate::{
-    DIGEST_ALGORITHMS, format_protocol_timestamp, is_protocol_timestamp, is_well_formed_digest,
+    DIGEST_ALGORITHMS, compare_protocol_timestamps, format_protocol_timestamp,
+    is_protocol_timestamp, is_well_formed_digest,
 };
 pub use verify::{FrameVerdict, Verdict, VerifyRequest, VerifyResponse};
 

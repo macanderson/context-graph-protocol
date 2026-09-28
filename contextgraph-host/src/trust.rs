@@ -41,6 +41,25 @@
 //! `issued_at` is not carried at all: this host makes no decision on it, and a
 //! state that exposed it would invite one.
 //!
+//! # A key's validity window is evaluated when the evidence arrives
+//!
+//! A [`TrustedKey`] may carry a [`KeyValidity`] window — `not_before` and
+//! `not_after`, both inclusive
+//! ([ADR 0028](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0028-key-validity-windows-are-evaluated-at-receipt.md)).
+//! The window is evaluated at **the instant this host received the answer**,
+//! never at the attestation's `issued_at`, for the reason above: `issued_at` is
+//! unsigned, so the holder of a lapsed key would simply write an in-window date.
+//! A receipt instant is one the signer cannot choose, and it bounds the signing
+//! time from above — nothing is received before it exists. A live fan-out reads
+//! the host clock once per answer and records it on
+//! [`ProviderOutcome::received_at`](crate::ProviderOutcome::received_at); an
+//! auditor replaying archived evidence passes that recorded instant to
+//! [`TrustStore::check_result_signed_as_at`], so evidence received while a key
+//! was in service verifies forever and evidence received after it lapsed never
+//! did. A key outside its window reads as
+//! [`AttestationState::KeyNotInService`] — and, like every other state, never
+//! removes the frame (F9). A key with no window behaves exactly as before.
+//!
 //! # Attacker-controlled work is bounded before any cryptography runs
 //!
 //! Every field of an attestation arrives from the provider, so this module
@@ -56,10 +75,12 @@ use std::collections::{BTreeMap, HashMap};
 
 use contextgraph_types::{
     ALGORITHM_ED25519, AttestationVerdict, ContextFrame, ContextQueryResult, FrameAttestation,
-    FrameId, InclusionProof, ProvenanceAttestation, verify_frame_attestation,
-    verify_frame_inclusion,
+    FrameId, InclusionProof, KeyValidity, ProvenanceAttestation, WindowPosition,
+    verify_frame_attestation, verify_frame_inclusion,
 };
 use serde::{Deserialize, Serialize};
+
+use crate::consent::now_protocol_timestamp;
 
 /// The exact length of a `sha256:<64 lowercase hex>` commitment string.
 const COMMITMENT_LEN: usize = "sha256:".len() + 64;
@@ -90,6 +111,16 @@ pub struct TrustedKey {
     pub key_id: String,
     /// The raw public key, lowercase hex.
     pub public_key: String,
+    /// When this key is in service (ADR 0028). Evaluated at the instant the
+    /// host received the evidence, never at the attestation's unsigned
+    /// `issued_at`; an attestation received outside it reads as
+    /// [`AttestationState::KeyNotInService`] and its frame is still served.
+    ///
+    /// Unbounded by default, and omitted from the serialized form when
+    /// unbounded — so a key with no window behaves, and persists, exactly as a
+    /// key did before windows existed.
+    #[serde(default, skip_serializing_if = "KeyValidity::is_unbounded")]
+    pub validity: KeyValidity,
 }
 
 impl TrustedKey {
@@ -108,6 +139,7 @@ impl TrustedKey {
         Some(Self {
             key_id: key_id.into(),
             public_key,
+            validity: KeyValidity::unbounded(),
         })
     }
 
@@ -117,7 +149,34 @@ impl TrustedKey {
         Self {
             key_id: key_id.into(),
             public_key: encode_hex(public_key),
+            validity: KeyValidity::unbounded(),
         }
+    }
+
+    /// The same key, in service only within `validity` (ADR 0028).
+    ///
+    /// Build the window with [`KeyValidity::new`], which refuses a malformed or
+    /// inverted one where a person is reading the error. A window assembled
+    /// around it is still checked each time it is evaluated and fails closed:
+    /// the key then reads as [`AttestationState::KeyNotInService`] with
+    /// [`WindowPosition::MalformedWindow`].
+    ///
+    /// ```
+    /// use contextgraph_host::TrustedKey;
+    /// use contextgraph_types::KeyValidity;
+    ///
+    /// let key = TrustedKey::ed25519_bytes("docs-2026", &[7u8; 32]).with_validity(
+    ///     KeyValidity::new(
+    ///         Some("2026-01-01T00:00:00Z".into()),
+    ///         Some("2026-12-31T23:59:59Z".into()),
+    ///     )
+    ///     .expect("a well-formed window"),
+    /// );
+    /// assert!(!key.validity.is_unbounded());
+    /// ```
+    pub fn with_validity(mut self, validity: KeyValidity) -> Self {
+        self.validity = validity;
+        self
     }
 
     /// A `sha256:<hex>` fingerprint over the key bytes — the short string a host
@@ -222,6 +281,10 @@ impl TrustStore {
     /// why a host needs both: `local_id` decides *whose key may sign this*, and
     /// `signing_id` — the handshake-declared `provider.name` — decides *what
     /// bytes were signed* (`SPEC.md` §6.5.2).
+    ///
+    /// Key validity windows are evaluated at the host's clock now, which is
+    /// right for an attestation that has just arrived. Replaying one received
+    /// earlier is [`check_signed_as_at`](Self::check_signed_as_at).
     pub fn check_signed_as(
         &self,
         local_id: &str,
@@ -229,7 +292,33 @@ impl TrustStore {
         frame: &ContextFrame,
         attestation: &ProvenanceAttestation,
     ) -> AttestationState {
-        let provider_id = local_id;
+        self.check_signed_as_at(
+            local_id,
+            signing_id,
+            frame,
+            attestation,
+            &now_protocol_timestamp(),
+        )
+    }
+
+    /// [`check_signed_as`](Self::check_signed_as) as of `received_at`: the
+    /// instant this host **received** the attestation, at which the trusted
+    /// key's [`KeyValidity`] window is evaluated (ADR 0028).
+    ///
+    /// This is the auditor-replay door. Evidence archived with the instant it
+    /// arrived is re-checked against that instant, so a key that has since
+    /// lapsed still vouches for what it signed while in service — and a key
+    /// that had lapsed on arrival never does, whatever the attestation's
+    /// unsigned `issued_at` claims. `received_at` is the verifier's own record,
+    /// never a value read off the attestation.
+    pub fn check_signed_as_at(
+        &self,
+        local_id: &str,
+        signing_id: &str,
+        frame: &ContextFrame,
+        attestation: &ProvenanceAttestation,
+        received_at: &str,
+    ) -> AttestationState {
         // F8, first: a scheme this build cannot check is *uncheckable*, which is
         // a different finding from invalid and is not improved by holding a key.
         if attestation.algorithm != ALGORITHM_ED25519 {
@@ -238,13 +327,13 @@ impl TrustStore {
             };
         }
 
-        // No key ⇒ no signature check. This is also the bound that keeps an
-        // unknown peer from spending the host's CPU: reaching the verifier at
-        // all requires an operator to have trusted a key under this exact id.
-        let Some(key) = self.key(provider_id, &attestation.key_id) else {
-            return AttestationState::NoTrustedKey {
-                key_id: echoed(&attestation.key_id),
-            };
+        // No key in service ⇒ no signature check. This is also the bound that
+        // keeps an unknown peer from spending the host's CPU: reaching the
+        // verifier at all requires an operator to have trusted a key under this
+        // exact id, in service at the instant the evidence arrived.
+        let key = match self.key_in_service(local_id, &attestation.key_id, received_at) {
+            Ok(key) => key,
+            Err(state) => return state,
         };
 
         // Structural length checks before any decoding. `verify_commitment`
@@ -290,6 +379,36 @@ impl TrustStore {
                 }
             }
             verdict => AttestationState::Invalid { verdict },
+        }
+    }
+
+    /// The key trusted for `(local_id, key_id)` if it is in service at
+    /// `received_at`; otherwise the state that says why not.
+    ///
+    /// The one place a key is resolved for verification, so the lookup and the
+    /// window can never be consulted in different orders on different paths.
+    /// The window is evaluated only for a key the operator actually trusts: an
+    /// unknown `key_id` is [`AttestationState::NoTrustedKey`] and the clock is
+    /// never read for it.
+    fn key_in_service(
+        &self,
+        local_id: &str,
+        key_id: &str,
+        received_at: &str,
+    ) -> Result<&TrustedKey, AttestationState> {
+        let Some(key) = self.key(local_id, key_id) else {
+            return Err(AttestationState::NoTrustedKey {
+                key_id: echoed(key_id),
+            });
+        };
+        match key.validity.position(received_at) {
+            WindowPosition::Within => Ok(key),
+            position => Err(AttestationState::KeyNotInService {
+                key_id: key.key_id.clone(),
+                received_at: echoed(received_at),
+                position,
+                validity: key.validity.clone(),
+            }),
         }
     }
 
@@ -367,11 +486,34 @@ impl TrustStore {
     /// builds its own `FrameId`s from. Echoing `signing_id` here instead would
     /// desynchronize this ledger from every other identity the host emits for
     /// the same frame.
+    ///
+    /// Key validity windows are evaluated at the host's clock now — the
+    /// instant a result that has just arrived was received. A caller that
+    /// recorded the receipt instant itself, or replays archived evidence, uses
+    /// [`check_result_signed_as_at`](Self::check_result_signed_as_at).
     pub fn check_result_signed_as(
         &self,
         local_id: &str,
         signing_id: &str,
         result: &ContextQueryResult,
+    ) -> Vec<FrameAttestationOutcome> {
+        self.check_result_signed_as_at(local_id, signing_id, result, &now_protocol_timestamp())
+    }
+
+    /// [`check_result_signed_as`](Self::check_result_signed_as) as of
+    /// `received_at`, the instant this host received `result` (ADR 0028).
+    ///
+    /// One instant for the whole result: every attestation in one answer
+    /// arrived together, so every key it names is judged at the same moment,
+    /// and an auditor replaying the answer reproduces every state exactly by
+    /// passing the instant the host recorded
+    /// ([`ProviderOutcome::received_at`](crate::ProviderOutcome::received_at)).
+    pub fn check_result_signed_as_at(
+        &self,
+        local_id: &str,
+        signing_id: &str,
+        result: &ContextQueryResult,
+        received_at: &str,
     ) -> Vec<FrameAttestationOutcome> {
         let mut offered: HashMap<&FrameId, &FrameAttestation> = HashMap::new();
         for entry in result.frame_attestations.iter().take(result.frames.len()) {
@@ -398,6 +540,7 @@ impl TrustStore {
                         frame,
                         entry,
                         result.result_attestation.as_ref(),
+                        received_at,
                     ),
                     None => AttestationState::Unattested,
                 };
@@ -430,13 +573,14 @@ impl TrustStore {
         frame: &ContextFrame,
         entry: &FrameAttestation,
         result_attestation: Option<&ProvenanceAttestation>,
+        received_at: &str,
     ) -> AttestationState {
         if let Some(attestation) = &entry.attestation {
-            return self.check_signed_as(local_id, signing_id, frame, attestation);
+            return self.check_signed_as_at(local_id, signing_id, frame, attestation, received_at);
         }
         match (&entry.inclusion_proof, result_attestation) {
             (Some(proof), Some(root)) => {
-                self.check_inclusion(local_id, signing_id, frame, proof, root)
+                self.check_inclusion(local_id, signing_id, frame, proof, root, received_at)
             }
             // A proof of membership of a root the answer never carried, or an
             // entry naming a frame and asserting nothing about it. Neither can
@@ -468,16 +612,16 @@ impl TrustStore {
         frame: &ContextFrame,
         proof: &InclusionProof,
         root: &ProvenanceAttestation,
+        received_at: &str,
     ) -> AttestationState {
         if root.algorithm != ALGORITHM_ED25519 {
             return AttestationState::UnknownAlgorithm {
                 algorithm: echoed(&root.algorithm),
             };
         }
-        let Some(key) = self.key(local_id, &root.key_id) else {
-            return AttestationState::NoTrustedKey {
-                key_id: echoed(&root.key_id),
-            };
+        let key = match self.key_in_service(local_id, &root.key_id, received_at) {
+            Ok(key) => key,
+            Err(state) => return state,
         };
         if root.signed_commitment.len() != COMMITMENT_LEN {
             return AttestationState::Invalid {
@@ -581,6 +725,34 @@ pub enum AttestationState {
     NoTrustedKey {
         /// The `key_id` the attestation named, so an operator knows what to add.
         key_id: String,
+    },
+    /// This host trusts a key under that `key_id` for that provider, and the
+    /// key was **not in service** at the instant the evidence arrived: before
+    /// its `not_before`, after its `not_after`, or under a window that could
+    /// not be evaluated (ADR 0028). The signature was not checked — no key was
+    /// in service to check it against.
+    ///
+    /// Distinct from [`NoTrustedKey`](Self::NoTrustedKey), which is a gap in
+    /// the operator's configuration, and from [`Invalid`](Self::Invalid), which
+    /// is a finding about the signature. This is a finding about *time*: the
+    /// state key rotation exists to produce, and — for an `Expired` key that
+    /// keeps signing — the one worth an operator's attention.
+    ///
+    /// Decided at the receipt instant, never at the attestation's `issued_at`,
+    /// which is unsigned (F18) and which the holder of a lapsed key would
+    /// simply back-date. F9 holds: the frame is served, and every decision
+    /// treats this as unattested.
+    KeyNotInService {
+        /// The trusted key that was out of service.
+        key_id: String,
+        /// The instant the window was evaluated at — when this host received
+        /// the evidence, or the recorded instant an auditor replayed it at.
+        received_at: String,
+        /// Where that instant fell relative to the key's window.
+        position: WindowPosition,
+        /// The window as this host holds it, so the audit says which bound was
+        /// crossed without a second lookup.
+        validity: KeyValidity,
     },
     /// The attestation names a signature scheme this build cannot check
     /// (`SPEC.md` F8). A refusal to guess, not a failure to validate.
@@ -1449,8 +1621,8 @@ mod tests {
         store.trust(
             PROVIDER,
             TrustedKey {
-                key_id: KEY_ID.into(),
                 public_key: "zz".repeat(32),
+                ..TrustedKey::ed25519_bytes(KEY_ID, &public_key_for(&SEED))
             },
         );
         assert_eq!(
@@ -1469,8 +1641,8 @@ mod tests {
         assert_eq!(fingerprint.len(), COMMITMENT_LEN);
         // The same key spelled in uppercase hex is the same key.
         let shouty = TrustedKey {
-            key_id: KEY_ID.into(),
             public_key: key.public_key.to_uppercase(),
+            ..key.clone()
         };
         assert_eq!(shouty.fingerprint(), Some(fingerprint));
     }
@@ -1575,5 +1747,233 @@ mod tests {
             matches!(impostor, AttestationState::NoTrustedKey { .. }),
             "no key is trusted under the declared name, got {impostor:?}"
         );
+    }
+
+    // -- key validity windows (#136, ADR 0028) --------------------------------
+
+    /// The window every windowed test uses: the key is in service for 2026.
+    fn year_2026() -> KeyValidity {
+        KeyValidity::new(
+            Some("2026-01-01T00:00:00Z".into()),
+            Some("2026-12-31T23:59:59Z".into()),
+        )
+        .expect("a well-formed window")
+    }
+
+    fn store_trusting_for_2026(seed: &[u8; 32]) -> TrustStore {
+        let mut store = TrustStore::new();
+        store.trust(
+            PROVIDER,
+            TrustedKey::ed25519_bytes(KEY_ID, &public_key_for(seed)).with_validity(year_2026()),
+        );
+        store
+    }
+
+    #[test]
+    fn a_key_is_attested_while_in_service_and_named_out_of_service_after() {
+        let frame = frame("frm_1");
+        let attestation = signed(&frame, &SEED);
+        let store = store_trusting_for_2026(&SEED);
+
+        assert!(
+            store
+                .check_signed_as_at(
+                    PROVIDER,
+                    PROVIDER,
+                    &frame,
+                    &attestation,
+                    "2026-08-29T00:00:01Z"
+                )
+                .is_attested()
+        );
+
+        let lapsed = store.check_signed_as_at(
+            PROVIDER,
+            PROVIDER,
+            &frame,
+            &attestation,
+            "2027-01-01T00:00:00Z",
+        );
+        assert_eq!(
+            lapsed,
+            AttestationState::KeyNotInService {
+                key_id: KEY_ID.to_string(),
+                received_at: "2027-01-01T00:00:00Z".to_string(),
+                position: WindowPosition::Expired,
+                validity: year_2026(),
+            }
+        );
+        assert!(!lapsed.is_attested());
+        assert!(
+            lapsed.was_offered(),
+            "an attestation arrived; the key was simply not in service"
+        );
+
+        let early = store.check_signed_as_at(
+            PROVIDER,
+            PROVIDER,
+            &frame,
+            &attestation,
+            "2025-12-31T23:59:59Z",
+        );
+        assert!(matches!(
+            early,
+            AttestationState::KeyNotInService {
+                position: WindowPosition::NotYetValid,
+                ..
+            }
+        ));
+    }
+
+    /// Out of service is its own finding: not "no key" (a configuration gap)
+    /// and not "invalid" (a finding about the signature). The attestation
+    /// here is signed by an impostor, and the state still names the window,
+    /// because the signature is never reached for a key out of service.
+    #[test]
+    fn out_of_service_is_distinct_from_no_key_and_from_invalid() {
+        let frame = frame("frm_1");
+        let forged = signed(&frame, &OTHER_SEED);
+        let state = store_trusting_for_2026(&SEED).check_signed_as_at(
+            PROVIDER,
+            PROVIDER,
+            &frame,
+            &forged,
+            "2027-06-01T00:00:00Z",
+        );
+        assert!(matches!(state, AttestationState::KeyNotInService { .. }));
+        assert_ne!(
+            state,
+            AttestationState::NoTrustedKey {
+                key_id: KEY_ID.to_string()
+            }
+        );
+        assert!(!matches!(state, AttestationState::Invalid { .. }));
+    }
+
+    /// The attack a window read off `issued_at` would miss: the holder of a
+    /// lapsed key back-dates `issued_at` into the window. It is unsigned (F18),
+    /// so the signature does not object — and the host never reads it.
+    #[test]
+    fn back_dating_issued_at_does_not_bring_a_lapsed_key_back_into_service() {
+        let frame = frame("frm_1");
+        let mut backdated = signed(&frame, &SEED);
+        backdated.issued_at = "2026-03-01T00:00:00Z".into();
+        let state = store_trusting_for_2026(&SEED).check_signed_as_at(
+            PROVIDER,
+            PROVIDER,
+            &frame,
+            &backdated,
+            "2028-01-01T00:00:00Z",
+        );
+        assert!(matches!(
+            state,
+            AttestationState::KeyNotInService {
+                position: WindowPosition::Expired,
+                ..
+            }
+        ));
+    }
+
+    /// The auditor-replay case, named. Evidence that arrived in 2026 under a
+    /// key that lapsed at the end of 2026 is replayed in a later year with the
+    /// receipt instant the host recorded — and is still attested.
+    #[test]
+    fn an_auditor_replays_archived_evidence_at_its_recorded_receipt_instant() {
+        let frames = vec![frame("frm_1"), frame("frm_2")];
+        let mut result = root_signed_result(frames.clone(), &SEED);
+        // Canonical order sorts `frm_2` second: that entry carries a per-frame
+        // signature instead of a proof, so both shapes are replayed.
+        result.frame_attestations[1] =
+            FrameAttestation::signed(frames[1].identity(PROVIDER), signed(&frames[1], &SEED));
+        let store = store_trusting_for_2026(&SEED);
+        let recorded = "2026-08-29T00:00:01Z";
+
+        let replayed = store.check_result_signed_as_at(PROVIDER, PROVIDER, &result, recorded);
+        assert!(
+            replayed.iter().all(|outcome| outcome.state.is_attested()),
+            "both shapes — inclusion proof and per-frame signature — replay as attested: \
+             {replayed:?}"
+        );
+
+        // The same evidence arriving fresh after the lapse is out of service on
+        // both paths, the root-signed one included.
+        let fresh =
+            store.check_result_signed_as_at(PROVIDER, PROVIDER, &result, "2027-02-01T00:00:00Z");
+        assert!(
+            fresh
+                .iter()
+                .all(|outcome| matches!(outcome.state, AttestationState::KeyNotInService { .. })),
+            "{fresh:?}"
+        );
+    }
+
+    #[test]
+    fn a_key_with_no_window_ignores_the_clock_entirely() {
+        // Behaves exactly as before windows existed — even a nonsense instant
+        // is never consulted for it.
+        let frame = frame("frm_1");
+        let attestation = signed(&frame, &SEED);
+        let store = store_trusting(&SEED);
+        for at in ["1970-01-01T00:00:00Z", "2999-01-01T00:00:00Z", "not a time"] {
+            assert!(
+                store
+                    .check_signed_as_at(PROVIDER, PROVIDER, &frame, &attestation, at)
+                    .is_attested(),
+                "{at}"
+            );
+        }
+        assert!(store.check(PROVIDER, &frame, &attestation).is_attested());
+    }
+
+    #[test]
+    fn a_window_that_cannot_be_evaluated_fails_closed() {
+        let frame = frame("frm_1");
+        let attestation = signed(&frame, &SEED);
+        let store = store_trusting_for_2026(&SEED);
+        assert!(matches!(
+            store.check_signed_as_at(PROVIDER, PROVIDER, &frame, &attestation, "yesterday"),
+            AttestationState::KeyNotInService {
+                position: WindowPosition::MalformedInstant,
+                ..
+            }
+        ));
+
+        // A window assembled around `KeyValidity::new`, as a hand-edited store
+        // could hold.
+        let mut inverted = TrustStore::new();
+        inverted.trust(
+            PROVIDER,
+            TrustedKey::ed25519_bytes(KEY_ID, &public_key_for(&SEED)).with_validity(KeyValidity {
+                not_before: Some("2027-01-01T00:00:00Z".into()),
+                not_after: Some("2026-01-01T00:00:00Z".into()),
+            }),
+        );
+        assert!(matches!(
+            inverted.check_signed_as_at(
+                PROVIDER,
+                PROVIDER,
+                &frame,
+                &attestation,
+                "2026-06-01T00:00:00Z"
+            ),
+            AttestationState::KeyNotInService {
+                position: WindowPosition::MalformedWindow,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn a_windowed_store_round_trips_and_an_unwindowed_one_is_unchanged_on_disk() {
+        let windowed = store_trusting_for_2026(&SEED);
+        let json = serde_json::to_string(&windowed).expect("serializable");
+        assert!(json.contains("not_after"));
+        let back: TrustStore = serde_json::from_str(&json).expect("deserializable");
+        assert_eq!(back, windowed);
+
+        // A key with no window serializes with no `validity` member at all, so
+        // a store persisted before windows existed reads back identically.
+        let plain = serde_json::to_string(&store_trusting(&SEED)).expect("serializable");
+        assert!(!plain.contains("validity"), "{plain}");
     }
 }

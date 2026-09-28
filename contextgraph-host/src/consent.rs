@@ -84,7 +84,11 @@ impl ConsentRecord {
 /// [`format_protocol_timestamp`] handles rather than saturating — a wrong-but-
 /// well-formed timestamp is still auditable, where a clamped one silently
 /// claims the epoch.
-fn now_protocol_timestamp() -> String {
+///
+/// Crate-visible because the trust store reads the same clock: a live host
+/// evaluates key validity windows at the instant an answer arrives
+/// ([ADR 0028](https://github.com/macanderson/context-graph-protocol/blob/main/docs/adr/0028-key-validity-windows-are-evaluated-at-receipt.md)).
+pub(crate) fn now_protocol_timestamp() -> String {
     let now = SystemTime::now();
     let seconds = match now.duration_since(UNIX_EPOCH) {
         Ok(elapsed) => elapsed.as_secs() as i64,

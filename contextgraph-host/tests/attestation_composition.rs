@@ -501,6 +501,82 @@ async fn verification_changes_neither_selection_nor_order() {
     );
 }
 
+/// **F9 under key rotation (#136).** A key whose validity window closed before
+/// the answer arrived reads as `KeyNotInService` — its own name, distinct from
+/// "no key" and from "forged" — and the frame is still served, still quoted,
+/// and still included. The host records the instant it received the answer, and
+/// replaying the check at an instant inside the window attests the same
+/// evidence: the auditor-replay case (ADR 0028).
+#[tokio::test]
+async fn a_lapsed_key_degrades_its_frame_to_unattested_and_never_removes_it() {
+    let subject = frame("frm_rotated", "evidence signed under a retired key");
+    let retired = contextgraph_types::KeyValidity::new(
+        Some("2019-01-01T00:00:00Z".into()),
+        Some("2019-12-31T23:59:59Z".into()),
+    )
+    .expect("a well-formed window");
+
+    let mut host = Host::new();
+    host.trust_key(
+        PROVIDER,
+        TrustedKey::ed25519_bytes(KEY_ID, &public_key_for(&SEED)).with_validity(retired),
+    );
+    host.register(Box::new(SigningProvider::new(
+        vec![subject.clone()],
+        vec![entry("frm_rotated", sign(&subject, &SEED))],
+    )));
+
+    let fanout = host.query_all(&query()).await;
+    assert_eq!(
+        fanout.accepted_frames().count(),
+        1,
+        "F9: an out-of-service key never removes a frame"
+    );
+    let received_at = fanout.outcomes[0]
+        .received_at
+        .clone()
+        .expect("a leg that served frames records when it received them");
+    assert!(contextgraph_types::is_protocol_timestamp(&received_at));
+
+    let composed = fanout.compose_for_prompt(1_000);
+    assert!(
+        composed
+            .prompt
+            .contains("evidence signed under a retired key")
+    );
+    let audit = &composed.audit.entries[0];
+    assert!(matches!(
+        audit.disposition,
+        contextgraph_host::FrameDisposition::Included { .. }
+    ));
+    match &audit.attestation {
+        AttestationState::KeyNotInService {
+            key_id,
+            received_at: evaluated_at,
+            position,
+            ..
+        } => {
+            assert_eq!(key_id, KEY_ID);
+            assert_eq!(evaluated_at, &received_at);
+            assert_eq!(*position, contextgraph_types::WindowPosition::Expired);
+        }
+        other => panic!("expected KeyNotInService, got {other:?}"),
+    }
+    assert!(!audit.attestation.is_attested());
+    assert_eq!(composed.audit.attested().count(), 0);
+
+    // Replay: the same answer, checked at an instant the operator's records
+    // place inside the window, is attested — the key vouches for what it
+    // signed while in service.
+    let ProviderResult::Frames(result) = &fanout.outcomes[0].result else {
+        panic!("the leg served frames");
+    };
+    let replayed =
+        host.trust()
+            .check_result_signed_as_at(PROVIDER, PROVIDER, result, "2019-06-01T00:00:00Z");
+    assert!(replayed[0].state.is_attested(), "{replayed:?}");
+}
+
 /// The single-provider door verifies too, and reports the same states — a host
 /// that reaches for `query_provider_attested` is not on a path where
 /// verification quietly does not happen.
