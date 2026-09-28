@@ -55,6 +55,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/big"
+	"math/bits"
 	"strings"
 
 	"github.com/macanderson/context-graph-protocol/sdk/go/contextgraph"
@@ -396,12 +397,15 @@ func nodeHash(left, right [32]byte) [32]byte {
 
 // splitPoint is the largest power of two strictly less than n (RFC 6962's
 // split). Only meaningful for n >= 2.
+//
+// Bit arithmetic rather than a doubling loop, as in the Rust reference's
+// largest_power_of_two_below: a leaf count reaches [InclusionPathSides] from
+// the provider, and a doubling loop overflows for a count near math.MaxInt.
 func splitPoint(n int) int {
-	k := 1
-	for k*2 < n {
-		k *= 2
+	if n&(n-1) == 0 {
+		return n / 2
 	}
-	return k
+	return 1 << (bits.Len(uint(n)) - 1)
 }
 
 // MerkleRoot returns the root over a set of frame commitments (§6.5.3).
@@ -458,13 +462,75 @@ func collectPath(commitments [][32]byte, index int, path *[]InclusionStep) {
 	})
 }
 
+// InclusionPathSides returns the RFC 6962 inclusion-path shape for leaf
+// leafIndex of a tree of leafCount leaves: one entry per step, leaf upward,
+// each true when that step's sibling is the left operand — exactly the
+// SiblingIsLeft sequence [BuildInclusionProof] emits (§6.5.3). It is the port
+// of the Rust reference's inclusion_path_sides.
+//
+// ok is false when leafIndex is negative or not below leafCount, including for
+// an empty tree, which has no leaves to prove. The walk descends the tree's
+// split points from the root, so it takes at most ceil(log2(leafCount)) steps
+// and hashes nothing.
+func InclusionPathSides(leafIndex, leafCount int) (sides []bool, ok bool) {
+	if leafIndex < 0 || leafIndex >= leafCount {
+		return nil, false
+	}
+	sides = make([]bool, 0, bits.Len(uint(leafCount)))
+	index, count := leafIndex, leafCount
+	for count > 1 {
+		split := splitPoint(count)
+		if index < split {
+			// In the left subtree: the sibling is the right one.
+			sides = append(sides, false)
+			count = split
+		} else {
+			sides = append(sides, true)
+			index -= split
+			count -= split
+		}
+	}
+	// Collected root-downward; a proof lists its steps leaf-upward.
+	for i, j := 0, len(sides)-1; i < j; i, j = i+1, j-1 {
+		sides[i], sides[j] = sides[j], sides[i]
+	}
+	return sides, true
+}
+
+// IsWellShaped reports whether the proof's path has exactly the length and
+// sides RFC 6962 gives its (LeafIndex, LeafCount), and is no longer than
+// [MaxInclusionPathSteps] (§6.5.3, ADR 0031). It hashes nothing.
+//
+// A proof's LeafCount means something only if the path is held to it. RFC
+// 6962 fixes the path for leaf i of n: without this check a verifier can be
+// shown a genuine path from one tree under an index or a count that describes
+// another, and would recompute the same root for both.
+func (p InclusionProof) IsWellShaped() bool {
+	if len(p.Path) > MaxInclusionPathSteps {
+		return false
+	}
+	sides, ok := InclusionPathSides(p.LeafIndex, p.LeafCount)
+	if !ok || len(sides) != len(p.Path) {
+		return false
+	}
+	for i, left := range sides {
+		if p.Path[i].SiblingIsLeft != left {
+			return false
+		}
+	}
+	return true
+}
+
 // RootFromProof recomputes a Merkle root from a leaf commitment and its proof.
 //
 // The whole offline story: an auditor holding one frame, its proof and a
 // signed root needs nothing else. ok is false if any sibling is malformed, or
-// the index does not sit inside the stated leaf count.
+// the proof is not [InclusionProof.IsWellShaped] for the tree it states: an
+// index outside LeafCount, or a path whose length or sides are not the ones
+// RFC 6962 gives that (LeafIndex, LeafCount). That check runs first and hashes
+// nothing, and it is what makes LeafCount mean something (§6.5.3, ADR 0031).
 func RootFromProof(commitment [32]byte, proof InclusionProof) (root [32]byte, ok bool) {
-	if proof.LeafIndex < 0 || proof.LeafIndex >= proof.LeafCount {
+	if !proof.IsWellShaped() {
 		return root, false
 	}
 	acc := leafHash(commitment)
@@ -599,11 +665,13 @@ const MaxInclusionPathSteps = 64
 // [VerdictValidIdentityOnly] however many hashes sit between it and the
 // signature.
 //
-// A path longer than [MaxInclusionPathSteps], a malformed sibling, or a leaf
-// index outside the stated tree is [VerdictMalformedCommitment], decided
-// before any hashing of the path.
+// A path longer than [MaxInclusionPathSteps], a proof that is not
+// [InclusionProof.IsWellShaped] (a leaf index outside the stated tree, or a
+// path whose length or sides disagree with its (LeafIndex, LeafCount)), or a
+// malformed sibling is [VerdictMalformedCommitment]. The length and shape are
+// decided before anything is hashed, the frame commitment included.
 func VerifyFrameInclusion(providerID string, frame Frame, proof InclusionProof, resultAttestation ProvenanceAttestation, publicKey []byte) Result {
-	if len(proof.Path) > MaxInclusionPathSteps {
+	if len(proof.Path) > MaxInclusionPathSteps || !proof.IsWellShaped() {
 		return Result{Verdict: VerdictMalformedCommitment}
 	}
 	root, ok := RootFromProof(FrameCommitment(providerID, frame), proof)

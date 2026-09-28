@@ -232,7 +232,7 @@ not approve them. Cancel all three:
 ```bash
 gh run list --workflow release.yml --limit 3 --json databaseId,headBranch \
   --jq '.[] | select(.headBranch | startswith("contextgraph-v0.1.")) | .databaseId' \
-  | xargs -n1 gh run cancel
+  | xargs -r -n1 gh run cancel
 ```
 
 Afterwards, `git ls-remote --tags origin 'contextgraph-v*'` lists a tag for
@@ -267,12 +267,6 @@ puts them on the microsite's CDN.
 | `schema/reference-vectors.ndjson` | `https://contextgraphprotocol.org/schema/reference-vectors.ndjson` — unversioned alias |
 | `SPEC.md` | `https://contextgraphprotocol.org/spec/SPEC.md` |
 | `docs/**` | `https://contextgraphprotocol.org/spec/docs/…` |
-
-`schema/validate-examples.py` runs first, in this workflow rather than only in
-`ci.yml`. Reading another workflow's result would need a `workflow_run` trigger,
-whose failure mode is publishing anyway when the dependency is skipped — and the
-distinction that matters is between "the schema validated somewhere" and "the
-bytes about to be published validated".
 
 ## This job carries the schemas' identity
 

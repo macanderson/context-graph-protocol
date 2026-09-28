@@ -576,8 +576,89 @@ fn read_json(path: &Path) -> Result<Value, String> {
         std::fs::read_to_string(path)
             .map_err(|error| format!("could not read {}: {error}", path.display()))?
     };
-    serde_json::from_str(&text)
+    serde_json::from_str::<DuplicateFreeValue>(&text)
+        .map(|value| value.0)
         .map_err(|error| format!("{} is not JSON: {error}", display_path(path)))
+}
+
+/// A JSON value parsed with a repeated object member refused rather than
+/// collapsed.
+///
+/// `serde_json::Value` keeps the last copy of a repeated member, so the verbs
+/// would hash or verify a document other than the one on disk. RFC 8785 §3.1
+/// requires duplicate-free input, and the Go SDK's strict parser refuses it, so
+/// this tool reports such a file as uncheckable (exit 2) instead of printing a
+/// digest another conforming implementation would refuse to compute.
+struct DuplicateFreeValue(Value);
+
+impl<'de> serde::Deserialize<'de> for DuplicateFreeValue {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer
+            .deserialize_any(DuplicateFreeVisitor)
+            .map(DuplicateFreeValue)
+    }
+}
+
+struct DuplicateFreeVisitor;
+
+impl<'de> serde::de::Visitor<'de> for DuplicateFreeVisitor {
+    type Value = Value;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("a JSON value")
+    }
+
+    fn visit_bool<E: serde::de::Error>(self, value: bool) -> Result<Value, E> {
+        Ok(Value::Bool(value))
+    }
+
+    fn visit_i64<E: serde::de::Error>(self, value: i64) -> Result<Value, E> {
+        Ok(Value::from(value))
+    }
+
+    fn visit_u64<E: serde::de::Error>(self, value: u64) -> Result<Value, E> {
+        Ok(Value::from(value))
+    }
+
+    fn visit_f64<E: serde::de::Error>(self, value: f64) -> Result<Value, E> {
+        serde_json::Number::from_f64(value)
+            .map(Value::Number)
+            .ok_or_else(|| E::custom("a number that is not finite"))
+    }
+
+    fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Value, E> {
+        Ok(Value::String(value.to_owned()))
+    }
+
+    fn visit_string<E: serde::de::Error>(self, value: String) -> Result<Value, E> {
+        Ok(Value::String(value))
+    }
+
+    fn visit_unit<E: serde::de::Error>(self) -> Result<Value, E> {
+        Ok(Value::Null)
+    }
+
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Value, A::Error> {
+        let mut items = Vec::new();
+        while let Some(DuplicateFreeValue(item)) = seq.next_element()? {
+            items.push(item);
+        }
+        Ok(Value::Array(items))
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Value, A::Error> {
+        let mut members = serde_json::Map::new();
+        while let Some(name) = map.next_key::<String>()? {
+            if members.contains_key(&name) {
+                return Err(serde::de::Error::custom(format_args!(
+                    "duplicate member {name:?} (RFC 8785 requires unique member names)"
+                )));
+            }
+            let DuplicateFreeValue(value) = map.next_value()?;
+            members.insert(name, value);
+        }
+        Ok(Value::Object(members))
+    }
 }
 
 /// How an input path is named in a message: `-` reads as standard input.

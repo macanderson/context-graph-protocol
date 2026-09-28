@@ -99,7 +99,10 @@ tamper-evident: a detached Ed25519 signature over a commitment to the frame's
 identity and its provenance chain. `contextgraph_sdk.attest` implements the
 whole construction — the length-prefixed link encoding, the source-first chain
 fold, the frame commitment, an RFC 6962 Merkle root over a result set with
-inclusion proofs, and verification.
+inclusion proofs, and verification. `root_from_proof` refuses a proof whose
+path is not exactly the RFC 6962 shape for its `(leaf_index, leaf_count)`
+before hashing anything (`InclusionProof.is_well_shaped`, ADR 0031), so a
+genuine path cannot be replayed under a false index or tree size.
 
 ```python
 from contextgraph_sdk import verify_frame_attestation, Verdict
@@ -118,6 +121,17 @@ but it covers the frame's identity and provenance and none of its bytes (ADR
 0018). `is_valid()` is false for it. Call `signature_verifies()` when you want
 to accept it on purpose, and `binds_content()` to ask whether the signature
 covers the bytes.
+
+A frame attested through a signed result-set root rather than its own
+signature is checked with `verify_frame_inclusion(provider_id, frame, proof,
+root_attestation, public_key)`. It applies the same rule, and returns
+`Verdict.MALFORMED_COMMITMENT` before hashing anything when the proof's path is
+longer than `MAX_INCLUSION_PATH_STEPS` (64) or does not have exactly the length
+and `sibling_is_left` sides RFC 6962 gives its `(leaf_index, leaf_count)`
+(`SPEC.md` §6.5.3). `inclusion_path_sides(leaf_index, leaf_count)` returns the
+expected sides. The shape cannot tell every tree size apart (leaf 3 of 5 and
+leaf 3 of 7 share a path), so a host checking a live answer also compares
+`leaf_count` with the number of frames the answer carries.
 
 Two things worth knowing:
 

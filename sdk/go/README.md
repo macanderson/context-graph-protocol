@@ -174,6 +174,12 @@ Two things worth knowing:
   `attest.VerifyFrameInclusion` applies the same rule to a frame attested
   through a signed result-set root, and refuses an inclusion path longer than
   `attest.MaxInclusionPathSteps` (64) before hashing any of it.
+- **An inclusion proof must have the shape its `leaf_count` gives it.** RFC
+  6962 fixes the path for leaf *i* of *n*: its length and every step's side.
+  `attest.RootFromProof` and `attest.VerifyFrameInclusion` refuse a proof that
+  is not `IsWellShaped()` before any hashing, so a genuine path presented under
+  a false `leaf_index` or `leaf_count` is `malformed_commitment` (§6.5.3, ADR
+  0031). `attest.InclusionPathSides(i, n)` returns the expected shape.
 
 ## Sign a provenance attestation
 

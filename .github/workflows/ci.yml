@@ -53,7 +53,7 @@ jobs:
       # prose (ADR 0015, 2026-09-28 amendment). `cargo test` only compiles
       # examples; running it keeps its assertions true, not just its types.
       - run: cargo run -p contextgraph-host --example rerank_before_compose
-      # `attestation` is off by default, so the line above reaches
+      # `attestation` is off by default, so the workspace test run above reaches
       # contextgraph_types::attest and the cross-language vectors the SDK
       # suites reconcile against only through feature unification with
       # contextgraph-conformance's dependency on it. That is a resolver detail,
@@ -203,6 +203,40 @@ jobs:
           ./.github/scripts/conformance-external.sh \
             -- ./target/debug/contextgraph-mcp-bridge \
                -- ./target/debug/contextgraph-mcp-fixture
+
+  bridge-parallel:
+    name: mcp-bridge tests at default parallelism (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # bridge_via_host's two tests each spawn the bridge, which spawns the MCP
+    # fixture, so running them together is four cold child processes over two
+    # nested stdio pipe pairs. They timed out together and passed one at a
+    # time (#142), and the report came from macOS while every other job here
+    # runs on Linux. `test` above runs them once, on Linux. This runs them at
+    # cargo's default test threads, several times over, on both systems, so a
+    # timing-dependent handshake goes red here rather than on some later
+    # unrelated pull request. No `--test-threads` anywhere: a pass that needs
+    # it has stopped testing what #142 reported.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/rust
+      - uses: Swatinem/rust-cache@v2
+      # Compile first, so each timed run below measures the tests and not the
+      # link. The first run still meets freshly linked binaries, which is the
+      # cold-launch case #142 describes.
+      - run: cargo test -p contextgraph-mcp-bridge --test bridge_via_host --no-run
+      - name: bridge_via_host passes five times in a row at default parallelism
+        shell: bash
+        run: |
+          set -euo pipefail
+          for run in 1 2 3 4 5; do
+            echo "::group::bridge_via_host run $run of 5"
+            cargo test -p contextgraph-mcp-bridge --test bridge_via_host
+            echo "::endgroup::"
+          done
 
   sdk-typescript:
     name: sdk (typescript) is a conformant implementation

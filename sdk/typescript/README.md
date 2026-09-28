@@ -121,8 +121,15 @@ the signature binds who served it and its provenance, but not its bytes.
 
 A frame attested through a signed result-set root rather than its own signature
 is checked with `verifyFrameInclusion(providerId, frame, proof, rootAttestation,
-publicKey)`. It applies the same rule, and refuses a proof path longer than
-`MAX_INCLUSION_PATH_STEPS` (64) before hashing anything.
+publicKey)`. It applies the same rule, and refuses a proof as
+`malformed_commitment` before hashing anything when its path is longer than
+`MAX_INCLUSION_PATH_STEPS` (64) or does not have exactly the length and
+`sibling_is_left` sides RFC 6962 gives its `(leaf_index, leaf_count)`
+(`SPEC.md` §6.5.3). `isWellShaped(proof)` runs that check alone, and
+`inclusionPathSides(leafIndex, leafCount)` returns the expected sides. The
+shape cannot tell every tree size apart (leaf 3 of 5 and leaf 3 of 7 share a
+path), so a host checking a live answer also compares `leaf_count` with the
+number of frames the answer carries.
 
 ## Sign a provenance attestation
 

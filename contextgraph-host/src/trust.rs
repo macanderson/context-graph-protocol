@@ -1244,14 +1244,20 @@ impl AttestationState {
         }
     }
 
-    /// Whether the signature covers the frame's content bytes as well as its
-    /// identity and provenance — see
-    /// [`Attested::covers_content`](Self::Attested). `false` for every state
-    /// that is not [`Attested`](Self::Attested).
+    /// Whether a verified signature covers the frame's content bytes as well
+    /// as its identity and provenance — see
+    /// [`Attested::covers_content`](Self::Attested). This is a fact about the
+    /// signature, not about the key's tier, so it holds for
+    /// [`Pinned`](Self::Pinned) as well as [`Attested`](Self::Attested); read
+    /// [`trust_tier`](Self::trust_tier) for how far the key is trusted.
+    /// `false` for every state in which no signature verified.
     pub fn covers_content(&self) -> bool {
         matches!(
             self,
             Self::Attested {
+                covers_content: true,
+                ..
+            } | Self::Pinned {
                 covers_content: true,
                 ..
             }
@@ -2597,6 +2603,10 @@ mod tests {
             "continuity is not identity: a pin never reads as operator-attested"
         );
         assert!(state.signature_verified());
+        assert!(
+            state.covers_content(),
+            "content binding is a fact about the signature, not the key's tier"
+        );
         assert_eq!(state.trust_tier(), Some(TrustTier::Pinned));
         assert_eq!(state.unverified_attester_id(), Some("docs-provider"));
         assert!(state.was_offered());

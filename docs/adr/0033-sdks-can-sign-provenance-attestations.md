@@ -48,19 +48,35 @@ and it never widens the zero-dependency promise.**
 | Rust reference | TypeScript | Python | Go |
 |---|---|---|---|
 | `sign_commitment` | `signCommitment` | `sign_commitment` | `SignCommitment` |
-| `sign_frame_attestation` | `signFrameAttestation` | `sign_frame_attestation` | `SignFrameAttestation` |
+| `try_sign_frame_attestation` | `signFrameAttestation` | `sign_frame_attestation` | `SignFrameAttestation` |
 | `public_key_for` | `publicKeyFor` | `public_key_for` | `PublicKeyFor` |
+| `sign_record_attestation` | `signRecordAttestation` | `sign_record_attestation` | `SignRecordAttestation` |
+| `sign_record` | `signRecord` | `sign_record` | `SignRecord` |
 
-Each entry point takes the raw 32-byte Ed25519 seed. That is the form the Rust
-reference and both published vectors use, so the witness test below is the
-same test in every language. An SDK may also accept the language's own private
-key type, where one exists, so a key loaded once need not live as a byte array.
-TypeScript accepts a private Ed25519 `KeyObject` and exports
-`signingKeyFromSeed`.
+The frame row pairs each SDK signer with the Rust reference's *checked* entry
+point, because both refuse a frame with no `content_digest` (§2). The Rust
+reference also keeps its older, unchecked `sign_frame_attestation`, which has
+no SDK counterpart; see Consequences.
 
-An SDK that ports the record layer (#119) signs records under the same rules:
-`sign_record_attestation` and `sign_record`, over the domain-separated message
-of ADR 0017 §3. The TypeScript SDK ships both.
+Each entry point accepts the raw 32-byte Ed25519 seed, directly or through one
+helper call. That is the form the Rust reference and both published vectors
+use, so the witness test below is the same test in every language. An SDK may
+also accept the language's own private key type, where one exists, so a key
+loaded once need not live as a byte array.
+
+- **TypeScript** accepts either the seed or a private Ed25519 `KeyObject`, and
+  exports `signingKeyFromSeed` to make one from the other.
+- **Python** takes the seed.
+- **Go** signing functions take a `crypto.Signer`, not key bytes: the
+  interface `ed25519.PrivateKey` implements, and the one KMS clients, PKCS#11
+  wrappers and ssh-agent bindings implement too, so one function serves a key
+  held in memory and a key that never leaves an HSM. `PrivateKeyFromSeed`
+  turns the raw seed into an `ed25519.PrivateKey`, which is a `crypto.Signer`.
+  `PublicKeyFor` takes the seed, as the Rust reference's `public_key_for`
+  does.
+
+Every SDK ports the record layer (#119) and signs records under the same
+rules, over the domain-separated message of ADR 0017 §3.
 
 ### 2. A frame signer refuses a frame with no `content_digest`
 
@@ -139,7 +155,10 @@ Each SDK README carries a key custody section with two parts:
   model an HSM directly, but it adds an async surface that three languages
   must keep in step, and it adds no capability. The preimage functions are
   already public, and an HSM path is three lines around them. If a real need
-  appears, it can be added without breaking anything decided here.
+  appears, it can be added without breaking anything decided here. Go's
+  `crypto.Signer` (§1) is not this: it is the standard library's own
+  synchronous interface, which Go's KMS and HSM clients already implement, so
+  taking it adds no surface the other SDKs must match.
 - **A hand-written Python signer, to keep one install everywhere.** Rejected
   for the constant-time reason in §3.
 - **A required `cryptography` dependency for Python.** This would break the
@@ -159,10 +178,19 @@ Each SDK README carries a key custody section with two parts:
   verifier in line with ADR 0018 for a frame signed directly and for one
   signed through a result-set root. It is additive, and `isValid` stays
   `false` for the new verdict.
-- The Rust reference's `sign_frame_attestation` predates ADR 0018 and still
-  signs a digest-less frame. §2 applies to it too. Aligning it is a change to
-  `contextgraph-types`, not to any SDK, and until it lands the SDKs are
-  stricter than the reference here and nowhere else.
+- The Rust reference's `sign_frame_attestation` predates ADR 0018 and signs a
+  digest-less frame without complaint. Its signature is unchanged, because
+  hundreds of call sites (mostly tests of the verifier's identity-only path)
+  rely on it. `contextgraph-types` now adds `try_sign_frame_attestation`,
+  which refuses such a frame with `FrameSigningError::NoContentDigest` and
+  otherwise returns the same attestation byte for byte. §2 applies through
+  that checked entry point, and the unchecked one's documentation says it
+  does not enforce ADR 0018 and points providers at the checked one. The
+  reference, TypeScript and Go refuse the same frames: those with no
+  `content_digest`. Python additionally refuses a declared digest that is not
+  `sha256:<64 lowercase hex>` (SPEC D1), which no conformant frame carries;
+  `FrameSigningError` is `#[non_exhaustive]` so the reference can adopt that
+  refusal additively.
 - Signing adds a way to misuse a key that did not exist before. The README
   sections are there so that nobody takes on that risk without being told
   what it costs.

@@ -628,7 +628,7 @@ impl RecordKeyRing {
 #[cfg(all(test, feature = "record-attestation"))]
 mod tests {
     use super::*;
-    use crate::attest::{AttestationVerdict, public_key_for, sign_commitment};
+    use crate::attest::{public_key_for, sign_commitment};
     use serde_json::{Value, json};
 
     /// A deterministic seed. Tests need reproducible signatures, and this key

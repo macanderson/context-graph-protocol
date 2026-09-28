@@ -101,8 +101,11 @@
 //! The protocol defines the *preimage*; it does not define your signing
 //! backend. [`frame_commitment`] and [`merkle_root`] are public so a provider
 //! holding keys in an HSM, a KMS, or a hardware token signs the bytes itself
-//! and never hands this crate a secret. [`sign_frame_attestation`] exists for
-//! providers and tests that are content to sign in-process.
+//! and never hands this crate a secret. [`try_sign_frame_attestation`] exists
+//! for providers content to sign in-process, and refuses a frame that declares
+//! no `content_digest` (ADR 0018). [`sign_frame_attestation`] is its unchecked
+//! predecessor, kept for tests and vectors that must reproduce an
+//! identity-only signature.
 
 use serde::{Deserialize, Serialize};
 
@@ -1099,13 +1102,109 @@ mod crypto {
         }
     }
 
+    /// Why [`try_sign_frame_attestation`] declined to sign a frame.
+    ///
+    /// Named, rather than a bare string, so a caller can match on the reason
+    /// and so every conforming signer reports the same refusal: this is the
+    /// Rust reference's counterpart of the Go SDK's
+    /// `ErrFrameHasNoContentDigest`, the TypeScript SDK's `TypeError` from
+    /// `signFrameAttestation`, and the Python SDK's `ValueError` from
+    /// `sign_frame_attestation`.
+    ///
+    /// `#[non_exhaustive]` because a signer may yet refuse for another reason —
+    /// a declared digest that fails the `sha256:<64 lowercase hex>` grammar is
+    /// the obvious candidate — and adding that must not break a caller's match.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[non_exhaustive]
+    pub enum FrameSigningError {
+        /// The frame declares no `content_digest`. `SPEC.md` §6.5.2 requires an
+        /// attester to populate it on any frame it signs (ADR 0018): the
+        /// commitment of a digest-less frame binds its identity and provenance
+        /// but none of its content, so the signature would still verify after
+        /// the provider re-served different bytes under the same id.
+        NoContentDigest {
+            /// The `id` of the frame that was refused, so the caller can find it.
+            frame_id: String,
+        },
+    }
+
+    impl core::fmt::Display for FrameSigningError {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            match self {
+                Self::NoContentDigest { frame_id } => write!(
+                    f,
+                    "refusing to sign frame `{frame_id}`: it declares no content_digest, so the \
+                     signature would cover its identity but none of its content \
+                     (SPEC.md §6.5.2, ADR 0018)"
+                ),
+            }
+        }
+    }
+
+    impl std::error::Error for FrameSigningError {}
+
+    /// Sign a frame's commitment in-process, refusing a frame that declares no
+    /// `content_digest` — the entry point a provider should call.
+    ///
+    /// `SPEC.md` §6.5.2 requires an attester to populate `content_digest` on
+    /// any frame it signs (ADR 0018). A digest-less frame's commitment binds
+    /// its identity and provenance alone, so a signature over it outlives any
+    /// content later served under that id, and a verifier can only label it
+    /// [`AttestationVerdict::ValidIdentityOnly`] after the fact. Refusing here
+    /// stops the signature being produced, which is what every SDK signer
+    /// (TypeScript, Python, Go) already does.
+    ///
+    /// When the frame does declare a digest, the result is byte-for-byte the
+    /// attestation [`sign_frame_attestation`] returns for the same inputs:
+    /// the check gates signing and changes nothing about what is signed.
+    ///
+    /// # Errors
+    ///
+    /// [`FrameSigningError::NoContentDigest`] if `frame.content_digest` is
+    /// `None`. Nothing is signed in that case.
+    pub fn try_sign_frame_attestation(
+        provider_id: &str,
+        frame: &ContextFrame,
+        signing_key_seed: &[u8; 32],
+        key_id: impl Into<String>,
+        attester_id: impl Into<String>,
+        issued_at: impl Into<String>,
+    ) -> Result<ProvenanceAttestation, FrameSigningError> {
+        if frame.content_digest.is_none() {
+            return Err(FrameSigningError::NoContentDigest {
+                frame_id: frame.id.clone(),
+            });
+        }
+        Ok(sign_frame_attestation(
+            provider_id,
+            frame,
+            signing_key_seed,
+            key_id,
+            attester_id,
+            issued_at,
+        ))
+    }
+
     /// Sign a frame's commitment in-process, for providers content to hold key
-    /// material in memory.
+    /// material in memory — **without** checking that the frame declares a
+    /// `content_digest`.
+    ///
+    /// **This does not enforce ADR 0018.** It predates that rule and signs a
+    /// digest-less frame as readily as any other, producing an attestation
+    /// that binds the frame's identity and provenance but none of its content
+    /// ([`verify_frame_attestation`] reports it as
+    /// [`AttestationVerdict::ValidIdentityOnly`]). `SPEC.md` §6.5.2 forbids an
+    /// attester to produce one. A provider should call
+    /// [`try_sign_frame_attestation`], which refuses such a frame, as every
+    /// SDK signer does. This unchecked form stays for callers that must
+    /// reproduce a pre-rule identity-only signature — conformance vectors and
+    /// tests of the verifier's downgrade path — and its signature is unchanged
+    /// so they keep compiling.
     ///
     /// A provider using an HSM or KMS instead calls [`frame_commitment`],
     /// signs the 32 bytes with its own backend, and assembles the
     /// [`ProvenanceAttestation`] by hand — the protocol specifies the preimage,
-    /// never the custody of the key.
+    /// never the custody of the key. The same ADR 0018 rule applies there.
     pub fn sign_frame_attestation(
         provider_id: &str,
         frame: &ContextFrame,
@@ -1160,10 +1259,10 @@ mod crypto {
 
 #[cfg(feature = "attestation")]
 pub use crypto::{
-    frame_commitment, frame_inclusion_under_verified_root, inclusion_proof, merkle_root,
-    provenance_chain_head, public_key_for, result_set_commitments, result_set_root,
-    root_from_proof, sign_commitment, sign_frame_attestation, verify_commitment,
-    verify_frame_attestation, verify_frame_inclusion,
+    FrameSigningError, frame_commitment, frame_inclusion_under_verified_root, inclusion_proof,
+    merkle_root, provenance_chain_head, public_key_for, result_set_commitments, result_set_root,
+    root_from_proof, sign_commitment, sign_frame_attestation, try_sign_frame_attestation,
+    verify_commitment, verify_frame_attestation, verify_frame_inclusion,
 };
 
 #[cfg(all(test, feature = "attestation"))]
@@ -1997,6 +2096,56 @@ mod content_binding_tests {
         assert!(
             matches!(verdict, AttestationVerdict::CommitmentMismatch { .. }),
             "stripping the digest must not downgrade to ValidIdentityOnly; got {verdict:?}"
+        );
+    }
+
+    /// ADR 0018 at the signer: the checked entry point declines a frame that
+    /// declares no `content_digest`, naming the frame, rather than produce the
+    /// identity-only signature the test above shows the unchecked one making.
+    #[test]
+    fn the_checked_signer_refuses_a_frame_with_no_content_digest() {
+        let unbound = frame("f4", "retry three times", None);
+        let refused = try_sign_frame_attestation(
+            PROVIDER,
+            &unbound,
+            &SEED,
+            "k1",
+            "acme",
+            "2026-09-10T00:00:00Z",
+        );
+        assert_eq!(
+            refused,
+            Err(FrameSigningError::NoContentDigest {
+                frame_id: "f4".into(),
+            })
+        );
+        let message = refused.unwrap_err().to_string();
+        assert!(
+            message.contains("f4") && message.contains("content_digest"),
+            "the refusal must name the frame and the missing member: {message}"
+        );
+    }
+
+    /// The check gates signing and changes nothing about what is signed: for a
+    /// frame that declares a digest, the checked and unchecked signers return
+    /// the same attestation, and it verifies as content-bound.
+    #[test]
+    fn the_checked_signer_matches_the_unchecked_one_when_a_digest_is_declared() {
+        let bound = frame("f5", "retry three times", Some("sha256:aaaa"));
+        let checked = try_sign_frame_attestation(
+            PROVIDER,
+            &bound,
+            &SEED,
+            "k1",
+            "acme",
+            "2026-09-10T00:00:00Z",
+        )
+        .expect("a frame that declares a content_digest is signable");
+        assert_eq!(checked, attest(&bound));
+        let key = public_key_for(&SEED);
+        assert_eq!(
+            verify_frame_attestation(PROVIDER, &bound, &checked, &key),
+            AttestationVerdict::Valid
         );
     }
 }

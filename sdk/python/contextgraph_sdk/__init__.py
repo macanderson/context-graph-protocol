@@ -18,6 +18,7 @@ Context Graph Protocol providers.
 
 from .attest import (
     ALGORITHM_ED25519,
+    MAX_INCLUSION_PATH_STEPS,
     AttestableFrame,
     AttestationVerdict,
     InclusionProof,
@@ -28,6 +29,7 @@ from .attest import (
     digest_string,
     encode_provenance_link,
     frame_commitment,
+    inclusion_path_sides,
     inclusion_proof,
     merkle_root,
     parse_digest,
@@ -38,6 +40,7 @@ from .attest import (
     sign_frame_attestation,
     verify_commitment,
     verify_frame_attestation,
+    verify_frame_inclusion,
 )
 from .budget import BYTES_PER_BUDGET_TOKEN, budget_tokens
 from .http import handle_envelope, make_wsgi_app, respond_to_body
@@ -75,12 +78,14 @@ __all__ = [
     "AttestationVerdict",
     "InclusionProof",
     "InclusionStep",
+    "MAX_INCLUSION_PATH_STEPS",
     "ProvenanceAttestation",
     "SigningUnavailableError",
     "Verdict",
     "digest_string",
     "encode_provenance_link",
     "frame_commitment",
+    "inclusion_path_sides",
     "inclusion_proof",
     "merkle_root",
     "parse_digest",
@@ -91,6 +96,7 @@ __all__ = [
     "sign_frame_attestation",
     "verify_commitment",
     "verify_frame_attestation",
+    "verify_frame_inclusion",
     "RECORD_ATTESTATION_DOMAIN",
     "RECORD_HASH_MEMBER",
     "CanonicalizationError",

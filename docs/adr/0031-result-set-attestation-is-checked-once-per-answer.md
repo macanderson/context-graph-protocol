@@ -100,11 +100,13 @@ root's signature once per answer.
   `every_frame_proven_under_a_signed_root_is_attested_in_the_audit`,
   `a_proof_from_a_differently_shaped_tree_is_not_attested`, and
   `a_malformed_root_or_proof_leaves_every_frame_served` (F9).
-- **The SDK verifiers must follow.** The Python, TypeScript and Go ports of
-  `root_from_proof` check `leaf_index < leaf_count` only. Until each adds the
-  shape check, it accepts a proof the reference refuses — on adversarial input
-  only, since every honest proof is well-shaped — and that divergence is a
-  §6.5.3 conformance gap in the port, tracked for each SDK.
+- **The SDK verifiers follow.** The Python, TypeScript and Go ports of
+  `root_from_proof` apply the same shape check before any hashing
+  (`inclusion_path_sides` / `inclusionPathSides` / `InclusionPathSides`), each
+  with a witness test that a genuine path under a false `leaf_index` or
+  `leaf_count` is refused. A false count whose tree gives the leaf the same
+  path cannot be told apart by shape in any implementation; the host's
+  `leaf_count == frames.len()` rule (§3) is what closes that case.
 
 ## Alternatives considered
 

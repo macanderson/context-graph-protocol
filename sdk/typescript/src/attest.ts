@@ -376,17 +376,102 @@ function collectPath(
 }
 
 /**
+ * The RFC 6962 inclusion-path shape for leaf `leafIndex` of a tree of
+ * `leafCount` leaves: one entry per step, **leaf upward**, each `true` when
+ * that step's sibling is the left operand — exactly the `sibling_is_left`
+ * sequence {@link inclusionProof} emits (`SPEC.md` §6.5.3). Mirrors the Rust
+ * reference's `inclusion_path_sides`.
+ *
+ * `null` unless both arguments are non-negative safe integers with
+ * `leafIndex < leafCount`, which includes the empty tree: it has no leaves to
+ * prove. The walk descends the tree's split points from the root, so it takes
+ * at most `ceil(log2(leafCount))` steps — 53 for any safe integer — and hashes
+ * nothing.
+ *
+ * ```ts
+ * inclusionPathSides(0, 1); // []
+ * inclusionPathSides(3, 7); // [true, true, false]
+ * inclusionPathSides(6, 7); // [true, true]
+ * inclusionPathSides(7, 7); // null
+ * ```
+ */
+export function inclusionPathSides(leafIndex: number, leafCount: number): boolean[] | null {
+  // Rust types these as `usize`, so a fraction, a negative, NaN or a number
+  // past 2^53 never reaches its arithmetic. Here they arrive from JSON as
+  // readily as integers do, and every one of them is a proof of nothing.
+  if (!Number.isSafeInteger(leafIndex) || !Number.isSafeInteger(leafCount)) return null;
+  if (leafIndex < 0 || leafIndex >= leafCount) return null;
+  const sides: boolean[] = [];
+  let index = leafIndex;
+  let count = leafCount;
+  while (count > 1) {
+    const split = splitPoint(count);
+    if (index < split) {
+      // In the left subtree: the sibling is the right one.
+      sides.push(false);
+      count = split;
+    } else {
+      sides.push(true);
+      index -= split;
+      count -= split;
+    }
+  }
+  // Collected root-downward; a proof lists its steps leaf-upward.
+  return sides.reverse();
+}
+
+/**
+ * Whether `proof` has exactly the shape RFC 6962 gives the path for leaf
+ * `leaf_index` of a tree of `leaf_count` leaves: the index inside the tree,
+ * one step per level, and each step's side where the tree puts it
+ * (`SPEC.md` §6.5.3). Mirrors the Rust reference's
+ * `InclusionProof::is_well_shaped`.
+ *
+ * This is what honoring `leaf_count` means. A proof whose path is longer or
+ * shorter than its stated tree allows, or whose sides disagree with its stated
+ * index, came from a differently-shaped tree — or was assembled to look as if
+ * it did — and is refused **before any hashing**: the check is index
+ * arithmetic over at most `ceil(log2(leaf_count))` levels, never a walk of the
+ * provider's path.
+ *
+ * ```ts
+ * // Leaf 3 of 7: sibling leaf 2 on the left, then the pair (0, 1) on the
+ * // left, then the subtree (4, 5, 6) on the right.
+ * isWellShaped({ leaf_index: 3, leaf_count: 7, path: [l, l, r] }); // true
+ * // The same path presented as coming from a four-leaf tree is refused:
+ * // leaf 3 of 4 sits two levels down, not three.
+ * isWellShaped({ leaf_index: 3, leaf_count: 4, path: [l, l, r] }); // false
+ * ```
+ */
+export function isWellShaped(proof: InclusionProof): boolean {
+  if (!Array.isArray(proof.path) || proof.path.length > MAX_INCLUSION_PATH_STEPS) return false;
+  const sides = inclusionPathSides(proof.leaf_index, proof.leaf_count);
+  if (sides === null || sides.length !== proof.path.length) return false;
+  // `===`, not truthiness: a side that is not a boolean was not written by
+  // anything that builds proofs, and `"false"` is truthy.
+  return sides.every((left, i) => proof.path[i]?.sibling_is_left === left);
+}
+
+/**
  * Recompute a Merkle root from a leaf commitment and its proof.
  *
  * The whole offline story: an auditor holding one frame, its proof and a
- * signed root needs nothing else. `null` if any sibling in the path is
- * malformed, or the index does not sit inside the stated leaf count.
+ * signed root needs nothing else. Mirrors the Rust reference's
+ * `root_from_proof`.
+ *
+ * `null` if any sibling in the path is malformed, or if the proof is not
+ * {@link isWellShaped | well-shaped} for the tree it states: an index outside
+ * `leaf_count`, or a path whose length or sides are not the ones RFC 6962
+ * gives that `(leaf_index, leaf_count)`. That check runs first and hashes
+ * nothing, and it is what makes `leaf_count` mean something — a verifier that
+ * ignored it could be shown a proof from a differently-shaped tree
+ * (`SPEC.md` §6.5.3).
  */
 export function rootFromProof(
   commitment: Uint8Array,
   proof: InclusionProof,
 ): Uint8Array | null {
-  if (proof.leaf_index >= proof.leaf_count) return null;
+  if (!isWellShaped(proof)) return null;
   let acc = leafHash(commitment);
   for (const step of proof.path) {
     const sibling = parseDigest(step.sibling);
@@ -530,9 +615,12 @@ export const MAX_INCLUSION_PATH_STEPS = 64;
  * is a {@link frameCommitment}, so a frame with no `content_digest` is bound
  * by identity and provenance alone however many hashes sit above it.
  *
- * A path longer than {@link MAX_INCLUSION_PATH_STEPS}, a malformed sibling, or
- * a leaf index outside the stated tree is `malformed_commitment`, rejected
- * before any signature work: there is no root to compare against.
+ * A path longer than {@link MAX_INCLUSION_PATH_STEPS}, a malformed sibling, a
+ * leaf index outside the stated tree, or a path whose length or sides are not
+ * the RFC 6962 shape for its `(leaf_index, leaf_count)` ({@link isWellShaped})
+ * is `malformed_commitment`, rejected before any signature work: there is no
+ * root to compare against. The length and shape checks run before anything is
+ * hashed, the leaf commitment included.
  */
 export function verifyFrameInclusion(
   providerId: string,
@@ -541,7 +629,7 @@ export function verifyFrameInclusion(
   resultAttestation: ProvenanceAttestation,
   publicKey: Uint8Array,
 ): AttestationVerdict {
-  if (proof.path.length > MAX_INCLUSION_PATH_STEPS) {
+  if (!isWellShaped(proof)) {
     return { verdict: "malformed_commitment" };
   }
   const root = rootFromProof(frameCommitment(providerId, frame), proof);

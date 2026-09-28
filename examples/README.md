@@ -33,14 +33,14 @@ Every message is one Context Graph Protocol **envelope** — an internally-tagge
 (`#[serde(tag = "type", rename_all = "snake_case")]`). The `type` field selects
 the variant and sits at the same level as the payload fields:
 
-| `type`          | direction        | payload                                        |
-| --------------- | ---------------- | ---------------------------------------------- |
-| `handshake`     | host → provider  | `protocol_version`                             |
-| `handshake_ack` | provider → host  | `protocol_version`, `provider`, `capabilities`, optional `attester_keys` |
-| `query`         | host → provider  | `query` (a `ContextQuery`)                     |
-| `frames`        | provider → host  | `result` (a `ContextQueryResult`)              |
-| `shutdown`      | host → provider  | *(none)*                                       |
-| `error`         | provider → host  | `message`                                      |
+| `type`          | direction       | payload                                                                  |
+| --------------- | --------------- | ------------------------------------------------------------------------ |
+| `handshake`     | host → provider | `protocol_version`                                                       |
+| `handshake_ack` | provider → host | `protocol_version`, `provider`, `capabilities`, optional `attester_keys` |
+| `query`         | host → provider | `query` (a `ContextQuery`)                                               |
+| `frames`        | provider → host | `result` (a `ContextQueryResult`)                                        |
+| `shutdown`      | host → provider | *(none)*                                                                 |
+| `error`         | provider → host | `message`                                                                |
 
 Over **stdio**, each envelope is one line of compact JSON (NDJSON) on the
 provider's stdin/stdout. Over **streamable HTTP**, each exchange is one POST

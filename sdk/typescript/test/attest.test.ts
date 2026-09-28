@@ -22,8 +22,10 @@ import {
   encodeProvenanceLink,
   frameCommitment,
   fromHex,
+  inclusionPathSides,
   inclusionProof,
   isValid,
+  isWellShaped,
   MAX_INCLUSION_PATH_STEPS,
   merkleRoot,
   parseDigest,
@@ -39,6 +41,7 @@ import {
   verifyFrameAttestation,
   verifyFrameInclusion,
   type AttestableFrame,
+  type InclusionProof,
   type ProvenanceAttestation,
 } from "../src/attest.js";
 import type { Provenance } from "../src/types.js";
@@ -469,4 +472,132 @@ test("verifyFrameInclusion checks a frame against a signed root, and bounds the 
     verifyFrameInclusion(providerId, frames[3]!, { ...proof, leaf_index: 7 }, signedRoot, publicKey()),
     { verdict: "malformed_commitment" },
   );
+});
+
+// ---------------------------------------------------------------------------
+// Inclusion-proof shape (`SPEC.md` §6.5.3, ADR 0031)
+// ---------------------------------------------------------------------------
+
+test("the shape function predicts every honest proof, odd tree sizes included", () => {
+  // Mirrors the Rust reference's
+  // `every_honest_proof_is_well_shaped_and_its_sides_are_predicted`.
+  for (let count = 1; count <= 40; count += 1) {
+    const commitments = Array.from({ length: count }, (_, i) =>
+      frameCommitment("repo-graph", { id: `f${i}` }),
+    );
+    const root = digestString(merkleRoot(commitments));
+    for (let index = 0; index < count; index += 1) {
+      const proof = inclusionProof(commitments, index)!;
+      assert.deepEqual(
+        inclusionPathSides(index, count),
+        proof.path.map((step) => step.sibling_is_left),
+        `leaf ${index} of ${count}`,
+      );
+      assert.ok(isWellShaped(proof), `leaf ${index} of ${count}`);
+      assert.equal(digestString(rootFromProof(commitments[index]!, proof)!), root);
+    }
+  }
+});
+
+test("the shape function's published examples, and every index that is not one", () => {
+  assert.deepEqual(inclusionPathSides(0, 1), []);
+  assert.deepEqual(inclusionPathSides(3, 7), [true, true, false]);
+  assert.deepEqual(inclusionPathSides(6, 7), [true, true]);
+  assert.equal(inclusionPathSides(7, 7), null);
+  assert.equal(inclusionPathSides(0, 0), null, "an empty tree has no leaf");
+  // Rust types these as `usize`; JSON hands this port anything, and a count
+  // or an index that is not a non-negative safe integer describes no tree.
+  for (const [index, count] of [
+    [-1, 7],
+    [1.5, 7],
+    [3, 7.5],
+    [Number.NaN, 7],
+    [0, Number.POSITIVE_INFINITY],
+    [0, 2 ** 53],
+  ] as const) {
+    assert.equal(inclusionPathSides(index, count), null, `leaf ${index} of ${count}`);
+  }
+  // A provider-supplied count at the top of the safe range is arithmetic, not
+  // a long loop: 53 levels.
+  assert.equal(inclusionPathSides(0, Number.MAX_SAFE_INTEGER)?.length, 53);
+});
+
+test("every published inclusion vector is well-shaped and still verifies", () => {
+  // The fixture's own proof object, not one rebuilt here: the refusal must
+  // never reach a proof the reference emitted.
+  const spec = V.merkle.inclusion_proof as InclusionProof;
+  assert.ok(isWellShaped(spec));
+  assert.equal(
+    digestString(rootFromProof(merkleLeaves(spec.leaf_count)[spec.leaf_index]!, spec)!),
+    V.merkle.roots_by_leaf_count[String(spec.leaf_count)],
+  );
+  // And every leaf of every published root.
+  for (const [count, root] of Object.entries(V.merkle.roots_by_leaf_count)) {
+    const leaves = merkleLeaves(Number(count));
+    leaves.forEach((leaf, index) => {
+      const proof = inclusionProof(leaves, index)!;
+      assert.ok(isWellShaped(proof), `leaf ${index} of ${count}`);
+      assert.equal(digestString(rootFromProof(leaf, proof)!), root, `leaf ${index} of ${count}`);
+    });
+  }
+});
+
+test("a genuine path under a false leaf_count or leaf_index is refused before hashing", () => {
+  // Mirrors the Rust reference's
+  // `a_proof_is_refused_when_its_stated_tree_does_not_produce_its_path`.
+  const providerId: string = V.merkle.provider_id;
+  const frames = V.merkle.leaf_frames as AttestableFrame[];
+  const leaves = merkleLeaves(7);
+  const signedRoot = signCommitment(merkleRoot(leaves), seed(), "key-1", "oxagen", "2026-08-27T00:00:00Z");
+  const honest = V.merkle.inclusion_proof as InclusionProof;
+  const verify = (proof: InclusionProof) =>
+    verifyFrameInclusion(providerId, frames[3]!, proof, signedRoot, publicKey());
+  assert.deepEqual(verify(honest), { verdict: "valid" });
+
+  // The witness: the siblings are genuine, so a walk that ignored the stated
+  // tree would recompute the signed root and call these "valid". Leaf 3 of 4
+  // sits two levels down, not three; leaf 3 of 9 and of 16 sit four down.
+  // (Leaf 3 of 5, 6 or 8 has the same three sides as leaf 3 of 7, so no shape
+  // check can tell them apart; a host refuses those on F12, by comparing
+  // `leaf_count` with the frames the answer carries.)
+  for (const leaf_count of [0, 1, 2, 3, 4, 9, 16, 1000]) {
+    const resized = { ...honest, leaf_count };
+    assert.ok(!isWellShaped(resized), `leaf 3 of ${leaf_count}`);
+    assert.equal(rootFromProof(leaves[3]!, resized), null, `leaf 3 of ${leaf_count}`);
+    assert.deepEqual(verify(resized), { verdict: "malformed_commitment" }, `leaf 3 of ${leaf_count}`);
+  }
+  // Every other index of the same seven-leaf tree has a different shape, so
+  // the same path relabelled with it is refused too.
+  for (const leaf_index of [0, 1, 2, 4, 5, 6, 7, -1, 3.5]) {
+    const relabelled = { ...honest, leaf_index };
+    assert.ok(!isWellShaped(relabelled), `leaf ${leaf_index} of 7`);
+    assert.equal(rootFromProof(leaves[3]!, relabelled), null, `leaf ${leaf_index} of 7`);
+    assert.deepEqual(verify(relabelled), { verdict: "malformed_commitment" }, `leaf ${leaf_index} of 7`);
+  }
+
+  // A side flipped: the walk would compute a different root, and the shape
+  // check refuses it before it does.
+  const flipped = {
+    ...honest,
+    path: honest.path.map((step, i) => (i === 0 ? { ...step, sibling_is_left: !step.sibling_is_left } : step)),
+  };
+  assert.equal(rootFromProof(leaves[3]!, flipped), null);
+  assert.deepEqual(verify(flipped), { verdict: "malformed_commitment" });
+
+  // One step too many, one too few, and a side that is not a boolean.
+  const longer = { ...honest, path: [...honest.path, honest.path[0]!] };
+  const shorter = { ...honest, path: honest.path.slice(0, -1) };
+  const stringly = {
+    ...honest,
+    path: honest.path.map((step) => ({ ...step, sibling_is_left: String(step.sibling_is_left) as unknown as boolean })),
+  };
+  for (const [name, proof] of [
+    ["longer", longer],
+    ["shorter", shorter],
+    ["stringly", stringly],
+  ] as const) {
+    assert.ok(!isWellShaped(proof), name);
+    assert.equal(rootFromProof(leaves[3]!, proof), null, name);
+    assert.deepEqual(verify(proof), { verdict: "malformed_commitment" }, name);
+  }
 });

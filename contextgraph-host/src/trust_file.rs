@@ -62,14 +62,17 @@
 //! # Never a silently empty store
 //!
 //! Every way a file can fail — unreadable, too large, not JSON, the wrong
-//! format, an unknown member, a key that does not decode, a fingerprint that
-//! does not match, an inverted window, the same `key_id` twice — is a named
-//! [`TrustFileError`]. Nothing here returns a partial store.
+//! format, an unknown member, a member or a provider id written twice, a key
+//! that does not decode, a fingerprint that does not match, an inverted
+//! window, the same `key_id` twice — is a named [`TrustFileError`]. Nothing
+//! here returns a partial store.
 
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use contextgraph_types::{ALGORITHM_ED25519, KeyValidity, KeyValidityError};
 use serde::{Deserialize, Serialize};
@@ -275,8 +278,55 @@ impl fmt::Display for TrustFileProblem {
 #[serde(deny_unknown_fields)]
 struct TrustFileDocument {
     format: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "unique_providers")]
     providers: BTreeMap<String, Vec<TrustFileKey>>,
+}
+
+/// Deserialize `providers`, refusing a provider id that appears twice.
+///
+/// A JSON object that repeats a member is still JSON, and the map serde would
+/// otherwise build keeps whichever copy came last — so one block of an
+/// operator's keys would vanish without a word, and the store would be partial.
+/// A repeated `key_id` inside one block is refused for the same reason
+/// ([`TrustFileProblem::DuplicateKeyId`]); this is that rule one level up.
+fn unique_providers<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<String, Vec<TrustFileKey>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct Providers;
+
+    impl<'de> serde::de::Visitor<'de> for Providers {
+        type Value = BTreeMap<String, Vec<TrustFileKey>>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("a map from provider id to that provider's keys")
+        }
+
+        fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+        where
+            A: serde::de::MapAccess<'de>,
+        {
+            let mut providers = BTreeMap::new();
+            while let Some((provider_id, keys)) = map.next_entry::<String, Vec<TrustFileKey>>()? {
+                match providers.entry(provider_id) {
+                    Entry::Occupied(taken) => {
+                        return Err(serde::de::Error::custom(format!(
+                            "provider `{}` is listed twice",
+                            taken.key()
+                        )));
+                    }
+                    Entry::Vacant(slot) => {
+                        slot.insert(keys);
+                    }
+                }
+            }
+            Ok(providers)
+        }
+    }
+
+    deserializer.deserialize_map(Providers)
 }
 
 /// One key entry in the file.
@@ -339,7 +389,11 @@ impl TrustStore {
                 },
             ));
         }
-        let document: TrustFileDocument = serde_json::from_value(value)
+        // The second pass reads the text again rather than `value`: a
+        // `serde_json::Value` has already collapsed a repeated member to its
+        // last copy, where reading the text lets the typed document refuse
+        // `"not_after": …, "not_after": …` as the duplicate it is.
+        let document: TrustFileDocument = serde_json::from_str(text)
             .map_err(|error| TrustFileError::invalid(TrustFileProblem::Shape(error.to_string())))?;
 
         let mut store = TrustStore::new();
@@ -415,7 +469,13 @@ impl TrustStore {
         })?;
         let mut temp_name = std::ffi::OsString::from(".");
         temp_name.push(file_name);
-        temp_name.push(format!(".tmp-{}", std::process::id()));
+        // The pid keeps two processes apart and the sequence keeps two saves
+        // in one process apart, so concurrent saves never share a temporary.
+        temp_name.push(format!(
+            ".tmp-{}-{}",
+            std::process::id(),
+            SAVE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
         let temp = path.with_file_name(temp_name);
 
         write_then_rename(&temp, path, text.as_bytes()).map_err(|source| {
@@ -426,11 +486,29 @@ impl TrustStore {
     }
 }
 
+/// Distinguishes the temporary files of concurrent [`TrustStore::save`] calls
+/// within one process.
+static SAVE_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
+
 /// Write `bytes` to `temp`, flush them to disk, and rename `temp` over
 /// `target` — the atomic replace [`TrustStore::save`] promises.
+///
+/// `temp` is created fresh (`create_new`), never opened as found: whatever
+/// already sits at that name — a symlink planted to redirect the write, or a
+/// stale temporary a crashed save left under a reused pid — is removed first,
+/// and anything that reappears in its place makes the save fail rather than be
+/// written through.
 fn write_then_rename(temp: &Path, target: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
-    let mut file = std::fs::File::create(temp)?;
+    if let Err(error) = std::fs::remove_file(temp)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        return Err(error);
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(temp)?;
     file.write_all(bytes)?;
     file.sync_all()?;
     std::fs::rename(temp, target)
@@ -685,6 +763,36 @@ mod tests {
                 key_id: "docs-1".into()
             }
         );
+    }
+
+    /// A JSON object may repeat a member, and a map keeps whichever copy came
+    /// last. For a file that decides what a host believes, both copies were
+    /// somebody's intent, so both repeats are refused rather than resolved.
+    #[test]
+    fn a_member_or_a_provider_written_twice_is_refused_rather_than_resolved() {
+        let entry = format!(
+            r#"{{ "key_id": "docs-1", "algorithm": "ed25519", "public_key": "{}" }}"#,
+            key_hex()
+        );
+        let two_blocks = format!(
+            r#"{{ "format": "contextgraph-trust/1",
+                 "providers": {{ "docs": [ {entry} ], "docs": [ {entry} ] }} }}"#
+        );
+        assert!(matches!(
+            problem(&two_blocks),
+            TrustFileProblem::Shape(ref why) if why.contains("listed twice")
+        ));
+
+        // A later `not_after` would otherwise quietly win over the first.
+        let two_windows = document(&format!(
+            r#"{{ "key_id": "docs-1", "algorithm": "ed25519", "public_key": "{}",
+                 "not_after": "2026-12-31T23:59:59Z", "not_after": "2099-12-31T23:59:59Z" }}"#,
+            key_hex()
+        ));
+        assert!(matches!(
+            problem(&two_windows),
+            TrustFileProblem::Shape(ref why) if why.contains("duplicate field")
+        ));
     }
 
     #[test]

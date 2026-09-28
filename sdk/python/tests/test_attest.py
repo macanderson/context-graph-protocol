@@ -12,6 +12,7 @@ its users. ``python3 -m pytest`` collects it too.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import unittest
 from pathlib import Path
@@ -19,13 +20,17 @@ from pathlib import Path
 from contextgraph_sdk import _ed25519
 from contextgraph_sdk.attest import (
     ALGORITHM_ED25519,
+    MAX_INCLUSION_PATH_STEPS,
     AttestableFrame,
     AttestationVerdict,
+    InclusionProof,
+    InclusionStep,
     ProvenanceAttestation,
     Verdict,
     digest_string,
     encode_provenance_link,
     frame_commitment,
+    inclusion_path_sides,
     inclusion_proof,
     merkle_root,
     parse_digest,
@@ -33,6 +38,7 @@ from contextgraph_sdk.attest import (
     root_from_proof,
     verify_commitment,
     verify_frame_attestation,
+    verify_frame_inclusion,
 )
 
 
@@ -247,6 +253,189 @@ class MerkleVectors(unittest.TestCase):
     def test_out_of_range_index_has_no_proof(self) -> None:
         self.assertIsNone(inclusion_proof(merkle_leaves(3), 3))
         self.assertIsNone(inclusion_proof([], 0))
+
+
+def vector_proof() -> InclusionProof:
+    """The published inclusion proof, read from the wire form as a verifier
+    would receive it rather than rebuilt by :func:`inclusion_proof`."""
+    spec = V["merkle"]["inclusion_proof"]
+    return InclusionProof(
+        leaf_index=spec["leaf_index"],
+        leaf_count=spec["leaf_count"],
+        path=tuple(
+            InclusionStep(sibling=s["sibling"], sibling_is_left=s["sibling_is_left"])
+            for s in spec["path"]
+        ),
+    )
+
+
+class InclusionProofShape(unittest.TestCase):
+    """ADR 0031 and ``SPEC.md`` §6.5.3: a proof's shape is checked before its
+    hashes, so ``leaf_index`` and ``leaf_count`` are bound to the path."""
+
+    def test_the_published_proof_is_well_shaped_and_recomputes_the_root(self) -> None:
+        spec = V["merkle"]["inclusion_proof"]
+        proof = vector_proof()
+        self.assertTrue(proof.is_well_shaped())
+        leaves = merkle_leaves(spec["leaf_count"])
+        recomputed = root_from_proof(leaves[spec["leaf_index"]], proof)
+        assert recomputed is not None
+        self.assertEqual(
+            digest_string(recomputed),
+            V["merkle"]["roots_by_leaf_count"][str(spec["leaf_count"])],
+        )
+
+    def test_the_shape_matches_the_published_path(self) -> None:
+        spec = V["merkle"]["inclusion_proof"]
+        self.assertEqual(
+            inclusion_path_sides(spec["leaf_index"], spec["leaf_count"]),
+            [s["sibling_is_left"] for s in spec["path"]],
+        )
+
+    def test_known_shapes_match_the_reference(self) -> None:
+        # The same cases the Rust doctest on ``inclusion_path_sides`` pins.
+        self.assertEqual(inclusion_path_sides(0, 1), [])
+        self.assertEqual(inclusion_path_sides(3, 7), [True, True, False])
+        self.assertEqual(inclusion_path_sides(6, 7), [True, True])
+        self.assertIsNone(inclusion_path_sides(7, 7))
+        self.assertIsNone(inclusion_path_sides(0, 0))
+        self.assertIsNone(inclusion_path_sides(-1, 7))
+        self.assertIsNone(inclusion_path_sides(0, 1 << 64))
+
+    def test_every_built_proof_is_well_shaped_and_verifies(self) -> None:
+        # Every leaf of every published tree size: an honest proof is never
+        # refused by the shape check.
+        for count, root in V["merkle"]["roots_by_leaf_count"].items():
+            leaves = merkle_leaves(int(count))
+            for index in range(len(leaves)):
+                with self.subTest(leaves=count, index=index):
+                    proof = inclusion_proof(leaves, index)
+                    assert proof is not None
+                    self.assertTrue(proof.is_well_shaped())
+                    self.assertEqual(
+                        inclusion_path_sides(index, len(leaves)),
+                        [s.sibling_is_left for s in proof.path],
+                    )
+                    recomputed = root_from_proof(leaves[index], proof)
+                    assert recomputed is not None
+                    self.assertEqual(digest_string(recomputed), root)
+
+    def test_a_genuine_path_under_a_false_leaf_count_is_refused(self) -> None:
+        # Leaf 3 of 7 walks [left, left, right]. Of 4 leaves it walks two
+        # steps; of 9 or more it walks four. The walk itself never reads
+        # ``leaf_count``, so before the shape check every one of these
+        # recomputed the genuine root. (Counts 5, 6 and 8 give leaf 3 the very
+        # same shape, so no shape check can tell them apart; the host binds
+        # ``leaf_count`` to the answer's own size for that — ADR 0031 §3.)
+        proof = vector_proof()
+        leaf = merkle_leaves(7)[3]
+        for false_count in (1, 2, 3, 4, 9, 12, 16, 1 << 64):
+            with self.subTest(leaf_count=false_count):
+                forged = dataclasses.replace(proof, leaf_count=false_count)
+                self.assertFalse(forged.is_well_shaped())
+                self.assertIsNone(root_from_proof(leaf, forged))
+
+    def test_a_genuine_path_under_a_false_leaf_index_is_refused(self) -> None:
+        proof = vector_proof()
+        leaf = merkle_leaves(7)[3]
+        for false_index in (0, 1, 2, 4, 5, 6, 7, -1):
+            with self.subTest(leaf_index=false_index):
+                forged = dataclasses.replace(proof, leaf_index=false_index)
+                self.assertFalse(forged.is_well_shaped())
+                self.assertIsNone(root_from_proof(leaf, forged))
+
+    def test_a_path_one_step_too_long_or_short_is_refused(self) -> None:
+        proof = vector_proof()
+        leaf = merkle_leaves(7)[3]
+        longer = dataclasses.replace(
+            proof,
+            path=tuple(proof.path)
+            + (InclusionStep(sibling=proof.path[0].sibling, sibling_is_left=False),),
+        )
+        shorter = dataclasses.replace(proof, path=tuple(proof.path)[:-1])
+        for forged in (longer, shorter):
+            self.assertFalse(forged.is_well_shaped())
+            self.assertIsNone(root_from_proof(leaf, forged))
+
+    def test_a_flipped_side_is_refused(self) -> None:
+        proof = vector_proof()
+        steps = list(proof.path)
+        steps[0] = InclusionStep(
+            sibling=steps[0].sibling, sibling_is_left=not steps[0].sibling_is_left
+        )
+        forged = dataclasses.replace(proof, path=tuple(steps))
+        self.assertFalse(forged.is_well_shaped())
+        self.assertIsNone(root_from_proof(merkle_leaves(7)[3], forged))
+
+    def test_an_overlong_path_is_refused_on_its_length(self) -> None:
+        step = InclusionStep(sibling="sha256:" + "00" * 32, sibling_is_left=True)
+        forged = InclusionProof(
+            leaf_index=(1 << 64) - 2,
+            leaf_count=(1 << 64) - 1,
+            path=(step,) * (MAX_INCLUSION_PATH_STEPS + 1),
+        )
+        self.assertFalse(forged.is_well_shaped())
+        self.assertIsNone(root_from_proof(b"\x00" * 32, forged))
+
+
+class FrameInclusion(unittest.TestCase):
+    """``verify_frame_inclusion`` (``SPEC.md`` §6.5.3, F13): a frame checked
+    against a signed result-set root through its proof. The cases here need
+    no signing backend; the ones that sign a root are in ``test_signing.py``."""
+
+    PROVIDER_ID = V["merkle"]["provider_id"]
+
+    def leaf_frame(self) -> dict:
+        return V["merkle"]["leaf_frames"][V["merkle"]["inclusion_proof"]["leaf_index"]]
+
+    def test_the_published_proof_recomputes_the_published_root(self) -> None:
+        # The published attestation signs a frame commitment, not this root,
+        # so the verdict is a mismatch whose `expected` is the recomputed root:
+        # the walk reached exactly the published 7-leaf root before any
+        # signature was looked at.
+        verdict = verify_frame_inclusion(
+            self.PROVIDER_ID, self.leaf_frame(), vector_proof(), attestation(), public_key()
+        )
+        self.assertEqual(verdict.verdict, Verdict.COMMITMENT_MISMATCH)
+        self.assertEqual(
+            verdict.expected,
+            V["merkle"]["roots_by_leaf_count"][str(V["merkle"]["inclusion_proof"]["leaf_count"])],
+        )
+        self.assertEqual(verdict.signed, V["signature"]["attestation"]["signed_commitment"])
+
+    def test_an_unknown_algorithm_is_named_after_the_shape_passes(self) -> None:
+        unknown = dataclasses.replace(attestation(), algorithm="dilithium3")
+        verdict = verify_frame_inclusion(
+            self.PROVIDER_ID, self.leaf_frame(), vector_proof(), unknown, public_key()
+        )
+        self.assertEqual(verdict.verdict, Verdict.UNKNOWN_ALGORITHM)
+        self.assertEqual(verdict.algorithm, "dilithium3")
+
+    def test_a_mis_shaped_proof_is_a_malformed_commitment(self) -> None:
+        proof = vector_proof()
+        step = proof.path[0]
+        forged = {
+            "a false leaf_count": dataclasses.replace(proof, leaf_count=4),
+            "a false leaf_index": dataclasses.replace(proof, leaf_index=2),
+            "an index outside the tree": dataclasses.replace(proof, leaf_index=7),
+            "one step too few": dataclasses.replace(proof, path=tuple(proof.path)[:-1]),
+            "a path over the step cap": dataclasses.replace(
+                proof, path=(step,) * (MAX_INCLUSION_PATH_STEPS + 1)
+            ),
+            "a malformed sibling": dataclasses.replace(
+                proof,
+                path=(InclusionStep(sibling="sha256:short", sibling_is_left=step.sibling_is_left),)
+                + tuple(proof.path)[1:],
+            ),
+        }
+        for name, bad in forged.items():
+            with self.subTest(proof=name):
+                self.assertEqual(
+                    verify_frame_inclusion(
+                        self.PROVIDER_ID, self.leaf_frame(), bad, attestation(), public_key()
+                    ).verdict,
+                    Verdict.MALFORMED_COMMITMENT,
+                )
 
 
 class SignatureVectors(unittest.TestCase):

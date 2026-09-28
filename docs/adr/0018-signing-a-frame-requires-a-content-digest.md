@@ -112,6 +112,15 @@ digest-less frames. This is intended, and it is the cost of option 2. A provider
 already computing a `content_digest` — which most do, since frame identity uses
 it — needs no change at all.
 
+**The reference signer enforces option 2 through a checked entry point.**
+`try_sign_frame_attestation` refuses a frame with no `content_digest`, returning
+`FrameSigningError::NoContentDigest`, and otherwise returns exactly what
+`sign_frame_attestation` does. `sign_frame_attestation` itself predates this rule
+and keeps its signature and behaviour, because the verifier's tests need an
+unchecked way to produce the identity-only signatures this ADR teaches them to
+read. Its documentation says it does not enforce this ADR and sends providers to
+the checked entry point. The SDK signers refuse the same frames (ADR 0033 §2).
+
 **Verification remains possible for older attestations.** `frame_commitment`
 still computes a commitment for a digest-less frame. A verifier has to be able
 to check signatures produced before this rule; refusing to compute them would
@@ -137,3 +146,9 @@ proved the claim is true, and ADR 0016's Consequences already say so.
 - `stripping_a_digest_after_signing_is_a_mismatch_not_a_downgrade` closes the
   obvious attack on the new path — removing a digest from a frame that was
   signed with one must not launder a tampered frame into a passing verdict.
+- `the_checked_signer_refuses_a_frame_with_no_content_digest` pins option 2 at
+  the signer: `try_sign_frame_attestation` declines a digest-less frame and
+  names it in the error.
+- `the_checked_signer_matches_the_unchecked_one_when_a_digest_is_declared`
+  pins that the check changes nothing about what is signed: for a frame that
+  declares a digest, both signers return the same attestation.

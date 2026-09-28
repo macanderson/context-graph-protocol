@@ -118,7 +118,7 @@ jobs:
         run: ./.github/scripts/wait-for-crate.sh contextgraph-types "$VERSION"
 
       # contextgraph-host depends on contextgraph-types via a path dep with a
-      # ">=1.0.0" version requirement (see contextgraph-host/Cargo.toml) —
+      # ">=2.0.0" version requirement (see contextgraph-host/Cargo.toml) —
       # crates.io strips the path and resolves the version req against the
       # registry, so this step fails fast if the wait above returned too
       # early.

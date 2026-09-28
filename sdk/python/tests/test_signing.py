@@ -32,10 +32,12 @@ from unittest import mock
 
 from contextgraph_sdk.attest import (
     AttestableFrame,
+    InclusionProof,
     ProvenanceAttestation,
     SigningUnavailableError,
     Verdict,
     frame_commitment,
+    inclusion_proof,
     merkle_root,
     parse_digest,
     public_key_for,
@@ -43,6 +45,7 @@ from contextgraph_sdk.attest import (
     sign_frame_attestation,
     verify_commitment,
     verify_frame_attestation,
+    verify_frame_inclusion,
 )
 from contextgraph_sdk.record import (
     RecordAttestation,
@@ -205,6 +208,52 @@ class FrameSigningVectors(_NeedsBackend):
             verify_commitment(root, signed, public_key_for(FRAME_SEED)).verdict,
             Verdict.VALID,
         )
+
+    def test_a_frame_under_a_signed_root_verifies_through_its_proof(self) -> None:
+        # F13: one signature over a result-set root attests every frame in it,
+        # each through its own inclusion proof.
+        provider_id = V["merkle"]["provider_id"]
+        frames = V["merkle"]["leaf_frames"][:7]
+        leaves = [frame_commitment(provider_id, frame) for frame in frames]
+        root = merkle_root(leaves)
+        self.assertEqual("sha256:" + root.hex(), V["merkle"]["roots_by_leaf_count"]["7"])
+        signed = sign_commitment(root, FRAME_SEED, "key-1", "oxagen", "2026-08-27T00:00:00Z")
+        public_key = public_key_for(FRAME_SEED)
+        for index, frame in enumerate(frames):
+            with self.subTest(leaf=index):
+                proof = inclusion_proof(leaves, index)
+                assert proof is not None
+                verdict = verify_frame_inclusion(provider_id, frame, proof, signed, public_key)
+                self.assertEqual(verdict.verdict, Verdict.VALID)
+                self.assertTrue(verdict.binds_content())
+
+        # Another frame under the same proof recomputes a different root.
+        proof_for_3 = inclusion_proof(leaves, 3)
+        assert proof_for_3 is not None
+        self.assertEqual(
+            verify_frame_inclusion(provider_id, frames[2], proof_for_3, signed, public_key).verdict,
+            Verdict.COMMITMENT_MISMATCH,
+        )
+
+    def test_a_digest_less_leaf_of_a_signed_root_is_identity_only(self) -> None:
+        # ADR 0018 holds through the tree: the leaf is a frame commitment, and
+        # one that declares no content_digest binds none of the frame's bytes.
+        provider_id = V["merkle"]["provider_id"]
+        bare = AttestableFrame(id="bare")
+        leaves = [frame_commitment(provider_id, bare)] + [
+            frame_commitment(provider_id, frame) for frame in V["merkle"]["leaf_frames"][1:7]
+        ]
+        signed = sign_commitment(
+            merkle_root(leaves), FRAME_SEED, "key-1", "oxagen", "2026-08-27T00:00:00Z"
+        )
+        proof = inclusion_proof(leaves, 0)
+        assert isinstance(proof, InclusionProof)
+        verdict = verify_frame_inclusion(
+            provider_id, bare, proof, signed, public_key_for(FRAME_SEED)
+        )
+        self.assertEqual(verdict.verdict, Verdict.VALID_IDENTITY_ONLY)
+        self.assertFalse(verdict.is_valid())
+        self.assertTrue(verdict.signature_verifies())
 
 
 class RecordSigningVectors(_NeedsBackend):

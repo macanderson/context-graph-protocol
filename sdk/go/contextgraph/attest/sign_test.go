@@ -320,4 +320,19 @@ func TestVerifyFrameInclusionChecksALeafOfASignedRoot(t *testing.T) {
 	if got := VerifyFrameInclusion(v.Merkle.ProviderID, frames[1], outOfRange, signed, public); got.Verdict != VerdictMalformedCommitment {
 		t.Errorf("a leaf index outside the tree: got %s, want %s", got.Verdict, VerdictMalformedCommitment)
 	}
+
+	// A genuine path under a false position or tree size is refused on its
+	// shape (§6.5.3, ADR 0031): leaf 1 of 3 is two levels down, its first
+	// sibling on the left and its second on the right, so neither leaf 0 of 3
+	// nor leaf 1 of 2 has this path.
+	falseIndex := proofFor(1)
+	falseIndex.LeafIndex = 0
+	if got := VerifyFrameInclusion(v.Merkle.ProviderID, frames[1], falseIndex, signed, public); got.Verdict != VerdictMalformedCommitment {
+		t.Errorf("a genuine path under a false index: got %s, want %s", got.Verdict, VerdictMalformedCommitment)
+	}
+	falseCount := proofFor(1)
+	falseCount.LeafCount = 2
+	if got := VerifyFrameInclusion(v.Merkle.ProviderID, frames[1], falseCount, signed, public); got.Verdict != VerdictMalformedCommitment {
+		t.Errorf("a genuine path under a false count: got %s, want %s", got.Verdict, VerdictMalformedCommitment)
+	}
 }

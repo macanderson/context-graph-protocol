@@ -165,6 +165,28 @@ fn hash_refuses_a_value_that_is_not_a_record() {
     );
 }
 
+/// Codex review on #222: `serde_json::Value` keeps the last copy of a repeated
+/// member, so without a strict parse the verbs would hash a document other
+/// than the one on disk. RFC 8785 requires unique member names; a duplicate is
+/// uncheckable input, at any depth, for every verb that reads a record.
+#[test]
+fn a_record_with_a_duplicate_member_is_uncheckable() {
+    let top_level: &[u8] = br#"{"kind": "observation", "kind": "claim"}"#;
+    let nested: &[u8] = br#"{"body": {"a": 1, "a": 2}}"#;
+    for input in [top_level, nested] {
+        for verb in ["hash", "preimage", "verify"] {
+            let output = run(&["record", verb, "-"], Some(input));
+            assert_eq!(output.status.code(), Some(2), "{}", describe(&output));
+            assert!(output.stdout.is_empty(), "{}", describe(&output));
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains("duplicate member"),
+                "{}",
+                describe(&output)
+            );
+        }
+    }
+}
+
 #[test]
 fn hash_reports_an_unreadable_file_as_uncheckable() {
     let missing = fixture("no-such-record.json");
