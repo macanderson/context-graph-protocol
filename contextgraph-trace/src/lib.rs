@@ -5,7 +5,7 @@
 //! specifies the journal wire format and the oracles. It is published so
 //! downstream hosts can depend on the trace vocabulary by version instead of
 //! by git rev, but nothing here is part of the `contextgraph/1.0` surface: the
-//! journal wire format may change in any `0.x` release. Gate on
+//! journal wire format may change in any release. Gate on
 //! [`TRACE_FORMAT`], not on the crate version. It exists so the shape can be
 //! exercised against real journals before any of it is proposed for the spec.
 //!
