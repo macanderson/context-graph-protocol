@@ -23,7 +23,7 @@ jobs:
         with:
           sparse-checkout: .github/scripts
           persist-credentials: false
-      - uses: actions/github-script@v7
+      - uses: actions/github-script@v9
         env:
           # Logins allowed to set priority and size labels. `macanderson` is
           # the interim triage authority until the dedicated triage-agent
