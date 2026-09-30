@@ -5,7 +5,7 @@ specification repository are documented in this file.
 
 The Context Graph Protocol crates (`contextgraph-types`, `contextgraph-host`,
 `contextgraph-conformance`, `contextgraph-trace`) track **crate
-version** (`1.x` today) and **protocol version** (`contextgraph/1.0`) as two
+version** (`2.x` today) and **protocol version** (`contextgraph/1.0`) as two
 independent axes — see [docs/stability.md](./docs/stability.md). This changelog
 records crate releases and spec-repository milestones together, noting which is
 which. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
@@ -153,6 +153,187 @@ text lands without a human merge.
   to notice (#194). The template now pins v7. The guard also reads
   `.github/actions/**/action.yml`, accepts quoted pins and prose after a SHA
   pin's version comment, and fails on a `uses:` line it cannot parse.
+
+### Changed
+- A host now verifies a signed result-set root once per answer instead of once per frame (#133; ADR 0031).
+- `root_from_proof` and `verify_frame_inclusion` reject an inclusion proof whose length or sides don't match its stated `leaf_index` / `leaf_count`, before any hashing. The host also rejects a proof whose `leaf_count` differs from the answer's frame count (F12). Honest proofs are unaffected.
+- `SPEC.md`:
+  - §6.5.2: a verifier that keeps key validity windows must check them against the receipt time, never `issued_at`.
+  - §6.5.3: a proof-shape MUST, and a SHOULD to verify the root once per answer.
+  - §6.5.5: receivers MUST tolerate an absent `attester_keys`, plus MUST rules for a host that pins keys.
+- Profile LC3 now says what a key-id validity window means and which time it is checked against.
+- The `attester_keys` schema description is updated, and `examples/reference-messages.json` now shows a published key.
+- ADRs 0016, 0019 and 0021 are amended to match.
+- Breaking for `contextgraph-host` at the Rust level: `TrustedKey` has two new fields, `AttestationState` has two new variants, and `ProviderOutcome` has a new field. See MIGRATION.md §5.7.
+- **Breaking (Rust semver), `contextgraph-host`:** `CompositionAudit` has a new public field, `ranking_policy: String`, and is now `#[non_exhaustive]` (#116). Downstream code can no longer build it with a struct literal or match all its fields exhaustively; read it through its fields and accessors. No wire change. ADR 0015 is amended (2026-09-28) to record this, the decision that a weight scales allocation, and the choice to rerank before composing (option 1).
+- TypeScript SDK: `signFrameAttestation` refuses a frame with no `content_digest`. `verifyFrameAttestation` and `verifyFrameInclusion` report a verified signature over such a frame as `valid_identity_only` rather than `valid`, bringing the SDK in line with ADR 0018. New helpers are `signatureVerifies` and `bindsContent`. `isValid` stays `false` for `valid_identity_only`.
+- ADR 0017 amended (2026-09-28): the TypeScript SDK canonicalizes with the runtime's own ECMAScript primitives, pinned to the same RFC 8785 vectors.
+- `contextgraph-conformance` now enables `contextgraph-types`' `record-attestation` feature on its ordinary dependency instead of only as a dev-dependency, because the `contextgraph-inspect record` verbs need it (#121).
+- **PUBLISHING.md's crate runbook is rewritten** for the four published crates:
+  - tag first, on `main`;
+  - publish by hand only from a checkout of the tag, to finish a failed run;
+  - check a release against its tag after publishing.
+
+  `check-published-crates.py` now holds PUBLISHING.md to naming all four crates.
+- `MIGRATION.md` §2 and `sdk/PUBLISHING.md` name the one tag convention, and §2 no longer tells readers to pin a release tag for a fix that has not been released.
+- The README CI badge reports `main` explicitly (`?branch=main`) and links to main's runs (#2).
+- `docs/GUIDE.md` describes `ContextQueryResult`'s `frame_attestations` and `result_attestation` (#162).
+- SDKs (Python, TypeScript, Go): the inclusion-proof verifiers refuse, before any hashing, a proof whose path is not exactly the RFC 6962 shape for its `(leaf_index, leaf_count)`, so a genuine path presented under a false index or tree size is `malformed_commitment` (SPEC.md §6.5.3, ADR 0031). New in each SDK: `inclusion_path_sides` / `inclusionPathSides` / `InclusionPathSides` and `is_well_shaped` / `isWellShaped` / `IsWellShaped`.
+- `contextgraph-host`: `AttestationState::covers_content()` is also true for a `Pinned` state whose signature binds the frame's bytes. Content binding is a property of the signature; `trust_tier()` reports how far the key is trusted.
+- **`/triage-sweep` quotes the SCR-005 record's own statement** (#210) — both
+  Stella command files now quote the record verbatim, next to the sentence they
+  attribute to the retired markdown record.
+- **The reference vectors are published under `/schema/v1/`** as well as
+  `/schema/` (#111, ADR 0013 amendment) — the publish step checks that each path
+  serves the committed bytes as `application/x-ndjson`, and
+  `check-deploy-hygiene.py` now checks `.ndjson` URLs.
+- **Versions written in prose are held to their manifests** (#108, [ADR
+  0026](./docs/adr/0026-versions-in-prose-and-the-go-sdk-tag.md)) —
+  `check-sdk-version-pins.py` now reads install commands and dependency lines in
+  tracked Markdown, and refuses a concrete Go SDK version there. The Go SDK has
+  its own version line because Go ties a module's major version to its import
+  path. `sdk/PUBLISHING.md`'s table is now a record of each SDK's first publish.
+- **`contextgraph-host`'s range verifier rejects zero-padded (`L05`) and signed
+  (`L+5`) line numbers** (#183), which it had accepted only because of Rust's
+  number parsing, and clamps an end too large for `usize` instead of rejecting
+  it (§6.2.1).
+- **`as_of` now has a stated rule** (#184; SPEC.md Q2, §5.3; [ADR
+  0022](./docs/adr/0022-as-of-is-a-point-in-window-predicate.md)) — a query
+  pinned with `as_of` gets only frames whose half-open window `[valid_from,
+  valid_to)` contains the pin, compared as instants. `recorded_at` is not
+  pinned. There is no capability flag and no error code: a provider with nothing
+  valid at the pin returns zero frames. `as-of-temporal` now checks both halves
+  at two pins, and the new `ignore-valid-to` misbehave mode trips it. refprov
+  and the TypeScript/Python example providers apply the full rule.
+- **C3 is now a MUST, and the consent guarantee is stated per transport** (#187;
+  SPEC.md §4.3; [ADR
+  0024](./docs/adr/0024-consent-binds-what-the-transport-can-see.md)) — a
+  provider that declares egress, and every provider reached over HTTP whatever
+  it declares, is never queried without consent. Over stdio a provider's
+  `egress: false` is trusted and cannot be observed; confining a stdio child's
+  network is left to the deployment. The reference host's forcing of egress for
+  loopback HTTP is documented as deliberate.
+- **`attestation` fails instead of skipping when an attestation names a scheme
+  this build cannot check** (#159, [ADR
+  0027](./docs/adr/0027-an-attestation-the-suite-cannot-check-is-not-certified.md))
+  — the evidence reports it as uncheckable (`UnknownAlgorithm`), never as
+  forged. A skip always means "does not apply", never "could not decide",
+  because `ConformanceReport::passed()` counts a skip as a pass.
+  `conformance-red.sh` counts a misbehaviour mode as caught only when a check it
+  names fails.
+
+### Fixed
+- **`contextgraph-trace`'s docs no longer call the crate `0.x`.** The crate
+  README, the crate docs, and `docs/host-trace.md` said the journal format may
+  change in any `0.x` release. The crate publishes at the workspace version,
+  which is `2.0.0` on crates.io. They now say the format may change in any
+  release, and still tell you to gate on `TRACE_FORMAT`.
+- `docs/composing-frames-into-a-prompt.md` now lists the `UnusableEvidence` attestation state, which was missing.
+- Python SDK: `verify_frame_attestation` now reports `valid_identity_only` rather than `valid` for a signature over a frame that declares no `content_digest`, as ADR 0018 requires and as the Rust reference already does. `is_valid()` is false for it.
+- Go SDK: `attest.VerifyFrameAttestation` now returns the new `VerdictValidIdentityOnly` (`valid_identity_only`) instead of `valid` for a verified frame with no `content_digest`. This brings Go in line with SPEC F15, ADR 0018 and the Rust reference. `IsValid()` is false for this verdict.
+- `contextgraph-mcp-bridge`: `bridge_via_host` no longer times out when its two tests run in parallel. The cause was contention, not a pipe deadlock. The bridge acks only after it has launched its MCP server and fetched every resource, so four cold process launches under load overran the host's 10s handshake bound. The tests now set a 60s bound for their own hosts, and every assertion is kept (#142).
+- **`publish-spec.yml` can no longer publish from a branch other than `main` (#202).** The publish job now requires `github.ref == 'refs/heads/main'`. The comment beside `role-to-assume` no longer calls `environment: production` load-bearing on its own: the environment restricts publishing only when a deployment-branch policy limits `production` to `main`, and that policy must be set in the repository settings. PUBLISHING.md's one-time setup says the same.
+- The `contextgraph-host` README's example provider built `ContextQueryResult` with a three-field struct literal that no longer compiles. It now uses `ContextQueryResult::unattested` (#162).
+- `contextgraph-host`: a trust file that names a provider twice, or repeats a member inside a key entry (e.g. two `not_after`), is refused as a named `TrustFileError` instead of silently keeping the last copy; `TrustStore::save` creates its temporary with `create_new` under a unique name (#134, ADR 0029).
+- `contextgraph-host`: key validity windows are evaluated against a receipt instant with nanosecond precision (`ProviderOutcome::received_at` and the live `TrustStore::check*` paths). Flooring it to whole seconds accepted evidence received at `12:00:00.9Z` under a key whose `not_after` is `12:00:00.1Z` (ADR 0028).
+- `contextgraph-inspect record …` refuses a JSON document with a duplicate member, at any depth, as uncheckable (exit 2) instead of hashing the last copy — RFC 8785 requires unique member names.
+- The conformance attestation check names a malformed inclusion proof as the cause of an inclusion-proof `MalformedCommitment`, instead of blaming the answer's `signed_commitment`.
+- **The triage guard strips every label family SCR-005 reserves** (#137) —
+  `triage-guard.yml` now removes a creator-applied size label (`size/*`) as well
+  as any priority (`P<n>`). It re-queues the issue as `triage` only when no
+  priority is left, so a triage-set `P2` is never left beside `triage`. The
+  decision lives in `.github/scripts/triage-guard.cjs`, which matches label
+  families rather than a tier list, so a new tier is guarded the moment its
+  label exists. CONTRIBUTING.md now lists only labels this repository has.
+- **The changelog bot writes drafted entries once, and fails when they cannot
+  land** (#149) — the `perl -p` one-liner in `changelog.yml` put the drafted
+  block under every `## [Unreleased]` heading, and the check after it stayed
+  green when the heading was missing. `.github/scripts/changelog-insert.py`
+  inserts under the first heading only and fails naming the heading when there
+  is none. Degrade-open still covers the AI call.
+- **The downstream canary's oxagen half now checks something** (#104, #139) — it
+  used to check out a repository that does not exist (`oxagen-platform`) behind
+  a secret nobody had created, and reported success having checked nothing. It
+  now checks out the public `macanderson/oxagen`, finds the CGP fixture sets
+  oxagen vendors, and runs them through this repository's own `golden_fixtures`
+  and `fixture_suite` tests at HEAD. It fails on the scheduled run and is
+  advisory on a pull request, like the stella half.
+- **`cargo doc` builds clean under `-D warnings` again** (#122) — redundant link
+  targets, links to private items, and three links that pointed at nothing are
+  fixed across `contextgraph-types`, `-host`, `-conformance`, `-refprov`,
+  `-treesitter`, `-mcp-bridge` and `-mcp-server`.
+- **`CHANGELOG.md` carries exactly one `## [Unreleased]` heading** (#157) — a
+  second, empty one sat between the shipped 0.1.2 and 1.0.0 sections, so the
+  changelog workflow's insertion wrote every drafted entry twice (#149).
+- **Ten pointers into the deleted `docs/sketches/` resolve again** (#153) —
+  including the crates.io description of the published `contextgraph-trace`
+  crate and a docs.rs link that 404ed. `docs/host-trace.md` now specifies the
+  trace journal and its oracles. The other pointers lead to the ADR 0004
+  sections, ADR 0002 and SPEC.md §14.1 that absorbed them, and the downstream
+  canary no longer cites the removed reconciliation doc.
+- **The GUIDE's in-page ADR links work** (#129) — `#adr-0003` and four others
+  pointed at an anchor line an unrelated edit had deleted. Each now links its
+  ADR file directly.
+- **The examples README's annotated session quotes the transcript verbatim**
+  (#144) — it had lost the correlation `id`s, `content_digest`, the right
+  `token_cost`, and the `verify` step. It now quotes all nine lines of
+  `full-stdio-session.ndjson`.
+- **`SECURITY.md` covers every published crate and the post-freeze policy**
+  (#143) — it left out `contextgraph-trace`, called the project "pre-1.0", and
+  ended support at the 2026-08-11 freeze. Fixes now land on the latest `2.x`;
+  `0.1.x` receives none. `docs/stability.md` no longer claims a `1.x` release
+  exists on crates.io.
+- **`MIGRATION.md` §2 no longer tells downstreams to pin a tag that was never
+  cut** (#105) — it points at crates.io (`contextgraph-types = "2"`) and names
+  the real `contextgraph-vX.Y.Z` release tags for git pins.
+- **`validate-examples.py` no longer validates every JSON file in
+  `tests/fixtures/` as a record** (#126) — a fixture is a record only if its
+  filename stem is a declared `record_kind`; any other file fails with a message
+  naming that convention. A record kind with no fixture, or a fixture filed
+  under the wrong kind, is also caught.
+- **Published SDK packages link back to the project** (#112) — both npm packages
+  gained `homepage`, `repository` (with `directory`) and `bugs`; the Python
+  package's homepage is now https://contextgraphprotocol.org, matching the
+  crates, with Repository and Issues URLs.
+- **Stale SDK versions in prose** (#108) — the `@v0.1.0` Go install pins, a
+  `contextgraph-types = "=0.1.0"` example, and `sdk/README.md` calling the
+  published Python and Go SDKs unpublished.
+- **`Host::verify_frames` sends the provider's declared name on the wire**
+  (#186; [ADR 0023](./docs/adr/0023-frame-identity-names-two-provider-ids.md)) —
+  it used to send the host's local routing id, a string the provider had never
+  seen. SPEC.md D5 (§6.3) says which provider id a frame identity carries where,
+  and V5 (§9) lets a provider answer `unknown` for an id that isn't its own.
+  `verify-honesty` now catches a host that leaks its local id.
+- **The stdio egress hole is listed in SPEC.md §11.1 and witnessed** (#187) —
+  the new `stdio_egress_gap` test shows that a stdio provider declaring `egress:
+  false` can send the query payload out while the host notices nothing.
+- **`malformed-input-tolerance` probes the shapes that crashed the Python SDK**
+  (#146) — a JSON scalar (`42`) and a `query` envelope with its payload missing,
+  not only an unparseable line. The evidence names the input that broke the
+  provider, and a payload-less request that goes unanswered fails.
+- **Go SDK: a `query` or `verify` envelope with its payload missing is answered
+  `bad_request` with the id echoed** (#146). Before, stdio stayed silent and
+  HTTP answered 204, leaving a correlated host waiting.
+- **A scaffolded TypeScript provider's workflow pins `actions/setup-node@v7`.**
+  #197 moved every workflow under `.github/` to v7 and left
+  `sdk/create-contextgraph-provider/templates/typescript/_github/workflows/conformance.yml`
+  on v4. Dependabot never sees that file (`_github/` becomes `.github/` only
+  at scaffold time), so the guard from #194 failed on `main` as soon as it
+  landed. The template now pins the major this repository runs. The workflow
+  still asks that action for Node 22, the same version the repository's own
+  TypeScript jobs use.
+
+## [2.0.0] — 2026-09-13 (crate release)
+
+All four crates published to crates.io from `be5edef`, tagged
+`contextgraph-v2.0.0`: `contextgraph-types`, `contextgraph-host`,
+`contextgraph-conformance`, and `contextgraph-trace`. The protocol version is
+unchanged (`contextgraph/1.0`). The major version marks Rust API breaks. The
+source changes they ask for are in [MIGRATION.md](./MIGRATION.md) §5.1 to §5.6.
+Version 1.0.0 never reached crates.io, so a consumer moving from 0.1.2 also
+takes the 1.0.0 changes below.
+
+### Added
 - **Record content addressing and record attestation, implemented (lifecycle
   profile `LH1`/`LC3`;
   [ADR 0017](./docs/adr/0017-record-hash-and-record-attestation.md)).** The
@@ -374,72 +555,6 @@ text lands without a human merge.
   could never have seen it (#98).
 
 ### Changed
-- A host now verifies a signed result-set root once per answer instead of once per frame (#133; ADR 0031).
-- `root_from_proof` and `verify_frame_inclusion` reject an inclusion proof whose length or sides don't match its stated `leaf_index` / `leaf_count`, before any hashing. The host also rejects a proof whose `leaf_count` differs from the answer's frame count (F12). Honest proofs are unaffected.
-- `SPEC.md`:
-  - §6.5.2: a verifier that keeps key validity windows must check them against the receipt time, never `issued_at`.
-  - §6.5.3: a proof-shape MUST, and a SHOULD to verify the root once per answer.
-  - §6.5.5: receivers MUST tolerate an absent `attester_keys`, plus MUST rules for a host that pins keys.
-- Profile LC3 now says what a key-id validity window means and which time it is checked against.
-- The `attester_keys` schema description is updated, and `examples/reference-messages.json` now shows a published key.
-- ADRs 0016, 0019 and 0021 are amended to match.
-- Breaking for `contextgraph-host` at the Rust level: `TrustedKey` has two new fields, `AttestationState` has two new variants, and `ProviderOutcome` has a new field. See MIGRATION.md §5.7.
-- **Breaking (Rust semver), `contextgraph-host`:** `CompositionAudit` has a new public field, `ranking_policy: String`, and is now `#[non_exhaustive]` (#116). Downstream code can no longer build it with a struct literal or match all its fields exhaustively; read it through its fields and accessors. No wire change. ADR 0015 is amended (2026-09-28) to record this, the decision that a weight scales allocation, and the choice to rerank before composing (option 1).
-- TypeScript SDK: `signFrameAttestation` refuses a frame with no `content_digest`. `verifyFrameAttestation` and `verifyFrameInclusion` report a verified signature over such a frame as `valid_identity_only` rather than `valid`, bringing the SDK in line with ADR 0018. New helpers are `signatureVerifies` and `bindsContent`. `isValid` stays `false` for `valid_identity_only`.
-- ADR 0017 amended (2026-09-28): the TypeScript SDK canonicalizes with the runtime's own ECMAScript primitives, pinned to the same RFC 8785 vectors.
-- `contextgraph-conformance` now enables `contextgraph-types`' `record-attestation` feature on its ordinary dependency instead of only as a dev-dependency, because the `contextgraph-inspect record` verbs need it (#121).
-- **PUBLISHING.md's crate runbook is rewritten** for the four published crates:
-  - tag first, on `main`;
-  - publish by hand only from a checkout of the tag, to finish a failed run;
-  - check a release against its tag after publishing.
-
-  `check-published-crates.py` now holds PUBLISHING.md to naming all four crates.
-- `MIGRATION.md` §2 and `sdk/PUBLISHING.md` name the one tag convention, and §2 no longer tells readers to pin a release tag for a fix that has not been released.
-- The README CI badge reports `main` explicitly (`?branch=main`) and links to main's runs (#2).
-- `docs/GUIDE.md` describes `ContextQueryResult`'s `frame_attestations` and `result_attestation` (#162).
-- SDKs (Python, TypeScript, Go): the inclusion-proof verifiers refuse, before any hashing, a proof whose path is not exactly the RFC 6962 shape for its `(leaf_index, leaf_count)`, so a genuine path presented under a false index or tree size is `malformed_commitment` (SPEC.md §6.5.3, ADR 0031). New in each SDK: `inclusion_path_sides` / `inclusionPathSides` / `InclusionPathSides` and `is_well_shaped` / `isWellShaped` / `IsWellShaped`.
-- `contextgraph-host`: `AttestationState::covers_content()` is also true for a `Pinned` state whose signature binds the frame's bytes. Content binding is a property of the signature; `trust_tier()` reports how far the key is trusted.
-- **`/triage-sweep` quotes the SCR-005 record's own statement** (#210) — both
-  Stella command files now quote the record verbatim, next to the sentence they
-  attribute to the retired markdown record.
-- **The reference vectors are published under `/schema/v1/`** as well as
-  `/schema/` (#111, ADR 0013 amendment) — the publish step checks that each path
-  serves the committed bytes as `application/x-ndjson`, and
-  `check-deploy-hygiene.py` now checks `.ndjson` URLs.
-- **Versions written in prose are held to their manifests** (#108, [ADR
-  0026](./docs/adr/0026-versions-in-prose-and-the-go-sdk-tag.md)) —
-  `check-sdk-version-pins.py` now reads install commands and dependency lines in
-  tracked Markdown, and refuses a concrete Go SDK version there. The Go SDK has
-  its own version line because Go ties a module's major version to its import
-  path. `sdk/PUBLISHING.md`'s table is now a record of each SDK's first publish.
-- **`contextgraph-host`'s range verifier rejects zero-padded (`L05`) and signed
-  (`L+5`) line numbers** (#183), which it had accepted only because of Rust's
-  number parsing, and clamps an end too large for `usize` instead of rejecting
-  it (§6.2.1).
-- **`as_of` now has a stated rule** (#184; SPEC.md Q2, §5.3; [ADR
-  0022](./docs/adr/0022-as-of-is-a-point-in-window-predicate.md)) — a query
-  pinned with `as_of` gets only frames whose half-open window `[valid_from,
-  valid_to)` contains the pin, compared as instants. `recorded_at` is not
-  pinned. There is no capability flag and no error code: a provider with nothing
-  valid at the pin returns zero frames. `as-of-temporal` now checks both halves
-  at two pins, and the new `ignore-valid-to` misbehave mode trips it. refprov
-  and the TypeScript/Python example providers apply the full rule.
-- **C3 is now a MUST, and the consent guarantee is stated per transport** (#187;
-  SPEC.md §4.3; [ADR
-  0024](./docs/adr/0024-consent-binds-what-the-transport-can-see.md)) — a
-  provider that declares egress, and every provider reached over HTTP whatever
-  it declares, is never queried without consent. Over stdio a provider's
-  `egress: false` is trusted and cannot be observed; confining a stdio child's
-  network is left to the deployment. The reference host's forcing of egress for
-  loopback HTTP is documented as deliberate.
-- **`attestation` fails instead of skipping when an attestation names a scheme
-  this build cannot check** (#159, [ADR
-  0027](./docs/adr/0027-an-attestation-the-suite-cannot-check-is-not-certified.md))
-  — the evidence reports it as uncheckable (`UnknownAlgorithm`), never as
-  forged. A skip always means "does not apply", never "could not decide",
-  because `ConformanceReport::passed()` counts a skip as a pass.
-  `conformance-red.sh` counts a misbehaviour mode as caught only when a check it
-  names fails.
 - **One `FrameAttestation`, and one place on the wire for a signature (issue
   #161; [ADR 0019](./docs/adr/0019-one-home-for-an-attestation.md)).** Three
   types of that name existed at once — one in `contextgraph-types`, two in
@@ -595,100 +710,6 @@ text lands without a human merge.
   `contextgraph/1.0` and the crates shipped `1.0.0`.
 
 ### Fixed
-- `docs/composing-frames-into-a-prompt.md` now lists the `UnusableEvidence` attestation state, which was missing.
-- Python SDK: `verify_frame_attestation` now reports `valid_identity_only` rather than `valid` for a signature over a frame that declares no `content_digest`, as ADR 0018 requires and as the Rust reference already does. `is_valid()` is false for it.
-- Go SDK: `attest.VerifyFrameAttestation` now returns the new `VerdictValidIdentityOnly` (`valid_identity_only`) instead of `valid` for a verified frame with no `content_digest`. This brings Go in line with SPEC F15, ADR 0018 and the Rust reference. `IsValid()` is false for this verdict.
-- `contextgraph-mcp-bridge`: `bridge_via_host` no longer times out when its two tests run in parallel. The cause was contention, not a pipe deadlock. The bridge acks only after it has launched its MCP server and fetched every resource, so four cold process launches under load overran the host's 10s handshake bound. The tests now set a 60s bound for their own hosts, and every assertion is kept (#142).
-- **`publish-spec.yml` can no longer publish from a branch other than `main` (#202).** The publish job now requires `github.ref == 'refs/heads/main'`. The comment beside `role-to-assume` no longer calls `environment: production` load-bearing on its own: the environment restricts publishing only when a deployment-branch policy limits `production` to `main`, and that policy must be set in the repository settings. PUBLISHING.md's one-time setup says the same.
-- The `contextgraph-host` README's example provider built `ContextQueryResult` with a three-field struct literal that no longer compiles. It now uses `ContextQueryResult::unattested` (#162).
-- `contextgraph-host`: a trust file that names a provider twice, or repeats a member inside a key entry (e.g. two `not_after`), is refused as a named `TrustFileError` instead of silently keeping the last copy; `TrustStore::save` creates its temporary with `create_new` under a unique name (#134, ADR 0029).
-- `contextgraph-host`: key validity windows are evaluated against a receipt instant with nanosecond precision (`ProviderOutcome::received_at` and the live `TrustStore::check*` paths). Flooring it to whole seconds accepted evidence received at `12:00:00.9Z` under a key whose `not_after` is `12:00:00.1Z` (ADR 0028).
-- `contextgraph-inspect record …` refuses a JSON document with a duplicate member, at any depth, as uncheckable (exit 2) instead of hashing the last copy — RFC 8785 requires unique member names.
-- The conformance attestation check names a malformed inclusion proof as the cause of an inclusion-proof `MalformedCommitment`, instead of blaming the answer's `signed_commitment`.
-- **The triage guard strips every label family SCR-005 reserves** (#137) —
-  `triage-guard.yml` now removes a creator-applied size label (`size/*`) as well
-  as any priority (`P<n>`). It re-queues the issue as `triage` only when no
-  priority is left, so a triage-set `P2` is never left beside `triage`. The
-  decision lives in `.github/scripts/triage-guard.cjs`, which matches label
-  families rather than a tier list, so a new tier is guarded the moment its
-  label exists. CONTRIBUTING.md now lists only labels this repository has.
-- **The changelog bot writes drafted entries once, and fails when they cannot
-  land** (#149) — the `perl -p` one-liner in `changelog.yml` put the drafted
-  block under every `## [Unreleased]` heading, and the check after it stayed
-  green when the heading was missing. `.github/scripts/changelog-insert.py`
-  inserts under the first heading only and fails naming the heading when there
-  is none. Degrade-open still covers the AI call.
-- **The downstream canary's oxagen half now checks something** (#104, #139) — it
-  used to check out a repository that does not exist (`oxagen-platform`) behind
-  a secret nobody had created, and reported success having checked nothing. It
-  now checks out the public `macanderson/oxagen`, finds the CGP fixture sets
-  oxagen vendors, and runs them through this repository's own `golden_fixtures`
-  and `fixture_suite` tests at HEAD. It fails on the scheduled run and is
-  advisory on a pull request, like the stella half.
-- **`cargo doc` builds clean under `-D warnings` again** (#122) — redundant link
-  targets, links to private items, and three links that pointed at nothing are
-  fixed across `contextgraph-types`, `-host`, `-conformance`, `-refprov`,
-  `-treesitter`, `-mcp-bridge` and `-mcp-server`.
-- **`CHANGELOG.md` carries exactly one `## [Unreleased]` heading** (#157) — a
-  second, empty one sat between the shipped 0.1.2 and 1.0.0 sections, so the
-  changelog workflow's insertion wrote every drafted entry twice (#149).
-- **Ten pointers into the deleted `docs/sketches/` resolve again** (#153) —
-  including the crates.io description of the published `contextgraph-trace`
-  crate and a docs.rs link that 404ed. `docs/host-trace.md` now specifies the
-  trace journal and its oracles. The other pointers lead to the ADR 0004
-  sections, ADR 0002 and SPEC.md §14.1 that absorbed them, and the downstream
-  canary no longer cites the removed reconciliation doc.
-- **The GUIDE's in-page ADR links work** (#129) — `#adr-0003` and four others
-  pointed at an anchor line an unrelated edit had deleted. Each now links its
-  ADR file directly.
-- **The examples README's annotated session quotes the transcript verbatim**
-  (#144) — it had lost the correlation `id`s, `content_digest`, the right
-  `token_cost`, and the `verify` step. It now quotes all nine lines of
-  `full-stdio-session.ndjson`.
-- **`SECURITY.md` covers every published crate and the post-freeze policy**
-  (#143) — it left out `contextgraph-trace`, called the project "pre-1.0", and
-  ended support at the 2026-08-11 freeze. Fixes now land on the latest `2.x`;
-  `0.1.x` receives none. `docs/stability.md` no longer claims a `1.x` release
-  exists on crates.io.
-- **`MIGRATION.md` §2 no longer tells downstreams to pin a tag that was never
-  cut** (#105) — it points at crates.io (`contextgraph-types = "2"`) and names
-  the real `contextgraph-vX.Y.Z` release tags for git pins.
-- **`validate-examples.py` no longer validates every JSON file in
-  `tests/fixtures/` as a record** (#126) — a fixture is a record only if its
-  filename stem is a declared `record_kind`; any other file fails with a message
-  naming that convention. A record kind with no fixture, or a fixture filed
-  under the wrong kind, is also caught.
-- **Published SDK packages link back to the project** (#112) — both npm packages
-  gained `homepage`, `repository` (with `directory`) and `bugs`; the Python
-  package's homepage is now https://contextgraphprotocol.org, matching the
-  crates, with Repository and Issues URLs.
-- **Stale SDK versions in prose** (#108) — the `@v0.1.0` Go install pins, a
-  `contextgraph-types = "=0.1.0"` example, and `sdk/README.md` calling the
-  published Python and Go SDKs unpublished.
-- **`Host::verify_frames` sends the provider's declared name on the wire**
-  (#186; [ADR 0023](./docs/adr/0023-frame-identity-names-two-provider-ids.md)) —
-  it used to send the host's local routing id, a string the provider had never
-  seen. SPEC.md D5 (§6.3) says which provider id a frame identity carries where,
-  and V5 (§9) lets a provider answer `unknown` for an id that isn't its own.
-  `verify-honesty` now catches a host that leaks its local id.
-- **The stdio egress hole is listed in SPEC.md §11.1 and witnessed** (#187) —
-  the new `stdio_egress_gap` test shows that a stdio provider declaring `egress:
-  false` can send the query payload out while the host notices nothing.
-- **`malformed-input-tolerance` probes the shapes that crashed the Python SDK**
-  (#146) — a JSON scalar (`42`) and a `query` envelope with its payload missing,
-  not only an unparseable line. The evidence names the input that broke the
-  provider, and a payload-less request that goes unanswered fails.
-- **Go SDK: a `query` or `verify` envelope with its payload missing is answered
-  `bad_request` with the id echoed** (#146). Before, stdio stayed silent and
-  HTTP answered 204, leaving a correlated host waiting.
-- **A scaffolded TypeScript provider's workflow pins `actions/setup-node@v7`.**
-  #197 moved every workflow under `.github/` to v7 and left
-  `sdk/create-contextgraph-provider/templates/typescript/_github/workflows/conformance.yml`
-  on v4. Dependabot never sees that file (`_github/` becomes `.github/` only
-  at scaffold time), so the guard from #194 failed on `main` as soon as it
-  landed. The template now pins the major this repository runs. The workflow
-  still asks that action for Node 22, the same version the repository's own
-  TypeScript jobs use.
 - **The provider-authoring docs describe the wire contract we have (issue
   #151).** The pages someone reads before writing any provider code got four
   things wrong, two of which would have produced a **non-conformant** provider.
@@ -744,40 +765,15 @@ text lands without a human merge.
   interop contract — the one place a reader is most likely to mistake the schema
   for the wire rule.
 
-## [0.1.2] — 2026-08-01 (crate release)
-
-All four crates published from `main`: `contextgraph-types`,
-`contextgraph-host`, `contextgraph-conformance`, and — for the first time —
-`contextgraph-trace`. Protocol version is unchanged (`contextgraph/1.0-draft`);
-this is a crate-version release only.
-
-### Added
-- **`contextgraph-trace` is now published.** It was `publish = false` and
-  documented as "deliberately NOT published", which did not stop anyone
-  depending on it — it only forced its downstream (stella's `stella arena`, via
-  `EventBody` / `TraceEvent` / `Journal` / `run_oracles` / `ToolStatus`) to pin
-  the entire workspace by git rev to reach it. The crate remains **sketch
-  stage**: it implements `docs/sketches/host-trace.md`, is not part of the
-  `contextgraph/1.0` surface, and its journal wire format may change in any
-  `0.x` release. Downstreams should gate on `TRACE_FORMAT`, not on the crate
-  version. Adds a crate README and the metadata the other three already carry.
-
-### Fixed
-- **`contextgraph-types` 0.1.0/0.1.1 shipped without `record.rs`.** Both were
-  published from a tree that predates this repository's history re-root, so the
-  `ContextRecord` module — `ContextRecord`, `RecordBody`, `RecordProvenance`,
-  `RecordAttestation`, `RecordLink`, `RecordScope`, `RecordStatus`,
-  `LIFECYCLE_SCHEMA_VERSION`, and the rest of the lifecycle vocabulary — was
-  declared in `lib.rs` on `main` but absent from the published crate. 0.1.2 is
-  cut from `main` and contains it. **0.1.1 corresponds to no commit on `main`
-  and should not be depended on**; use 0.1.2 or later.
-
-## [1.0.0] — 2026-08-11 (stable protocol and crate release)
+## [1.0.0] — 2026-08-11 (stable protocol release)
 
 The `contextgraph/1.0` wire contract is now frozen. The four public Rust crates
 move to 1.0.0 in lockstep, and the TypeScript and Python provider SDKs advertise
 the stable protocol identifier. Existing `contextgraph/1.0-draft` peers remain
 wire-compatible under the major-family negotiation rule.
+
+The workspace was versioned 1.0.0, but that version never reached crates.io.
+On crates.io the crates went from 0.1.2 to 2.0.0.
 
 ### Changed
 - Dropped the `-draft` suffix from `PROTOCOL_VERSION` and every reference wire
@@ -1258,6 +1254,34 @@ wire-compatible under the major-family negotiation rule.
   reference the `stella` project; they now point at `context-graph-protocol` and
   use Context Graph Protocol crate scopes.
 
+## [0.1.2] — 2026-08-01 (crate release)
+
+All four crates published from `main`: `contextgraph-types`,
+`contextgraph-host`, `contextgraph-conformance`, and — for the first time —
+`contextgraph-trace`. Protocol version is unchanged (`contextgraph/1.0-draft`);
+this is a crate-version release only.
+
+### Added
+- **`contextgraph-trace` is now published.** It was `publish = false` and
+  documented as "deliberately NOT published", which did not stop anyone
+  depending on it — it only forced its downstream (stella's `stella arena`, via
+  `EventBody` / `TraceEvent` / `Journal` / `run_oracles` / `ToolStatus`) to pin
+  the entire workspace by git rev to reach it. The crate remains **sketch
+  stage**: it implements `docs/sketches/host-trace.md`, is not part of the
+  `contextgraph/1.0` surface, and its journal wire format may change in any
+  `0.x` release. Downstreams should gate on `TRACE_FORMAT`, not on the crate
+  version. Adds a crate README and the metadata the other three already carry.
+
+### Fixed
+- **`contextgraph-types` 0.1.0/0.1.1 shipped without `record.rs`.** Both were
+  published from a tree that predates this repository's history re-root, so the
+  `ContextRecord` module — `ContextRecord`, `RecordBody`, `RecordProvenance`,
+  `RecordAttestation`, `RecordLink`, `RecordScope`, `RecordStatus`,
+  `LIFECYCLE_SCHEMA_VERSION`, and the rest of the lifecycle vocabulary — was
+  declared in `lib.rs` on `main` but absent from the published crate. 0.1.2 is
+  cut from `main` and contains it. **0.1.1 corresponds to no commit on `main`
+  and should not be depended on**; use 0.1.2 or later.
+
 ## [0.1.0] — 2026-07-17
 
 The first published release of the Context Graph Protocol crates and the
@@ -1293,5 +1317,7 @@ specification repository. Protocol version: `contextgraph/1.0-draft`.
   checklist).
 - Dual license files: `LICENSE-MIT`, `LICENSE-APACHE`.
 
-[Unreleased]: https://github.com/macanderson/context-graph-protocol/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/macanderson/context-graph-protocol/releases/tag/v0.1.0
+[Unreleased]: https://github.com/macanderson/context-graph-protocol/compare/contextgraph-v2.0.0...HEAD
+[2.0.0]: https://github.com/macanderson/context-graph-protocol/releases/tag/contextgraph-v2.0.0
+[0.1.2]: https://github.com/macanderson/context-graph-protocol/releases/tag/contextgraph-v0.1.2
+[0.1.0]: https://github.com/macanderson/context-graph-protocol/releases/tag/contextgraph-v0.1.0

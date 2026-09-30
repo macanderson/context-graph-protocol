@@ -17,13 +17,13 @@ categories = ["encoding", "development-tools::debugging"]
 # Published as of 0.1.2 — the open question the sketch recorded is now answered.
 # This crate implements docs/host-trace.md, which is sketch stage and NOT part
 # of the contextgraph/1.0 stable surface: the journal wire format may
-# change in any 0.x release, and `TRACE_FORMAT` is what downstreams should gate
+# change in any release, and `TRACE_FORMAT` is what downstreams should gate
 # on, not the crate version. It is published anyway because leaving it out
 # forced its only downstream (stella's `stella arena`) to pin the whole
 # workspace by git rev — an unreviewed, unversioned, GC-eligible commit — to get
 # a vocabulary the other three crates already publish. A published crate with an
 # honest stability caveat is a smaller supply-chain risk than an unpublished one
-# consumed by SHA. See docs/stability.md for what 0.x does and does not promise.
+# consumed by SHA. The crate takes the workspace version (docs/stability.md).
 publish = true
 
 [dependencies]
