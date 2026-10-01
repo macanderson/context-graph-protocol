@@ -10,7 +10,7 @@ Graph Protocol**.
 > [host execution trace specification](https://github.com/macanderson/context-graph-protocol/blob/main/docs/host-trace.md),
 > which defines the journal wire format and every oracle. It is published so downstream hosts can depend on the trace vocabulary by
 > version rather than by git rev, but the journal wire format may change in any
-> `0.x` release. Gate on the `TRACE_FORMAT` constant, not on the crate version.
+> release. Gate on the `TRACE_FORMAT` constant, not on the crate version.
 
 The conformance suite (`contextgraph-conformance`) holds a *provider* honest;
 nothing holds the *host-side agent loop* honest. This crate is that missing

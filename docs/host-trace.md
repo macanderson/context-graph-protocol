@@ -5,10 +5,10 @@
 > crate implements: the journal wire format (`TRACE_FORMAT =
 > "contextgraph-trace/0.1-sketch"`) and the replay oracles that judge it.
 > Nothing here is normative for providers or hosts that implement the
-> protocol, and the journal format may change in any `0.x` release of the
-> crate. Gate on the `TRACE_FORMAT` a journal declares, never on the crate
-> version ([`stability.md`](./stability.md) explains what `0.x` does and does
-> not promise). Where this page and the crate disagree, the crate is right and
+> protocol, and the journal format may change in any release of the crate.
+> Gate on the `TRACE_FORMAT` a journal declares, never on the crate version,
+> which is the workspace version all four published crates share
+> ([`stability.md`](./stability.md)). Where this page and the crate disagree, the crate is right and
 > this page has a bug.
 
 ## Why a trace exists at all
@@ -164,7 +164,7 @@ session*. Neither replaces the other.
 
 ## Open questions
 
-These are why the crate is still `0.x` and still `-sketch`:
+These are why `TRACE_FORMAT` still ends in `-sketch`:
 
 - **Probe vocabulary.** Planted-fact retention probes (insert a fact early,
   require it late, measure survival across compaction) need `compaction` and
