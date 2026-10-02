@@ -36,4 +36,4 @@ permissions:
 
 jobs:
   recheck:
-    uses: macanderson/oxagen/.github/workflows/dod-recheck.yml@2dd72c9957f8520ee673862de894ed64f4b2380c # oxagen main, #2638
+    uses: oxageninc/product/.github/workflows/dod-recheck.yml@2dd72c9957f8520ee673862de894ed64f4b2380c # oxagen main, #2638
