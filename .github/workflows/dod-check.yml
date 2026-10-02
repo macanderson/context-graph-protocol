@@ -1,9 +1,11 @@
 # DoD merge check (SCR-003) — caller stub.
 #
-# The implementation lives once in oxagen and is called from here. ADR-039:
-# copying the check into each repo would put five independently-drifting
-# copies of an enforcement rule into an org whose sibling check exists to
-# detect exactly that kind of drift.
+# The implementation lives once in oxageninc/.github and is called from here.
+# ADR-039 in oxageninc/product: copying the check into each repo would put
+# five independently-drifting copies of an enforcement rule into an org whose
+# sibling check exists to detect exactly that kind of drift. It lives in
+# oxageninc/.github because that repository is public, so every caller can
+# call it and check out its scripts (oxageninc/product#5183).
 #
 # There is deliberately no logic in this file. A change to *what* the check
 # does never touches it; only adding or removing a check does.
@@ -13,7 +15,7 @@
 # change what runs here without a commit in this one. Re-pin when the
 # implementation changes, which is a reviewable one-line diff naming the
 # version it moved to.
-# The decision and what it costs are recorded in macanderson/oxagen's
+# The decision and what it costs are recorded in oxageninc/product's
 # docs/adr/ADR-045-pin-cross-repo-reusable-workflows.md.
 name: dod-check
 
@@ -33,4 +35,4 @@ permissions:
 
 jobs:
   dod:
-    uses: oxageninc/product/.github/workflows/dod-check.yml@c7226a6179e4866ea178ab8b6ba57a786ffa4dec # oxagen main, #5183
+    uses: oxageninc/.github/.github/workflows/dod-check.yml@c339971e0ad74bff568bc0ba1363ee980c296733 # oxageninc/.github main, oxageninc/product#5183

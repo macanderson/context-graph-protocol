@@ -5,7 +5,9 @@
 # covers the hand-closed path, after the fact, because GitHub has no pre-close
 # hook to veto.
 #
-# Implementation lives once in oxagen — see ADR-039.
+# The implementation lives once in oxageninc/.github, which is public, so
+# every caller can call it and check out its scripts. See ADR-039 in
+# oxageninc/product.
 name: dod-close-guard
 
 on:
@@ -20,4 +22,4 @@ permissions:
 
 jobs:
   guard:
-    uses: oxageninc/product/.github/workflows/dod-close-guard.yml@c7226a6179e4866ea178ab8b6ba57a786ffa4dec # oxagen main, #5183
+    uses: oxageninc/.github/.github/workflows/dod-close-guard.yml@c339971e0ad74bff568bc0ba1363ee980c296733 # oxageninc/.github main, oxageninc/product#5183
